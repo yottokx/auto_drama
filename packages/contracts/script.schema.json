@@ -1,0 +1,677 @@
+{
+  "$defs": {
+    "AssetReference": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "background",
+            "character",
+            "audio"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "artifact_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "filename": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "artifact_id",
+        "filename",
+        "sha256"
+      ],
+      "title": "AssetReference",
+      "type": "object"
+    },
+    "BackgroundDirection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "background",
+          "title": "Kind",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "asset_id"
+      ],
+      "title": "BackgroundDirection",
+      "type": "object"
+    },
+    "BlackoutDirection": {
+      "additionalProperties": false,
+      "description": "Fade to black, then fade back in; duration is per fade, in milliseconds.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "blackout",
+          "title": "Kind",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 300,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind"
+      ],
+      "title": "BlackoutDirection",
+      "type": "object"
+    },
+    "Character": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "image_asset_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Asset Id"
+        },
+        "framing": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "upper_body",
+            "full_body"
+          ],
+          "title": "Framing",
+          "type": "string"
+        },
+        "height_cm": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height Cm"
+        },
+        "body_bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortraitBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "Character",
+      "type": "object"
+    },
+    "EnterDirection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "enter",
+          "title": "Kind",
+          "type": "string"
+        },
+        "character_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "position": {
+          "default": "center",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "character_id"
+      ],
+      "title": "EnterDirection",
+      "type": "object"
+    },
+    "ExitDirection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "exit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "character_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "character_id"
+      ],
+      "title": "ExitDirection",
+      "type": "object"
+    },
+    "FocusDirection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "focus",
+          "title": "Kind",
+          "type": "string"
+        },
+        "character_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Character Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "character_id"
+      ],
+      "title": "FocusDirection",
+      "type": "object"
+    },
+    "PauseDirection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pause",
+          "title": "Kind",
+          "type": "string"
+        },
+        "duration_ms": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "duration_ms"
+      ],
+      "title": "PauseDirection",
+      "type": "object"
+    },
+    "PortraitBounds": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Left",
+          "type": "number"
+        },
+        "top": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Top",
+          "type": "number"
+        },
+        "right": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Right",
+          "type": "number"
+        },
+        "bottom": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Bottom",
+          "type": "number"
+        }
+      },
+      "required": [
+        "left",
+        "top",
+        "right",
+        "bottom"
+      ],
+      "title": "PortraitBounds",
+      "type": "object"
+    },
+    "PositionDirection": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "position",
+          "title": "Kind",
+          "type": "string"
+        },
+        "character_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "position": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "character_id",
+        "position"
+      ],
+      "title": "PositionDirection",
+      "type": "object"
+    },
+    "Utterance": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "speaker_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speaker Id"
+        },
+        "display_text": {
+          "maxLength": 100000,
+          "minLength": 1,
+          "title": "Display Text",
+          "type": "string"
+        },
+        "spoken_text": {
+          "maxLength": 100000,
+          "minLength": 1,
+          "title": "Spoken Text",
+          "type": "string"
+        },
+        "voice_emotion": {
+          "default": "neutral",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Voice Emotion",
+          "type": "string"
+        },
+        "delivery": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delivery"
+        },
+        "audio_asset_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audio Asset Id"
+        }
+      },
+      "required": [
+        "id",
+        "display_text",
+        "spoken_text"
+      ],
+      "title": "Utterance",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "id": {
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "characters": {
+      "items": {
+        "$ref": "#/$defs/Character"
+      },
+      "maxItems": 100,
+      "title": "Characters",
+      "type": "array"
+    },
+    "utterances": {
+      "items": {
+        "$ref": "#/$defs/Utterance"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Utterances",
+      "type": "array"
+    },
+    "directions": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "background": "#/$defs/BackgroundDirection",
+            "blackout": "#/$defs/BlackoutDirection",
+            "enter": "#/$defs/EnterDirection",
+            "exit": "#/$defs/ExitDirection",
+            "focus": "#/$defs/FocusDirection",
+            "pause": "#/$defs/PauseDirection",
+            "position": "#/$defs/PositionDirection"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/BackgroundDirection"
+          },
+          {
+            "$ref": "#/$defs/EnterDirection"
+          },
+          {
+            "$ref": "#/$defs/ExitDirection"
+          },
+          {
+            "$ref": "#/$defs/PositionDirection"
+          },
+          {
+            "$ref": "#/$defs/FocusDirection"
+          },
+          {
+            "$ref": "#/$defs/BlackoutDirection"
+          },
+          {
+            "$ref": "#/$defs/PauseDirection"
+          }
+        ]
+      },
+      "maxItems": 50000,
+      "title": "Directions",
+      "type": "array"
+    },
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/AssetReference"
+      },
+      "maxItems": 20000,
+      "title": "Assets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "utterances"
+  ],
+  "title": "Script",
+  "type": "object"
+}

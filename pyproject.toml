@@ -1,0 +1,28 @@
+[project]
+name = "auto-drama-coordinator"
+version = "0.1.0"
+description = "AI auto drama coordinator development environment"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "pydantic-settings>=2.8,<3",
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.15,<2",
+    "httpx>=0.28,<1",
+    "pillow>=11,<13",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["services/worker/runtimes", "tyranoscript", ".python"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

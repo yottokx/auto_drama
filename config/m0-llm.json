@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "model": {
+    "repository": "unsloth/gemma-4-31B-it-GGUF",
+    "revision": "c1ac76e99d5513b141e8adde7288b85c3f9c32ec",
+    "filename": "gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    "relative_path": "private/model_download/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    "size_bytes": 18822970304,
+    "publisher_sha256": "9e92cb6236044c6a9870af406029c74a76e0571c157a6f95df724dcc8c7a1575",
+    "license": "apache-2.0",
+    "source_url": "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/blob/c1ac76e99d5513b141e8adde7288b85c3f9c32ec/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    "metadata_checked_on": "2026-09-22",
+    "local_sha256_verification": "Performed separately before this smoke script; this script only checks size and GGUF magic."
+  },
+  "server": {
+    "executable": "services/worker/runtimes/llama_cpp/bin/llama-server.exe",
+    "manifest": "runtimes/manifests/llama_cpp.json",
+    "host": "127.0.0.1",
+    "context_size": 8192,
+    "gpu_layers": "all",
+    "parallel": 1,
+    "startup_timeout_seconds": 300,
+    "request_timeout_seconds": 90,
+    "total_timeout_seconds": 600
+  },
+  "generation": {
+    "max_tokens": 256,
+    "temperature": 0.2,
+    "top_p": 0.95,
+    "top_k": 64,
+    "min_p": 0.0,
+    "seed": 20260922,
+    "reasoning_effort": "none",
+    "stream": false
+  },
+  "random_tool_seed": 20260922,
+  "checks": ["plain_narrative", "json_schema", "random_tool_roundtrip", "reasoning_none"],
+  "server_api_source": "https://github.com/ggml-org/llama.cpp/blob/fb34fc262c1b43f1832c7472429fb2247d650493/tools/server/README.md"
+}

@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "RelationshipPair": {
+      "additionalProperties": false,
+      "properties": {
+        "characterIds": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+              "type": "string"
+            }
+          ],
+          "title": "Characterids",
+          "type": "array"
+        },
+        "summary": {
+          "maxLength": 30000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "firstToSecond": {
+          "maxLength": 30000,
+          "minLength": 1,
+          "title": "Firsttosecond",
+          "type": "string"
+        },
+        "secondToFirst": {
+          "maxLength": 30000,
+          "minLength": 1,
+          "title": "Secondtofirst",
+          "type": "string"
+        }
+      },
+      "required": [
+        "characterIds",
+        "summary",
+        "firstToSecond",
+        "secondToFirst"
+      ],
+      "title": "RelationshipPair",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "pairs": {
+      "items": {
+        "$ref": "#/$defs/RelationshipPair"
+      },
+      "maxItems": 3,
+      "title": "Pairs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "pairs"
+  ],
+  "title": "RelationshipsResult",
+  "type": "object"
+}

@@ -1,0 +1,14 @@
+[project]
+name = "auto-drama-worker"
+version = "0.1.0"
+description = "Independent worker orchestration environment"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx>=0.28,<1",
+    "pydantic-settings>=2.8,<3",
+    "psutil>=7,<8",
+    "pillow>=11,<13",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "diffusers",
+  "runtime_path": "services/worker/runtimes/diffusers",
+  "source_url": "https://github.com/huggingface/diffusers.git",
+  "source_commit": "7263f3317f6b392d62f41e9d75ed9d7e21fc5a5c",
+  "source_selection": "Official main HEAD at initial environment setup; subsequent setup stays pinned",
+  "python": "3.12.13",
+  "diffusers": "0.41.0.dev0",
+  "torch": "2.10.0+cu128",
+  "torchvision": "0.25.0+cu128",
+  "torch_index": "https://download.pytorch.org/whl/cu128",
+  "anima_api": "AnimaModularPipeline",
+  "converter": "source/scripts/convert_anima_to_diffusers.py",
+  "background_removal_candidate": "rembg[cpu]==2.0.85",
+  "supported_environment": "Windows x64 with NVIDIA GPU; RTX 5090 is the initial verification target",
+  "models_downloaded": false,
+  "lockfile": "services/worker/runtimes/diffusers/uv.lock"
+}

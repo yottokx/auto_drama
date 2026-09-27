@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "provider": "local",
+  "llm_config": "config/m0-llm.json",
+  "llm": {
+    "model_id": "gemma-4-31B-it-UD-Q4_K_XL",
+    "context_size": 16384,
+    "max_tokens": 3072,
+    "temperature": 0.65,
+    "reasoning_level": "none",
+    "startup_timeout_seconds": 300,
+    "request_timeout_seconds": 240,
+    "total_timeout_seconds": 1800,
+    "max_tool_calls": 8
+  },
+  "model_routing": {
+    "review": {
+      "llm_config": "config/qwen-review-llm.json",
+      "llm": {
+        "model_id": "Qwen3.8-27B-UD-Q4_K_XL",
+        "context_size": 32768,
+        "max_tokens": 8192,
+        "max_output_tokens": 8192,
+        "temperature": 0.65,
+        "reasoning_level": "low",
+        "reasoning_levels": ["none", "low", "medium"],
+        "reasoning_template": "qwen3"
+      }
+    }
+  },
+  "image": {
+    "python": "services/worker/runtimes/diffusers/.venv/Scripts/python.exe",
+    "model_dir": "services/worker/runtimes/diffusers/models/anima-converted-generation-20260922-104112",
+    "positive_prompt_prefix": "masterpiece, best quality, score_7, safe",
+    "negative_prompt": "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration, cropped, text",
+    "width": 768,
+    "height": 1024,
+    "steps": 30,
+    "guidance_scale": 4.0,
+    "timeout_seconds": 900
+  },
+  "voice": {
+    "python": "services/worker/runtimes/irodori/.venv/Scripts/python.exe",
+    "num_steps": 40,
+    "model_precision": "fp32",
+    "reference_text": "はじめまして。今日は、お話しできるのを楽しみにしていました。少しずつ、お互いのことを知っていけたら嬉しいです。これから、よろしくお願いします。",
+    "timeout_seconds": 900
+  },
+  "gpu_lock_timeout_seconds": 3600,
+  "max_zip_bytes": 33554432
+}

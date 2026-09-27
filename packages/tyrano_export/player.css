@@ -1,0 +1,31 @@
+html, body { margin: 0; background: #101923; color: #f3f4f6; font-family: sans-serif; }
+button, select { border: 1px solid #729088; background: #1c302e; color: #f3f4f6;
+  border-radius: 7px; padding: 9px 13px; cursor: pointer; font: inherit; }
+button:disabled, select:disabled { opacity: .45; cursor: default; }
+button[aria-pressed=true] { background: #397666; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid #d7c794; }
+#ad-toolbar { position: fixed; inset: 10px 12px auto; z-index: 999999;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; pointer-events: none; }
+#ad-toolbar > * { pointer-events: auto; }
+#ad-toolbar label { display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px; background: #101923e8; border-radius: 7px; }
+#ad-volume { width: 85px; accent-color: #95cabc; }
+#ad-status { background: #101923e8; padding: 4px; }
+#ad-start { position: fixed; inset: 0; z-index: 1000000; display: grid; place-items: center;
+  text-align: center; background: #101923; padding: 24px; }
+#ad-start[hidden] { display: none; }
+#ad-start p { line-height: 1.8; }
+#ad-chapter-end { position: fixed; z-index: 999998; top: 25%; left: 50%;
+  transform: translateX(-50%); width: min(540px, 84vw); box-sizing: border-box;
+  background: #101923f2; border: 1px solid #729088; border-radius: 12px;
+  padding: 20px; text-align: center; line-height: 1.8; }
+#ad-chapter-end[hidden] { display: none; }
+#ad-log { box-sizing: border-box; width: min(850px, 92vw); max-height: 85vh;
+  background: #101923; color: #f3f4f6; border: 1px solid #729088; border-radius: 12px; padding: 24px; }
+#ad-log::backdrop { background: #000b; }
+#ad-log-close { float: right; position: sticky; top: 0; }
+#ad-log-items article { padding: 16px 0; border-bottom: 1px solid #72908855; }
+#ad-log-items p { white-space: pre-wrap; line-height: 1.7; }
+#ad-log-items audio { display: block; max-width: 100%; margin-top: 12px; }
+@media(max-width: 650px) { #ad-toolbar { gap: 4px; font-size: 11px; inset: 5px 5px auto; }
+  #ad-toolbar button { padding: 7px 9px; } #ad-volume { width: 60px; } }

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "irodori-tts",
+  "repository": "https://github.com/Aratako/Irodori-TTS.git",
+  "commit": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+  "selected_at": "2026-09-22",
+  "selection": "Official main HEAD at setup time; subsequent installs keep this commit.",
+  "upstream_lock_git_blob": "98c04de57f19a303a912e31edfa1f932d5908fa0",
+  "python_version": "3.11.14",
+  "uv_extra": "cu128",
+  "torch_version": "2.10.0+cu128",
+  "cuda_version": "12.8",
+  "runtime_directory": "services/worker/runtimes/irodori",
+  "source_directory": "services/worker/runtimes/irodori/source",
+  "python_executable": "services/worker/runtimes/irodori/.venv/Scripts/python.exe",
+  "launcher": "services/worker/runtimes/irodori/run.ps1",
+  "diagnostic": "services/worker/runtimes/irodori/verify.py",
+  "model_status": "not_installed",
+  "models_downloaded_during_setup": false,
+  "ffmpeg": {
+    "version": "8.1.2",
+    "variant": "full_build-shared",
+    "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-full_build-shared.7z",
+    "sha256": "cba748035c21ce1431d0823c7a3a711f38616f89f87a265dceddf9b7f6749d2d",
+    "directory": "ffmpeg/ffmpeg-8.1.2-full_build-shared",
+    "reason": "TorchCodec 0.10 supports FFmpeg through major version 8 and requires shared DLLs."
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-22",
+  "status": "download_prepared_not_inference_verified",
+  "models": [
+    {
+      "id": "anima-base-v1-diffusers",
+      "repo_id": "circlestone-labs/Anima-Base-v1.0-Diffusers",
+      "revision": "073c3a9db359c31ad0e8aa268d15775473c2176c",
+      "local_dir": "services/worker/runtimes/diffusers/models/anima-base-v1-diffusers",
+      "purpose": "Official Diffusers image generation and source tokenizers for conversion",
+      "files": [
+        {
+          "git_blob_sha1": "a95e0edd5c6408cdd1b0e33431fa549316a0d9c7",
+          "path": "LICENSE.md",
+          "sha256": null,
+          "size": 17688
+        },
+        {
+          "git_blob_sha1": "cdf267aabb82cb1dbe9ceb2d0b94558a52e88420",
+          "path": "README.md",
+          "sha256": null,
+          "size": 177
+        },
+        {
+          "git_blob_sha1": "aa22f66f17057f36b8334818bb049d8c33ae1ab1",
+          "path": "modular_model_index.json",
+          "sha256": null,
+          "size": 2414
+        },
+        {
+          "git_blob_sha1": "a5ec9f6489fbba607a3867da81e82dec7bc5542d",
+          "path": "scheduler/scheduler_config.json",
+          "sha256": null,
+          "size": 487
+        },
+        {
+          "git_blob_sha1": "7093f0b3e6e8c7cc8a69b6b72d1cf2824803ae88",
+          "path": "t5_tokenizer/tokenizer.json",
+          "sha256": null,
+          "size": 2424069
+        },
+        {
+          "git_blob_sha1": "1409b32976dc4a4f29d1e59f5262e7816bdb9030",
+          "path": "t5_tokenizer/tokenizer_config.json",
+          "sha256": null,
+          "size": 2439
+        },
+        {
+          "git_blob_sha1": "216cee4bca7d12dd48c04750f905c1023fd63422",
+          "path": "text_conditioner/config.json",
+          "sha256": null,
+          "size": 333
+        },
+        {
+          "git_blob_sha1": "97e0038a731a293c1b56da36e0f90f69e3fbaaaa",
+          "path": "text_conditioner/diffusion_pytorch_model.safetensors",
+          "sha256": "fdcf606524892e35b270b96fc8bbd8d77e615ab882675a049f6e7c2ff6b71da3",
+          "size": 269339400
+        },
+        {
+          "git_blob_sha1": "aac1c77fe596236319b7efdb737c757a4b597bb1",
+          "path": "text_encoder/config.json",
+          "sha256": null,
+          "size": 1409
+        },
+        {
+          "git_blob_sha1": "742d5967f5ef2c9fdc7ee6762040d2764ff82972",
+          "path": "text_encoder/model.safetensors",
+          "sha256": "75e8db94adb374b61baca3d898fc2c0d5086d20689a96d4e74576546433a0526",
+          "size": 1192133232
+        },
+        {
+          "git_blob_sha1": "28028c056af412405debd878cdda0171e35fa5d1",
+          "path": "tokenizer/chat_template.jinja",
+          "sha256": null,
+          "size": 2427
+        },
+        {
+          "git_blob_sha1": "10c92faad5c83222de0fbdcd704832cdf8b1499b",
+          "path": "tokenizer/tokenizer.json",
+          "sha256": "476870a1f2fb6f6a2759a6ede2383bf9d5d738f17844563b65c91965b722ae09",
+          "size": 11422924
+        },
+        {
+          "git_blob_sha1": "69185ab21fab1d98c080feb37c52401938b06ee5",
+          "path": "tokenizer/tokenizer_config.json",
+          "sha256": null,
+          "size": 421
+        },
+        {
+          "git_blob_sha1": "5d30c4a788edbc4c25e8d723d61c43766d58c54c",
+          "path": "transformer/config.json",
+          "sha256": null,
+          "size": 728
+        },
+        {
+          "git_blob_sha1": "688cc53ce8a9204c06729122d51933cef3e29ca7",
+          "path": "transformer/diffusion_pytorch_model.safetensors",
+          "sha256": "81dc5915fc3c3b170684534ca11ed6c535ddea5658793a801fac53b8d5281065",
+          "size": 3912877104
+        },
+        {
+          "git_blob_sha1": "45edcb2d93c95e4cd918843a5e5f15c1dd6210e9",
+          "path": "vae/config.json",
+          "sha256": null,
+          "size": 753
+        },
+        {
+          "git_blob_sha1": "5c203341583690b7e93ff899368ce1a7dce658a6",
+          "path": "vae/diffusion_pytorch_model.safetensors",
+          "sha256": "0c8bc8b758c649abef9ea407b95408389a3b2f610d0d10fcb054fe171d0a8344",
+          "size": 253806966
+        }
+      ]
+    },
+    {
+      "id": "anima-base-v1-single",
+      "repo_id": "circlestone-labs/Anima",
+      "revision": "f973fc41ec7545364ac9776c2440285f43ff2a30",
+      "local_dir": "services/worker/runtimes/diffusers/models/anima-base-v1-single",
+      "purpose": "Representative standard precision single checkpoint conversion",
+      "files": [
+        {
+          "git_blob_sha1": "ddc003aea936fd1a45ec0294d5833beaa4dab96a",
+          "path": "LICENSE.md",
+          "sha256": null,
+          "size": 18259
+        },
+        {
+          "git_blob_sha1": "0198928be894a45a249fdf46ea8583accadaf04e",
+          "path": "README.md",
+          "sha256": null,
+          "size": 11846
+        },
+        {
+          "git_blob_sha1": "4e0f097061400c7999874c31eae4598e7a368768",
+          "path": "split_files/diffusion_models/anima-base-v1.0.safetensors",
+          "sha256": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
+          "size": 4182218328
+        },
+        {
+          "git_blob_sha1": "a3d64c4f6cf2400d4fd37953c3bc8ade675fe97b",
+          "path": "split_files/text_encoders/qwen_3_06b_base.safetensors",
+          "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+          "size": 1192135096
+        },
+        {
+          "git_blob_sha1": "0e2c65956cb47e2be7d1def5a08ddd58a0d5beb5",
+          "path": "split_files/vae/qwen_image_vae.safetensors",
+          "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+          "size": 253806246
+        }
+      ]
+    },
+    {
+      "id": "isnet-anime",
+      "repo_id": null,
+      "revision": "rembg-v0.0.0",
+      "local_dir": "services/worker/runtimes/diffusers/models/rembg/isnet-anime",
+      "purpose": "Candidate anime character background removal; visual quality requires review",
+      "files": [
+        {
+          "path": "isnet-anime.onnx",
+          "size": 176069933,
+          "sha256": null,
+          "md5": "6f184e756bb3bd901c8849220a83e38e",
+          "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-anime.onnx",
+          "checksum_note": "Official rembg 2.0.85 supplies MD5; GitHub release has no SHA256 digest. Verify MD5 and record downloaded SHA256."
+        }
+      ]
+    }
+  ],
+  "sources": [
+    "https://huggingface.co/circlestone-labs/Anima-Base-v1.0-Diffusers",
+    "https://huggingface.co/circlestone-labs/Anima",
+    "https://github.com/danielgatis/rembg/blob/main/rembg/sessions/dis_anime.py"
+  ],
+  "runtime_commit": "7263f3317f6b392d62f41e9d75ed9d7e21fc5a5c",
+  "remote_python_code_required": false
+}

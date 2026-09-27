@@ -1,0 +1,33 @@
+.portrait-editor { margin-top: 26px; padding-top: 20px; border-top: 1px solid #dedbce; }
+.portrait-editor > summary { cursor: pointer; color: #475c3e; font-size: 15px; font-weight: 600; }
+.portrait-editor > summary svg { margin: 0 7px 0 2px; }
+.portrait-editor-content { margin-top: 20px; padding: 22px; border: 1px solid #dce2d4; border-radius: 12px; background: #fffefa; }
+.portrait-editor-intro, .portrait-adjustment-controls > p, .portrait-save p { color: #686e5d; font-size: 13px; line-height: 1.85; }
+.portrait-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+.portrait-tabs button { padding: 9px 14px; border: 1px solid #dce2d4; border-radius: 6px; font-size: 13px; }
+.portrait-tabs button[aria-pressed="true"] { color: #49653b; border-color: #a3b890; background: #edf3e7; }
+.portrait-adjustment { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 290px); gap: 24px; align-items: start; }
+.portrait-image-area { min-width: 0; display: grid; justify-items: center; padding: 12px; border: 1px solid #e0e3d9; border-radius: 8px; background: #f2f1eb; }
+.portrait-canvas { position: relative; width: fit-content; max-width: 100%; cursor: crosshair; touch-action: none; user-select: none; background: repeating-conic-gradient(#e3e5de 0% 25%, #f7f8f2 0% 50%) 0 0 / 20px 20px; }
+.portrait-canvas.is-disabled { cursor: default; }
+.portrait-canvas img { display: block; width: auto; height: auto; max-height: 520px; max-width: 100%; pointer-events: none; }
+.portrait-body-bounds { position: absolute; border: 2px solid #b45b2d; outline: 1px solid #fff9ec; background: #e4962d12; cursor: move; }
+.portrait-body-bounds > span { position: absolute; left: -2px; top: -25px; padding: 3px 6px; border-radius: 3px 3px 0 0; color: white; background: #985028; font-size: 11px; white-space: nowrap; pointer-events: none; }
+.portrait-body-bounds > i { position: absolute; width: 8px; height: 8px; background: #fffdf6; border: 2px solid #b45b2d; pointer-events: none; }
+.portrait-body-bounds > i:nth-of-type(1) { left: -5px; top: -5px; }
+.portrait-body-bounds > i:nth-of-type(2) { right: -5px; top: -5px; }
+.portrait-body-bounds > i:nth-of-type(3) { left: -5px; bottom: -5px; }
+.portrait-body-bounds > i:nth-of-type(4) { right: -5px; bottom: -5px; }
+.portrait-mode { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.portrait-mode strong { color: #475c3e; font-size: 16px; }
+.portrait-mode span { color: #778366; background: #eff2e8; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+.portrait-edges { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; border: 0; padding: 0; margin: 20px 0 14px; min-width: 0; }
+.portrait-edges legend { padding: 0 0 12px; color: #68705b; font-size: 12px; }
+.portrait-edges label { display: grid; gap: 6px; color: #626f54; font-size: 12px; }
+.portrait-edges input { min-width: 0; width: 100%; padding: 10px; border: 1px solid #dce2d4; border-radius: 5px; background: #fff; }
+.portrait-adjustment-controls .portrait-keyboard-help { color: #848977; font-size: 11px; margin-bottom: 16px; }
+.portrait-save { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; border-top: 1px solid #e2e5d9; margin-top: 24px; padding-top: 20px; }
+.portrait-reload { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.portrait-conflict { color: #8b6045; font-size: 13px; line-height: 1.8; margin-top: 14px; padding: 12px 15px; background: #f8eee1; border-radius: 6px; }
+.portrait-saved { color: #527442; font-size: 13px; margin-top: 16px; line-height: 1.8; }
+@media (max-width: 760px) { .portrait-adjustment { grid-template-columns: minmax(0, 1fr); } .portrait-editor-content { padding: 16px; } .portrait-canvas img { max-height: 440px; } }

@@ -1,0 +1,113 @@
+{
+  "assets": [
+    {
+      "artifact_id": "demo-station",
+      "filename": "station.png",
+      "id": "station",
+      "kind": "background",
+      "sha256": "beadbe690be6781b57cc56aaccfd5792c3553c3c29a86ebe7e350d0eb8a82851"
+    },
+    {
+      "artifact_id": "demo-aki_sprite",
+      "filename": "aki_sprite.png",
+      "id": "aki_sprite",
+      "kind": "character",
+      "sha256": "a08f9d1eb3027649f29da5cea48351475becb87c306b1f0726bb587a83fdcb55"
+    },
+    {
+      "artifact_id": "demo-ren_sprite",
+      "filename": "ren_sprite.png",
+      "id": "ren_sprite",
+      "kind": "character",
+      "sha256": "13ea7a1d435365216984e70fbb950c9ad78ccc56ce32ea108dccc5b8c00e8297"
+    }
+  ],
+  "characters": [
+    {
+      "id": "aki",
+      "image_asset_id": "aki_sprite",
+      "name": "アキ"
+    },
+    {
+      "id": "ren",
+      "image_asset_id": "ren_sprite",
+      "name": "レン"
+    }
+  ],
+  "directions": [
+    {
+      "asset_id": "station",
+      "duration_ms": 0,
+      "id": "bg_001",
+      "kind": "background",
+      "timing": "before",
+      "utterance_id": "line_001"
+    },
+    {
+      "character_id": "aki",
+      "duration_ms": 0,
+      "id": "enter_aki",
+      "kind": "enter",
+      "position": "left",
+      "timing": "before",
+      "utterance_id": "line_001"
+    },
+    {
+      "character_id": "ren",
+      "duration_ms": 0,
+      "id": "enter_ren",
+      "kind": "enter",
+      "position": "right",
+      "timing": "before",
+      "utterance_id": "line_001"
+    },
+    {
+      "duration_ms": 450,
+      "id": "pause_ren",
+      "kind": "pause",
+      "timing": "before",
+      "utterance_id": "line_004"
+    }
+  ],
+  "id": "demo_chapter_01",
+  "schema_version": 1,
+  "title": "雨の駅で、もう一度",
+  "utterances": [
+    {
+      "audio_asset_id": null,
+      "delivery": null,
+      "display_text": "雨の駅。アキは、濡れた封筒をレンの前に差し出した。",
+      "id": "line_001",
+      "speaker_id": null,
+      "spoken_text": "雨の駅。アキは、濡れた封筒をレンの前に差し出した。",
+      "voice_emotion": "neutral"
+    },
+    {
+      "audio_asset_id": null,
+      "delivery": null,
+      "display_text": "今さら戻れないよ。僕が壊したんだから。",
+      "id": "line_002",
+      "speaker_id": "ren",
+      "spoken_text": "今さら戻れないよ。僕が壊したんだから。",
+      "voice_emotion": "worried"
+    },
+    {
+      "audio_asset_id": null,
+      "delivery": null,
+      "display_text": "だから、一緒に直したいの。ほら、まだ捨ててない。",
+      "id": "line_003",
+      "speaker_id": "aki",
+      "spoken_text": "だから、一緒に直したいの。ほら、まだ捨ててない。",
+      "voice_emotion": "determined"
+    },
+    {
+      "audio_asset_id": null,
+      "delivery": "少しためらってから、静かに",
+      "display_text": "……その封筒、僕にも持たせて。今度は逃げない。",
+      "id": "line_004",
+      "speaker_id": "ren",
+      "spoken_text": "その封筒、僕にも持たせて。今度は逃げない。",
+      "voice_emotion": "hopeful"
+    }
+  ]
+}

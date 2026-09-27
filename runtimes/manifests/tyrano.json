@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "TyranoScript",
+  "repository": "https://github.com/ShikemokuMK/tyranoscript.git",
+  "commit": "c8dbfd492afd3d79b0954fcf4477236f5c6c4830",
+  "source_selection": "Official repository master HEAD cloned on 2026-09-22; subsequent installs reproduce this commit.",
+  "install_path": "tyranoscript",
+  "entry_point": "tyranoscript/index.html",
+  "license_path": "tyranoscript/LICENCE.txt",
+  "standalone_clone": true,
+  "included_in_worker": false,
+  "included_in_project_git": false
+}

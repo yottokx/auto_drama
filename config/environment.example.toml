@@ -1,0 +1,25 @@
+# Paths are relative to the project root. Runtime processes use independent venvs.
+[coordinator]
+# Launcher uses -Port / -DataDir / -TyranoDir (or AUTO_DRAMA_DATA_DIR / AUTO_DRAMA_TYRANO_DIR).
+# This TOML remains a reference template; it is not loaded automatically.
+host = "127.0.0.1"
+port = 8000
+data_dir = "data"
+database_url = "sqlite:///data/auto_drama.db"
+
+[worker]
+root = "services/worker"
+python = "services/worker/.venv/Scripts/python.exe"
+models_dir = "services/worker/models"
+cache_dir = "services/worker/cache"
+
+[runtimes]
+llama_cpp = "services/worker/runtimes/llama_cpp"
+irodori = "services/worker/runtimes/irodori"
+diffusers = "services/worker/runtimes/diffusers"
+
+[tyrano]
+# M3 uses -TyranoDir or AUTO_DRAMA_TYRANO_DIR; it serves /player/<build_id>/ on the API port.
+install_dir = "tyranoscript"
+host = "127.0.0.1"
+port = 8080

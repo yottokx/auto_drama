@@ -1,0 +1,141 @@
+{
+  "$defs": {
+    "Locks": {
+      "additionalProperties": false,
+      "properties": {
+        "settings": {
+          "default": false,
+          "title": "Settings",
+          "type": "boolean"
+        },
+        "appearance": {
+          "default": false,
+          "title": "Appearance",
+          "type": "boolean"
+        },
+        "voice": {
+          "default": false,
+          "title": "Voice",
+          "type": "boolean"
+        }
+      },
+      "title": "Locks",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "age": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Age",
+      "type": "string"
+    },
+    "gender": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Gender",
+      "type": "string"
+    },
+    "role": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Role",
+      "type": "string"
+    },
+    "freeform": {
+      "maxLength": 30000,
+      "title": "Freeform",
+      "type": "string"
+    },
+    "settings": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Settings",
+      "type": "string"
+    },
+    "appearance": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Appearance",
+      "type": "string"
+    },
+    "height_cm": {
+      "anyOf": [
+        {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Height Cm"
+    },
+    "body_type": {
+      "default": "unknown",
+      "enum": [
+        "humanoid",
+        "nonhumanoid",
+        "unknown"
+      ],
+      "title": "Body Type",
+      "type": "string"
+    },
+    "voice": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Voice",
+      "type": "string"
+    },
+    "locked": {
+      "$ref": "#/$defs/Locks"
+    },
+    "selfIntroduction": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Selfintroduction",
+      "type": "string"
+    },
+    "sampleLines": {
+      "items": {
+        "maxLength": 1000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Samplelines",
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "age",
+    "gender",
+    "role",
+    "freeform",
+    "settings",
+    "appearance",
+    "voice",
+    "locked",
+    "selfIntroduction",
+    "sampleLines"
+  ],
+  "title": "CharacterResult",
+  "type": "object"
+}

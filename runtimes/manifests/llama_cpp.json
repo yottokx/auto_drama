@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "llama.cpp",
+  "repository": "https://github.com/ggml-org/llama.cpp.git",
+  "source_commit": "58367713a6935c0810103378144008df32e3d5db",
+  "source_selection": "Official repository master HEAD cloned on 2026-09-22; subsequent installs reproduce this commit.",
+  "install_path": "services/worker/runtimes/llama_cpp",
+  "source_path": "services/worker/runtimes/llama_cpp/source",
+  "server_path": "services/worker/runtimes/llama_cpp/bin/llama-server.exe",
+  "binary_release": "b11093",
+  "binary_commit": "fb34fc262c1b43f1832c7472429fb2247d650493",
+  "binary_release_url": "https://github.com/ggml-org/llama.cpp/releases/tag/b11093",
+  "binary_note": "Official prebuilt runtime used without a local CUDA toolkit. The binary release commit differs from the cloned master HEAD; the matching HEAD release was pending during setup.",
+  "platform": "windows-x86_64",
+  "backend": "CUDA 13.4",
+  "assets": [
+    {
+      "name": "llama-b11093-bin-win-cuda-13.4-x64.zip",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11093/llama-b11093-bin-win-cuda-13.4-x64.zip",
+      "sha256": "a015a34aae178ead6b9b03d5890cccdf3c4904a15e69150b225da0cb32c1cde6"
+    },
+    {
+      "name": "cudart-llama-bin-win-cuda-13.4-x64.zip",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11093/cudart-llama-bin-win-cuda-13.4-x64.zip",
+      "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+    }
+  ],
+  "license_url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/fb34fc262c1b43f1832c7472429fb2247d650493/LICENSE",
+  "license_sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+  "models_included": false
+}

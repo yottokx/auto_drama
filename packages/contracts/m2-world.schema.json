@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "prompt": {
+      "maxLength": 30000,
+      "title": "Prompt",
+      "type": "string"
+    },
+    "genre": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Genre",
+      "type": "string"
+    },
+    "mood": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Mood",
+      "type": "string"
+    },
+    "notes": {
+      "maxLength": 30000,
+      "title": "Notes",
+      "type": "string"
+    },
+    "chapterCount": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Chaptercount",
+      "type": "integer"
+    },
+    "setting": {
+      "maxLength": 30000,
+      "minLength": 1,
+      "title": "Setting",
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "prompt",
+    "genre",
+    "mood",
+    "notes",
+    "chapterCount",
+    "setting"
+  ],
+  "title": "WorldResult",
+  "type": "object"
+}

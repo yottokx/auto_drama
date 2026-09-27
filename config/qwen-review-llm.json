@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "model": {
+    "filename": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+    "relative_path": "private/model_download/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+    "size_bytes": 17559178144,
+    "local_sha256": "3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e",
+    "chat_template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+    "provenance": "User-provided local GGUF; local SHA256 recorded in the isolated r8 comparison, not a publisher checksum."
+  },
+  "server": {
+    "executable": "services/worker/runtimes/llama_cpp/bin/llama-server.exe",
+    "manifest": "runtimes/manifests/llama_cpp.json",
+    "build_info": "b11093-fb34fc262"
+  }
+}

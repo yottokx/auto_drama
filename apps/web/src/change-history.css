@@ -1,0 +1,20 @@
+.change-history { margin-top: 30px; padding-top: 20px; border-top: 1px solid #dedfce; }
+.change-history > summary { cursor: pointer; color: #637453; font-size: 13px; }
+.change-history > summary > svg { margin: 0 7px 0 2px; }
+.change-history-content { margin-top: 18px; padding: 22px; border: 1px solid #e0e4d5; border-radius: 8px; background: #fffefa; color: #626957; }
+.change-history-intro, .change-history-operation, .change-history-hint { font-size: 12px; line-height: 1.85; }
+.change-history-operation, .change-history-hint { margin: 12px 0; padding: 11px 14px; border-radius: 5px; background: #f3f1e7; color: #80724e; }
+.change-history-list { display: grid; margin-top: 18px; max-height: 470px; overflow-y: auto; }
+.change-history-list > li { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 16px 0; border-top: 1px solid #eaebdf; }
+.change-history-entry { display: flex; align-items: baseline; min-width: 0; gap: 13px; }
+.change-history-number { flex-shrink: 0; color: #929d83; font-size: 11px; }
+.change-history-entry strong { display: block; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.change-history-entry time, .change-history-entry small { display: block; margin-top: 5px; color: #959a89; font-size: 11px; }
+.change-history-list .button { flex-shrink: 0; padding: 8px 12px; font-size: 11px; }
+.change-history-current { flex-shrink: 0; font-size: 11px; color: #668151; background: #edf3e6; padding: 5px 9px; border-radius: 4px; }
+.change-history-confirm { border: 1px solid #d8bca2; background: #fff8ed; padding: 20px; margin-top: 20px; border-radius: 7px; }
+.change-history-confirm h3 { font-size: 14px; color: #80593e; line-height: 1.7; }
+.change-history-confirm > p { font-size: 12px; line-height: 1.9; margin-top: 10px; }
+.change-history-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 19px; }
+.change-history-error { margin: 12px 0; }
+@media (max-width: 600px) { .change-history-content { padding: 16px; } .change-history-list > li { flex-wrap: wrap; gap: 10px; } .change-history-entry { width: 100%; } .change-history-list > li > .button, .change-history-current { margin-left: 27px; } .change-history-confirm { padding: 16px; } }
