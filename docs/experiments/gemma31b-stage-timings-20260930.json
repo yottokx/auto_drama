@@ -1,0 +1,227 @@
+{
+  "method": "final carried_usage + local step attempts, dispatched only",
+  "runs": [
+    {
+      "setting": "IQ4_XS / none / 16k",
+      "title": "鋼の挽歌と白銀の都",
+      "jobs": [
+        "97885673d2274411a4ec1e401766bb84",
+        "7f947cc08c6841efbf3f66f12545935e",
+        "4e1b7e3602fe46e39f1ff1f30cef6ea3"
+      ],
+      "scene_count": 8,
+      "body_characters": 11963,
+      "metrics": {
+        "requests": 42,
+        "elapsed_seconds": 726.797,
+        "prompt_tokens_measured": 246601,
+        "completion_tokens_measured": 41058,
+        "charged_tokens": 287659,
+        "unmeasured_requests": 0,
+        "model_loads": 3,
+        "model_switches": 0
+      },
+      "stages": {
+        "script-cast": {
+          "calls": 1,
+          "elapsed_seconds": 21.562,
+          "prompt_tokens": 3032,
+          "completion_tokens": 847,
+          "average_seconds": 21.562
+        },
+        "script-outline": {
+          "calls": 1,
+          "elapsed_seconds": 34.078,
+          "prompt_tokens": 4537,
+          "completion_tokens": 2207,
+          "average_seconds": 34.078
+        },
+        "script-allocation": {
+          "calls": 1,
+          "elapsed_seconds": 18.453,
+          "prompt_tokens": 6162,
+          "completion_tokens": 1092,
+          "average_seconds": 18.453
+        },
+        "script-plan": {
+          "calls": 3,
+          "elapsed_seconds": 76.017,
+          "prompt_tokens": 26250,
+          "completion_tokens": 4393,
+          "average_seconds": 25.339
+        },
+        "script-scene": {
+          "calls": 8,
+          "elapsed_seconds": 180.515,
+          "prompt_tokens": 80064,
+          "completion_tokens": 10380,
+          "average_seconds": 22.564
+        },
+        "script-staging": {
+          "calls": 26,
+          "elapsed_seconds": 357.598,
+          "prompt_tokens": 114023,
+          "completion_tokens": 20827,
+          "average_seconds": 13.754
+        },
+        "script-handoff": {
+          "calls": 2,
+          "elapsed_seconds": 37.609,
+          "prompt_tokens": 12533,
+          "completion_tokens": 1312,
+          "average_seconds": 18.805
+        }
+      },
+      "request_elapsed_seconds": 725.832,
+      "other_seconds": 0.965
+    },
+    {
+      "setting": "UD-Q4_K_XL / none / 16k",
+      "title": "聖血の枷と鉄の誓い",
+      "jobs": [
+        "f8fef610ab8246f8bc17bd90ee1acb28",
+        "e9ad62e5cf5845fd8a97c9ee8a04c875",
+        "2e338422a4734472a93f32438db8b892"
+      ],
+      "scene_count": 9,
+      "body_characters": 11570,
+      "metrics": {
+        "requests": 46,
+        "elapsed_seconds": 938.374,
+        "prompt_tokens_measured": 280213,
+        "completion_tokens_measured": 48955,
+        "charged_tokens": 329168,
+        "unmeasured_requests": 0,
+        "model_loads": 3,
+        "model_switches": 0
+      },
+      "stages": {
+        "script-cast": {
+          "calls": 1,
+          "elapsed_seconds": 25.266,
+          "prompt_tokens": 3005,
+          "completion_tokens": 925,
+          "average_seconds": 25.266
+        },
+        "script-outline": {
+          "calls": 1,
+          "elapsed_seconds": 31.484,
+          "prompt_tokens": 4421,
+          "completion_tokens": 1835,
+          "average_seconds": 31.484
+        },
+        "script-allocation": {
+          "calls": 1,
+          "elapsed_seconds": 17.125,
+          "prompt_tokens": 5624,
+          "completion_tokens": 935,
+          "average_seconds": 17.125
+        },
+        "script-plan": {
+          "calls": 4,
+          "elapsed_seconds": 134.063,
+          "prompt_tokens": 33746,
+          "completion_tokens": 7280,
+          "average_seconds": 33.516
+        },
+        "script-scene": {
+          "calls": 9,
+          "elapsed_seconds": 208.594,
+          "prompt_tokens": 94304,
+          "completion_tokens": 10637,
+          "average_seconds": 23.177
+        },
+        "script-staging": {
+          "calls": 28,
+          "elapsed_seconds": 480.045,
+          "prompt_tokens": 127136,
+          "completion_tokens": 26147,
+          "average_seconds": 17.144
+        },
+        "script-handoff": {
+          "calls": 2,
+          "elapsed_seconds": 40.75,
+          "prompt_tokens": 11977,
+          "completion_tokens": 1196,
+          "average_seconds": 20.375
+        }
+      },
+      "request_elapsed_seconds": 937.327,
+      "other_seconds": 1.047
+    },
+    {
+      "setting": "UD-Q4_K_XL / medium / 32k",
+      "title": "鉄と血の叙事詩",
+      "jobs": [
+        "56732c32451849509eb307f5338dfe52",
+        "27dea9c623854e9292e69ce25d7d9236",
+        "960491c501b443868239ed6ffdd572f8"
+      ],
+      "scene_count": 17,
+      "body_characters": 18423,
+      "metrics": {
+        "requests": 74,
+        "elapsed_seconds": 3083.967,
+        "prompt_tokens_measured": 580913,
+        "completion_tokens_measured": 170494,
+        "charged_tokens": 751407,
+        "unmeasured_requests": 0,
+        "model_loads": 4,
+        "model_switches": 0
+      },
+      "stages": {
+        "script-cast": {
+          "calls": 1,
+          "elapsed_seconds": 54.969,
+          "prompt_tokens": 2986,
+          "completion_tokens": 2775,
+          "average_seconds": 54.969
+        },
+        "script-outline": {
+          "calls": 1,
+          "elapsed_seconds": 54.015,
+          "prompt_tokens": 4950,
+          "completion_tokens": 3176,
+          "average_seconds": 54.015
+        },
+        "script-allocation": {
+          "calls": 1,
+          "elapsed_seconds": 41.14,
+          "prompt_tokens": 6483,
+          "completion_tokens": 2348,
+          "average_seconds": 41.14
+        },
+        "script-plan": {
+          "calls": 7,
+          "elapsed_seconds": 573.062,
+          "prompt_tokens": 89150,
+          "completion_tokens": 31225,
+          "average_seconds": 81.866
+        },
+        "script-scene": {
+          "calls": 17,
+          "elapsed_seconds": 593.436,
+          "prompt_tokens": 250406,
+          "completion_tokens": 30275,
+          "average_seconds": 34.908
+        },
+        "script-staging": {
+          "calls": 45,
+          "elapsed_seconds": 1669.219,
+          "prompt_tokens": 208412,
+          "completion_tokens": 96357,
+          "average_seconds": 37.094
+        },
+        "script-handoff": {
+          "calls": 2,
+          "elapsed_seconds": 95.828,
+          "prompt_tokens": 18526,
+          "completion_tokens": 4338,
+          "average_seconds": 47.914
+        }
+      },
+      "request_elapsed_seconds": 3081.669,
+      "other_seconds": 2.298
+    }
+  ]
+}

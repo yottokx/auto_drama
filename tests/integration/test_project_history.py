@@ -381,8 +381,12 @@ def test_restore_preproduction_revision_keeps_future_chapter_unselected(tmp_path
         worker_id = client.post(
             "/api/workers", json={"name": "history fixture", "capabilities": [
                 "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone",
+                "tts_download",
             ]},
         ).json()["id"]
+        from tests.integration.test_m2 import report_voice_inventory
+
+        report_voice_inventory(client, worker_id)
         finish(client, worker_id)
         published = production(client, identifier)
         before_counts = counts(coordinator)

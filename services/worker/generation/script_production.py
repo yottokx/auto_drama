@@ -31,6 +31,18 @@ USAGE_KEYS = ("chapter", "purpose", "status", "dispatched", "charged_tokens",
               "reserved_tokens", "elapsed_seconds", "usage")
 
 
+def _generation_identity_config(config: dict, payload: dict) -> dict:
+    """Keep managed model identity portable without changing legacy checkpoints."""
+    if not payload.get("profile", {}).get("common_settings_version"):
+        return config
+    identity = copy.deepcopy(config)
+    if "llm_base" in identity:
+        identity.pop("llm_config", None)
+        identity["llm_base"]["model"].pop("relative_path", None)
+        identity["llm_base"]["server"].pop("executable", None)
+    return identity
+
+
 class ProductionScriptRun(ScriptRun):
     def __init__(self, output: Path, config: dict, payload: dict):
         count = payload["approval_snapshot"]["world"]["result"]["chapterCount"]
@@ -42,7 +54,8 @@ class ProductionScriptRun(ScriptRun):
             "approval_snapshot": payload["approval_snapshot"], "approved_chapter_count": count,
             "storyline_id": payload["storyline_id"], "seed": payload["seed"],
             "profile": payload.get("profile", {}), "profiles": payload.get("profiles", {}),
-            "workflow_limits": payload.get("workflow_limits", {}), "generation_config": config,
+            "workflow_limits": payload.get("workflow_limits", {}),
+            "generation_config": _generation_identity_config(config, payload),
             "script_options": ScriptOptions.model_validate(payload.get("script_options", {})).model_dump(),
             "script_examples": example_catalog_identity()}
         manifest = {**identity, "input_sha256": digest(identity)}
@@ -69,6 +82,33 @@ class ProductionScriptRun(ScriptRun):
                 if key in self.inherited and not (output / filename).exists():
                     write_json(output / filename, self.inherited[key])
         super().__init__(output, manifest, config, payload, number)
+
+    def retry_failed_steps(self, generation: int) -> None:
+        """Grant bounded fresh calls only after an explicit coordinator retry.
+
+        This execution counter is separate from the immutable production input.
+        Keep old replies, charges and request ordinals for auditing and budgets.
+        """
+        previous = self.state.get("retry_generation", 0)
+        if type(generation) is not int or generation < previous:
+            raise ValueError("Invalid or stale script retry generation.")
+        if generation == previous:
+            return
+        for step in self.state["steps"].values():
+            attempts = self._current_attempts(step)
+            if not attempts or step.get("core_cast_replacement"):
+                continue
+            last = attempts[-1]
+            if step.get("accepted_request") == last.get("request"):
+                continue
+            if not last.get("validation_error") and last["status"] not in {"failed", "interrupted"}:
+                continue
+            start = len(step["attempts"])
+            step["retry_attempt_start"] = start
+            step.setdefault("retry_generations", []).append({"generation": generation,
+                                                            "start_attempt": start})
+        self.state["retry_generation"] = generation
+        self.persist()
 
     @staticmethod
     def _history(payload, manifest, number):

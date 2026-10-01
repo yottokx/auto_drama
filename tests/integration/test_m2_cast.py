@@ -165,8 +165,11 @@ def test_full_mesh_generated_without_instructions_and_approval_tracks_immutable_
         from tests.integration.test_m3 import output as chapter_output
 
         chapter_worker = client.post(
-            "/api/workers", json={"name": "chapter fixture", "capabilities": list(M3_KINDS)},
+            "/api/workers", json={"name": "chapter fixture", "capabilities": [*M3_KINDS, "tts_download"]},
         ).json()["id"]
+        from tests.integration.test_m2 import report_voice_inventory
+
+        report_voice_inventory(client, chapter_worker)
         chapter_job = claim(client, chapter_worker)
         chapter_result = narrative(chapter_job["payload"]["approval_snapshot"])
         chapter_result["outline"]["character_arcs"] = [

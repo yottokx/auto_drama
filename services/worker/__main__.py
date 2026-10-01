@@ -7,6 +7,7 @@ import logging
 import math
 import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 # Direct file execution is supported by the isolated-mode PowerShell launcher.
@@ -50,15 +51,26 @@ def main() -> int:
         parser.error("--name cannot be empty")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    root = Path(__file__).resolve().parents[2]
     generation_runner = None
     generation_kinds = []
+    llm_models = []
+    refresh_capabilities = None
     if not args.export_only:
         from services.worker.generation import check_readiness, generate_job
 
         readiness = check_readiness()
+        from services.worker.model_config import catalog
+        llm_models, model_errors = catalog(Path(__file__).resolve().parents[2])
+        for error in model_errors:
+            logger.warning("Worker model registry: %s", error)
         generation_kinds = readiness["available_job_kinds"]
-        if generation_kinds:
-            generation_runner = generate_job
+        generation_runner = generate_job
+
+        def refresh_capabilities():
+            state = check_readiness()
+            models, _ = catalog(Path(__file__).resolve().parents[2])
+            return state["available_job_kinds"], models
         for error in readiness["errors"]:
             logger.warning("Local model configuration: %s", error)
         logger.info(
@@ -68,6 +80,7 @@ def main() -> int:
         with (
             reuse_voice_runtime(enabled=not args.no_voice_reuse and not args.export_only) as voices,
             httpx.Client(base_url=args.coordinator, timeout=30.0, trust_env=False) as client,
+            ExitStack() as download_stack,
         ):
             worker = WorkerClient(
                 client,
@@ -76,9 +89,25 @@ def main() -> int:
                 generation_kinds=generation_kinds,
                 work_dir=args.work_dir,
                 before_job=prepare_job,
+                llm_models=llm_models,
+                refresh_capabilities=refresh_capabilities,
+                extra_capabilities=["tts_download"] if not args.export_only and not args.once else [],
             )
+            downloads_started = False
             while True:
                 try:
+                    if not args.export_only and not args.once and not downloads_started:
+                        from services.worker.tts_download_client import TTSDownloadAgent
+
+                        if worker.worker_id is None:
+                            worker.register()
+                        download_client = download_stack.enter_context(httpx.Client(
+                            base_url=args.coordinator, timeout=15, trust_env=False
+                        ))
+                        download_stack.enter_context(TTSDownloadAgent(
+                            download_client, worker.worker_id, root
+                        ))
+                        downloads_started = True
                     result = worker.run_once()
                 except httpx.HTTPError as error:
                     logger.warning("Coordinator unavailable: %s", error)

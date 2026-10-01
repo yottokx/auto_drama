@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from packages.contracts.tts_profile import build_tts_profile
 from packages.tyrano_export import demo_content
 from services.worker.client import WorkerClient
 from services.worker.generation import voice_session
@@ -130,6 +131,28 @@ def test_precision_change_restarts_child_under_same_lease(runtime):
         assert runtime.events == [("acquire", "voice")]
 
 
+def test_design_small_to_clone_large_restarts_and_exits_previous_child(runtime):
+    choices = {
+        "voice_design": {"provider_id": "irodori", "model_id": "irodori-v4.1-small", "precision": "bf16"},
+        "voice_clone": {"provider_id": "irodori", "model_id": "irodori-v4-large", "precision": "bf16"},
+    }
+    profile = build_tts_profile(choices)
+    with voice_session.reuse_voice_runtime() as session:
+        first = runtime.run(session, runtime.output("design", mode="design", num_steps=40,
+                                                   tts_profile=profile["voice_design"]))
+        previous = runtime.processes[0]
+        second = runtime.run(session, runtime.output("clone", mode="clone", num_steps=40,
+                                                    tts_profile=profile["voice_clone"]))
+        assert previous.poll() is not None
+        assert first["pid"] != second["pid"]
+        assert len(runtime.starts()) == 2
+        assert runtime.events == [("acquire", "voice")]
+        third = runtime.run(session, runtime.output("clone2", mode="clone", num_steps=40,
+                                                   tts_profile=profile["voice_clone"]))
+        assert third["pid"] == second["pid"]
+        assert len(runtime.starts()) == 2
+
+
 @pytest.mark.parametrize("kind", ["m2_image", "m3_narrative", "tyrano_export"])
 def test_nonvoice_preparation_stops_child_before_other_gpu_lease(runtime, kind):
     with voice_session.reuse_voice_runtime() as session:
@@ -200,18 +223,21 @@ def test_timeout_does_not_kill_unrelated_process(runtime):
         unrelated.wait(timeout=10)
 
 
-def test_age_bound_rotates_only_between_requests_and_reacquires_lease(runtime):
+def test_long_large_voice_sequence_keeps_child_and_gpu_lease(runtime, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
+    choice = {"provider_id": "irodori", "model_id": "irodori-v4-large", "precision": "bf16"}
+    profile = build_tts_profile({"voice_design": choice, "voice_clone": choice})["voice_clone"]
     with voice_session.reuse_voice_runtime() as session:
-        runtime.run(session, runtime.output("first"))
-        previous = runtime.processes[0]
-        session._began -= session.max_seconds + 1
-        assert previous.poll() is None
-        runtime.run(session, runtime.output("second"))
-        assert previous.poll() is not None
-        assert len(runtime.starts()) == 2
-        assert runtime.events[:3] == [
-            ("acquire", "voice"), ("release", "voice"), ("acquire", "voice"),
-        ]
+        for index, seconds in enumerate((0, 45, 65, 125, 600)):
+            elapsed[0] = seconds
+            runtime.run(session, runtime.output(f"line-{index}", mode="clone", num_steps=40,
+                                               tts_profile=profile))
+        assert len(runtime.starts()) == 1
+        assert runtime.processes[0].poll() is None
+        assert runtime.events == [("acquire", "voice")]
+    assert runtime.processes[0].poll() is not None
+    assert runtime.events == [("acquire", "voice"), ("release", "voice")]
 
 
 def test_disabled_or_absent_session_preserves_original_lease(runtime):

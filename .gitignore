@@ -12,6 +12,7 @@ htmlcov/
 node_modules/
 dist/
 private/
+/services/worker/config/models.local.json
 .env
 .env.*
 !.env.example

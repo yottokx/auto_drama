@@ -1,6 +1,7 @@
 """Persisted ensemble design and non-gating episode size guidance."""
 
 from collections import defaultdict
+from itertools import combinations
 
 from pydantic import Field, model_validator
 
@@ -62,6 +63,10 @@ class CastPlan(Contract):
     connections: list[CastConnection] = Field(max_length=30)
 
 
+class CastConnectionError(ValueError):
+    """The people are valid, but their relationship references need repair."""
+
+
 def check_cast(plan: CastPlan, main_ids: set[str]):
     ids = [row.id for row in plan.supporting_characters]
     if len(set(ids)) != len(ids) or set(ids) & (main_ids | {"NARRATOR"}):
@@ -70,12 +75,89 @@ def check_cast(plan: CastPlan, main_ids: set[str]):
     if len(life_ids) != len(set(life_ids)) or set(life_ids) != set(ids):
         raise ValueError("Every planned supporting character needs one everyday context.")
     pairs = set()
-    for row in plan.connections:
+    for index, row in enumerate(plan.connections, 1):
         pair = frozenset(row.character_ids)
-        if (len(pair) != 2 or not pair <= main_ids | set(ids)
-                or pair <= main_ids or pair in pairs):
-            raise ValueError("Cast relationships must reference distinct known people without replacing approved pairs.")
+        problem = ("self-reference" if len(pair) != 2 else
+                   "unknown people" if not pair <= main_ids | set(ids) else
+                   "approved main pair" if pair <= main_ids else
+                   "duplicate pair" if pair in pairs else None)
+        if problem:
+            raise CastConnectionError(f"Cast relationship {index}: {problem}: {row.character_ids}.")
         pairs.add(pair)
+
+
+class CastReferenceRepair(Contract):
+    assignments: dict[str, str]
+
+
+def approved_main_assignments(plan: CastPlan, main_ids: set[str]) -> dict[str, str]:
+    """Known main/main rows always defer to the immutable approved relationships."""
+    return {f"R{index}": "approved_main_pair"
+            for index, row in enumerate(plan.connections, 1)
+            if len(set(row.character_ids)) == 2 and set(row.character_ids) <= main_ids}
+
+
+def connection_repair_material(plan: CastPlan, main: list[dict]):
+    """Assign short handles to concrete pairs; never ask the model to copy UUIDs."""
+    people = [*main, *(row.model_dump(mode="json") for row in plan.supporting_characters)]
+    main_ids = {row["id"] for row in main}
+    pairs = {}
+    for left, right in combinations(people, 2):
+        if {left["id"], right["id"]} <= main_ids:
+            continue
+        pairs[f"P{len(pairs) + 1}"] = [left["id"], right["id"]]
+    names = {row["id"]: row["name"] for row in people}
+    sources = {f"R{index}": row for index, row in enumerate(plan.connections, 1)}
+    schema = CastReferenceRepair.model_json_schema()
+    schema["$defs"] = {"PairChoice": {"type": "string", "enum": [*pairs, "approved_main_pair", "unresolved"]}}
+    schema["properties"]["assignments"] = {
+        "type": "object", "properties": {key: {"$ref": "#/$defs/PairChoice"} for key in sources},
+        "required": list(sources), "additionalProperties": False,
+    }
+    material = {
+        "people": [{key: row[key] for key in ("id", "name", "role", "settings") if key in row}
+                   for row in people],
+        "available_pairs": [{"pair": key, "people": [{"id": cid, "name": names[cid]} for cid in ids]}
+                            for key, ids in pairs.items()],
+        "original_connections": [{"row": key, **row.model_dump(mode="json")} for key, row in sources.items()],
+    }
+    return material, schema, pairs
+
+
+def apply_connection_repair(plan: CastPlan, repair: CastReferenceRepair, pairs: dict,
+                            main_ids: set[str]) -> CastPlan:
+    rows = {f"R{index}": row for index, row in enumerate(plan.connections, 1)}
+    if set(repair.assignments) != set(rows):
+        raise ValueError("Relationship repair must assign every original row exactly once.")
+    grouped = {}
+    for key, row in rows.items():
+        selected = repair.assignments[key]
+        if selected == "approved_main_pair":
+            pair = set(row.character_ids)
+            if len(pair) == 2 and pair <= main_ids:
+                continue  # The authoritative approved relationship remains in the snapshot.
+            raise ValueError(f"{key} is not an approved main pair and cannot be discarded.")
+        if selected not in pairs:
+            raise ValueError(f"{key}: relationship reference remains unresolved.")
+        grouped.setdefault(selected, []).append(row.relationship)
+    connections = [CastConnection(character_ids=pairs[key], relationship="\n".join(texts))
+                   for key, texts in grouped.items()]
+    corrected = plan.model_copy(update={"connections": connections})
+    check_cast(corrected, main_ids)
+    return corrected
+
+
+CONNECTION_REPAIR_INSTRUCTION = (
+    "保存済みキャストの関係行について、人物の参照先だけを修復します。キャラ設定や説明文を創作・変更しません。"
+    "original_connectionsの各R番号へ、available_pairsのP番号を1つ割り当てます。"
+    "元のcharacter_idsにはコピー間違いがあるため、関係の説明文に書かれた名前とpeopleの名前・設定を照合してください。"
+    "長いIDを書き写さず、P番号だけを返します。同じペアの双方の視点を別々に記した行は同じP番号にできます。"
+    "その場合、元の説明文はコード側で全て保持して1つの関係にまとめます。"
+    "元から承認メイン同士の行だけはapproved_main_pairを選び、承認済み関係を優先します。"
+    "人物を特定できなければunresolvedを選びます。前者・後者など人物の順序に依存する説明は、"
+    "Pのpeople順に割り当てても意味が変わらないと確定できなければunresolvedにします。"
+    "行の省略、新しい人物、関係の説明文は出力しません。"
+)
 
 
 def story_character(character: dict):

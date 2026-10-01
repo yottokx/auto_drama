@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import threading
+import time
 import wave
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -105,6 +106,9 @@ class WorkerClient:
         generation_kinds: Sequence[str] = M2_JOB_KINDS,
         work_dir: Path | None = None,
         before_job: Callable[[str], None] | None = None,
+        llm_models: list[dict] | None = None,
+        refresh_capabilities: Callable[[], tuple[list[str], list[dict]]] | None = None,
+        extra_capabilities: Sequence[str] = (),
     ) -> None:
         if not name.strip():
             raise ValueError("Worker name cannot be empty")
@@ -122,11 +126,17 @@ class WorkerClient:
         cache = work_dir or Path(__file__).resolve().parent / "cache" / "m2" / "jobs"
         self.work_dir = cache.resolve() / namespace
         self.worker_id: str | None = None
+        self.llm_models = llm_models or []
+        self.refresh_capabilities = refresh_capabilities
+        self.extra_capabilities = list(dict.fromkeys(extra_capabilities))
+        self._next_catalog_refresh = 0.0
 
     def register(self) -> str:
         response = self.client.post(
             "/api/workers",
-            json={"name": self.name, "capabilities": ["tyrano_export", *self.generation_kinds]},
+            json={"name": self.name, "capabilities": ["tyrano_export", *self.generation_kinds,
+                                                     *self.extra_capabilities],
+                  **({"llm_models": self.llm_models} if self.llm_models else {})},
         )
         response.raise_for_status()
         self.worker_id = response.json()["id"]
@@ -277,6 +287,15 @@ class WorkerClient:
         is uploaded, and stale attempts never submit a failure for a new lease.
         Registration/claim errors propagate so callers can choose retry policy.
         """
+        if self.refresh_capabilities is not None and time.monotonic() >= self._next_catalog_refresh:
+            kinds, models = self.refresh_capabilities()
+            if self.worker_id is not None and (kinds != self.generation_kinds or models != self.llm_models):
+                updated = self.client.post(f"/api/workers/{self.worker_id}/capabilities", json={
+                    "capabilities": ["tyrano_export", *kinds, *self.extra_capabilities],
+                    "llm_models": models})
+                updated.raise_for_status()
+            self.generation_kinds, self.llm_models = kinds, models
+            self._next_catalog_refresh = time.monotonic() + 10
         if self.worker_id is None:
             self.register()
         response = self.client.post(f"/api/workers/{self.worker_id}/claim", json={})

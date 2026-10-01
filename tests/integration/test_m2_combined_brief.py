@@ -59,6 +59,7 @@ def generate_combined(client, count=2):
 def test_combined_brief_world_confirmation_automatically_generates_complete_cast(tmp_path, count):
     with TestClient(create_app(tmp_path)) as client:
         project, worker_id = generate_combined(client, count)
+        original_brief = brief_values(project)
         confirmation = project["draft"]["worldConfirmationArtifactId"]
         confirmation_bytes = client.get(f"/api/artifacts/{confirmation}/content").content
         # Repeated confirmation during the generated pipeline is harmless.
@@ -68,6 +69,14 @@ def test_combined_brief_world_confirmation_automatically_generates_complete_cast
         while job := claim(client, worker_id):
             jobs.append(job)
             assert job["payload"]["world_result"] == WORLD
+            assert job["payload"]["world_input"] == original_brief["world"]
+            assert job["payload"]["cast_inputs"] == original_brief["characters"]
+            assert job["payload"]["relationship_inputs"] == original_brief["relationshipInputs"]
+            if job["payload"]["character_id"]:
+                assert job["payload"]["character_input"] == next(
+                    person for person in original_brief["characters"]
+                    if person["id"] == job["payload"]["character_id"]
+                )
             assert complete(client, job, worker_id).status_code == 200
         kinds = [job["kind"] for job in jobs]
         assert kinds == [

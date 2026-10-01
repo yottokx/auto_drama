@@ -9,6 +9,7 @@ import { createCharacterBrief, createInitialWizardDraft, type CharacterBrief, ty
 import { RelationshipReview, relationshipPairs } from './RelationshipSteps'
 import { ProductionPanel } from './ProductionPanel'
 import { ChangeHistory } from './ChangeHistory'
+import { SettingsDialog } from './SettingsDialog'
 import './wizard.css'
 import './m2.css'
 
@@ -31,6 +32,7 @@ export default function LiveWizardApp() {
   const [pending, setPending] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [notice, setNotice] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const draft = api.detail?.draft
   const busy = api.mutating || Boolean(api.detail?.jobs.some(job => job.kind.startsWith('m2_') && activeJob(job)))
   const current = steps.find(step => step.id === draft?.step) ?? steps[0]
@@ -58,6 +60,7 @@ export default function LiveWizardApp() {
   }
   function selectProject(id: string) { if (canLeave()) { api.select(id); setLibrary(false); setMenuOpen(false); window.scrollTo({ top: 0 }) } }
   return <div className="studio wizard-studio">
+    {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>}
     <a className="skip-link" href="#main">メインコンテンツへ</a>
     {menuOpen && <button className="nav-scrim" aria-label="ナビゲーションを閉じる" onClick={() => setMenuOpen(false)}/>}
     <aside id="studio-navigation" className={`studio-sidebar ${menuOpen ? 'sidebar-open' : ''}`} aria-label="メインナビゲーション">
@@ -67,7 +70,7 @@ export default function LiveWizardApp() {
       <div className="nav-divider"/><p className="nav-caption">物語をつくる · 4 STEPS</p>
       <div className="current-project"><span className="project-initial"><Icon name="book" size={16}/></span><span>{api.selectedId ? title : '作品を選択してください'}<small>{draft?.approved ? '本編制作・鑑賞' : '下書き'}</small></span></div>
       <nav className="workspace-nav" aria-label="制作ステップ">{steps.map((step, index) => <button key={step.id} className={!library && current.id === step.id ? 'nav-active' : ''} disabled={!draft || busy || isStepLocked(step.id, draft)} onClick={() => void navigate(step.id)} aria-current={!library && current.id === step.id ? 'step' : undefined}><Icon name={step.icon} size={17}/>{step.title}<span className="nav-step">{index + 1}</span></button>)}</nav>
-      <div className="sidebar-bottom"><div className="sidebar-note"><span className="tiny-spark">✧</span><p>決めたいところは、自由に。<br/>まだ決めないところは、おまかせに。</p></div><a className="m2-sidebar-link" href="/?demo=results" onClick={event => { if (!canLeave()) event.preventDefault() }}><Icon name="help" size={16}/>表示サンプルを見る</a><a className="m2-sidebar-link" href="/?view=m1" onClick={event => { if (!canLeave()) event.preventDefault() }}><Icon name="settings" size={16}/>M1の保存・書き出し</a><div className="local-profile"><span>AD</span><div>ローカルワークスペース<small><i/>M4 · 物語の制作</small></div></div></div>
+      <div className="sidebar-bottom"><button className="m2-sidebar-link" onClick={() => { if (canLeave()) { setSettingsOpen(true); setMenuOpen(false) } }}><Icon name="settings" size={16}/>設定</button><div className="sidebar-note"><span className="tiny-spark">✧</span><p>決めたいところは、自由に。<br/>まだ決めないところは、おまかせに。</p></div><a className="m2-sidebar-link" href="/?demo=results" onClick={event => { if (!canLeave()) event.preventDefault() }}><Icon name="help" size={16}/>表示サンプルを見る</a><a className="m2-sidebar-link" href="/?view=m1" onClick={event => { if (!canLeave()) event.preventDefault() }}><Icon name="settings" size={16}/>M1の保存・書き出し</a><div className="local-profile"><span>AD</span><div>ローカルワークスペース<small><i/>M4 · 物語の制作</small></div></div></div>
     </aside>
     <div className="studio-body">
       <header className="topbar"><div className="breadcrumbs"><button className="mobile-menu icon-button" aria-label="ナビゲーションを開く" aria-controls="studio-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Icon name="grid"/></button><button onClick={showLibrary}>ワークスペース</button><Icon name="chevron" size={12}/><span>{library ? '作品ライブラリ' : title}</span></div><div className="topbar-right"><span className="preview-pill">M4</span><span className="save-status"><Icon name="check" size={13}/>{api.connectionError ? 'サーバー接続を確認中' : pending ? '未保存の変更あり' : api.mutating ? '保存中…' : 'サーバーに保存'}</span></div></header>

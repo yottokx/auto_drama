@@ -5,38 +5,43 @@ import io
 import json
 import os
 import sys
+from contextlib import contextmanager
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 
+from packages.contracts.tts_profile import build_tts_profile
 from services.worker.generation import voice_runner
+from services.worker.generation.tts_runtime import TTSRuntimeProfile, resolve_request_profile
 
 
 @pytest.fixture
 def fake_irodori(tmp_path, monkeypatch):
     calls = SimpleNamespace(configure=[], verify=[], keys=[], sampling=[], writes=[], inspected=[])
     runtime_root = tmp_path / "irodori"
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"source_commit": "pinned", "models": [{"revision": "v1"}]}))
     monkeypatch.setattr(voice_runner, "RUNTIME_ROOT", runtime_root)
-    monkeypatch.setattr(voice_runner, "MANIFEST_PATH", manifest)
     monkeypatch.setattr(sys, "prefix", str(runtime_root / ".venv"))
     monkeypatch.setattr(voice_runner, "configure_environment", lambda: calls.configure.append(True))
     monkeypatch.setattr(voice_runner.subprocess, "check_output", lambda *args, **kwargs: "pinned\n")
-    monkeypatch.setattr(voice_runner.importlib.metadata, "version", lambda name: "test-version")
+    monkeypatch.setattr(voice_runner.importlib.metadata, "version",
+                        lambda name: "0.16.0" if name == "torchao" else "test-version")
 
-    def verify(manifest, model_root):
-        calls.verify.append((manifest, model_root))
-        return {
-            name: model_root / name
-            for name in ("irodori-silentcipher", "irodori-v4.1-small", "irodori-dacvae")
-        }
+    def resolve(request):
+        bundle = deepcopy(resolve_request_profile(request).bundle)
+        bundle["source_commit"] = "pinned"
+        return TTSRuntimeProfile(bundle)
+
+    monkeypatch.setattr(voice_runner, "resolve_request_profile", resolve)
+
+    def verify(profile, root):
+        calls.verify.append((profile, root))
 
     def inspect(path):
         calls.inspected.append(path)
         return {"path": str(path), "decoded_and_non_silent": True, "duration_seconds": 1.0}
 
-    monkeypatch.setattr(voice_runner, "verify_models", verify)
+    monkeypatch.setattr(voice_runner, "verify_profile_files", verify)
     monkeypatch.setattr(voice_runner, "inspect_wav", inspect)
 
     audio = SimpleNamespace(ndim=1, size=8)
@@ -71,11 +76,22 @@ def fake_irodori(tmp_path, monkeypatch):
         print("loading model")
         return runtime
 
+    calls.quantization_type = "int8_weight_only"
+
+    @contextmanager
+    def checkpoint(*args, **kwargs):
+        yield SimpleNamespace(metadata=lambda: {
+            "irodori_quantization_json": json.dumps({"quantization_type": calls.quantization_type})
+        })
+
+    calls.cuda = SimpleNamespace(is_available=lambda: True, is_bf16_supported=lambda: True,
+                                 get_device_capability=lambda: (12, 0))
     modules = {
         "numpy": numpy,
         "silentcipher": SimpleNamespace(get_model=lambda **kwargs: None),
         "soundfile": SimpleNamespace(write=write),
-        "torch": SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)),
+        "torch": SimpleNamespace(cuda=calls.cuda),
+        "safetensors": SimpleNamespace(safe_open=checkpoint),
         "irodori_tts": SimpleNamespace(),
         "irodori_tts.inference_runtime": SimpleNamespace(
             InferenceRuntime=SimpleNamespace(from_key=from_key),
@@ -83,6 +99,8 @@ def fake_irodori(tmp_path, monkeypatch):
             SamplingRequest=SimpleNamespace,
         ),
         "irodori_tts.text_normalization": SimpleNamespace(normalize_text=lambda text: text),
+        "irodori_tts.quantization": SimpleNamespace(parse_quantization_metadata=lambda metadata:
+                                                   json.loads(metadata["irodori_quantization_json"])),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -167,10 +185,10 @@ def test_rechecks_token_limits_for_warm_runtime(tmp_path, fake_irodori):
     assert len(fake_irodori.sampling) == 1
 
 
-def test_rejects_precision_change_without_loading_second_model(tmp_path, fake_irodori):
+def test_rejects_profile_change_without_loading_second_model(tmp_path, fake_irodori):
     session = voice_runner.VoiceRuntimeSession()
     session.generate(make_request(tmp_path, "first"))
-    with pytest.raises(RuntimeError, match="precision changed; restart"):
+    with pytest.raises(RuntimeError, match="selection changed; restart"):
         session.generate(make_request(tmp_path, "second", model_precision="fp32"))
     assert len(fake_irodori.keys) == len(fake_irodori.sampling) == 1
 
@@ -189,6 +207,59 @@ def test_watermark_failure_prevents_any_result(tmp_path, fake_irodori):
         voice_runner.VoiceRuntimeSession().generate(output)
     assert fake_irodori.sampling == []
     assert not (output / "result.json").exists()
+
+
+def selected_profile(model_id, precision):
+    choice = {"provider_id": "irodori", "model_id": model_id, "precision": precision}
+    return build_tts_profile({"voice_design": choice, "voice_clone": choice})["voice_design"]
+
+
+def test_large_bf16_uses_large_checkpoint_and_records_actual_provenance(tmp_path, fake_irodori):
+    profile = selected_profile("irodori-v4-large", "bf16")
+    output = make_request(tmp_path, "large", tts_profile=profile, num_steps=profile["num_steps"])
+    voice_runner.VoiceRuntimeSession().generate(output)
+    key = fake_irodori.keys[0]
+    assert "Irodori-TTS-v4-Large/model.safetensors" in key.checkpoint.replace("\\", "/")
+    assert key.model_precision == "bf16"
+    assert key.codec_precision == "fp32"
+    report = json.loads((output / "result.json").read_text())
+    assert report["model_id"] == "irodori-v4-large"
+    assert report["precision"] == report["model_precision"] == "bf16"
+    assert report["quantization"] is None
+    assert report["model_revision"] == "2e0c55428ce97268a507f1feeb2478f8d9148e8b"
+    assert report["manifest_id"] == profile["manifest_id"]
+    assert report["dependency_revisions"]["sony/silentcipher"]
+
+
+@pytest.mark.parametrize("model_id", ["irodori-v4.1-small", "irodori-v4-large"])
+@pytest.mark.parametrize("precision", ["int8", "int4"])
+def test_official_quantized_checkpoint_uses_bf16_compute(tmp_path, fake_irodori, model_id, precision):
+    fake_irodori.quantization_type = f"{precision}_weight_only"
+    profile = selected_profile(model_id, precision)
+    output = make_request(tmp_path, "quantized", tts_profile=profile, num_steps=40)
+    voice_runner.VoiceRuntimeSession().generate(output)
+    key = fake_irodori.keys[0]
+    assert f"-Quantized/{precision}-weight-only/model.safetensors" in key.checkpoint.replace("\\", "/")
+    assert key.model_precision == "bf16"
+    report = json.loads((output / "result.json").read_text())
+    assert report["precision"] == precision
+    assert report["quantization"] == f"{precision}-weight-only"
+    assert report["versions"]["torchao"] == "0.16.0"
+
+
+def test_rejects_wrong_quantization_before_loading_weights(tmp_path, fake_irodori):
+    profile = selected_profile("irodori-v4-large", "int4")
+    output = make_request(tmp_path, "wrongquant", tts_profile=profile, num_steps=40)
+    with pytest.raises(ValueError, match="quantization differs"):
+        voice_runner.VoiceRuntimeSession().generate(output)
+    assert fake_irodori.keys == fake_irodori.sampling == []
+
+
+def test_unsupported_bf16_device_fails_before_model_load(tmp_path, fake_irodori):
+    fake_irodori.cuda.is_bf16_supported = lambda: False
+    with pytest.raises(RuntimeError, match="bf16 support"):
+        voice_runner.VoiceRuntimeSession().generate(make_request(tmp_path, "unsupported"))
+    assert fake_irodori.keys == []
 
 
 def test_server_outputs_only_json_and_separates_native_and_python_logs(tmp_path, monkeypatch):

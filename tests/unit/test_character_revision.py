@@ -80,6 +80,8 @@ class CharacterLLM:
             result = {"selected_id": "A", "reason": "本人の指示と確定世界に合う。"}
         elif stage == "final":
             result = copy.deepcopy(self.final)
+        elif "-requirements-review-" in stage:
+            result = {"issues": []}
         else:
             raise AssertionError(f"Unexpected structured stage: {stage}")
         validate_schema(result, schema)
@@ -101,21 +103,32 @@ def test_name_revision_merges_only_changed_fields_into_current_second_character(
 
     assert result == {**original["character_result"], **patch}
     assert payload == original
-    assert [call["stage"] for call in llm.calls] == ["character-revision"]
+    assert [call["stage"] for call in llm.calls] == [
+        "character-revision", "m2_character-requirements-review-1",
+    ]
     assert llm.calls[0]["schema"]["properties"]["id"]["enum"] == ["character-2"]
 
 
 @pytest.mark.parametrize("revision", [False, True], ids=["initial-generation", "revision"])
 def test_every_character_stage_excludes_other_characters_full_settings(revision):
     payload = _payload(revision=revision)
+    payload["cast_inputs"][0].update(name="指定したリオン", freeform="右腕のない記録係")
+    payload["applied_instructions"] = [
+        {"kind": "m2_character", "character_id": "character-1", "scope": "settings",
+         "changes": {"name": "リオン", "settings": "PRIVATE_PROTAGONIST_accepted_settings"}},
+        {"kind": "m2_character", "character_id": "character-2", "scope": "appearance",
+         "changes": {"appearance": "銀髪を短く結び、緑の作業着を着ている。"}},
+    ]
+    history = [
+        {**payload["applied_instructions"][0], "changes": {"name": "リオン"}},
+        payload["applied_instructions"][1],
+    ]
     llm = CharacterLLM()
 
     pipeline.generate_text("m2_character", payload, llm)
 
-    expected = ["character-revision"] if revision else [
-        "direction-candidates", "direction-consider", "direction-selected",
-        "details-candidates", "details-consider", "details-selected", "final",
-    ]
+    expected = ["character-revision"] if revision else ["final"]
+    expected.append("m2_character-requirements-review-1")
     assert [call["stage"] for call in llm.calls] == expected
     for call in llm.calls:
         text = json.dumps(call["messages"], ensure_ascii=False)
@@ -125,12 +138,98 @@ def test_every_character_stage_excludes_other_characters_full_settings(revision)
         assert context["character_id"] == "character-2"
         assert context["character_input"] == payload["character_input"]
         assert context["character_result"] == payload["character_result"]
+        assert context["applied_instructions"] == history
         assert "cast_results" not in context
         references = context["other_characters"]
         assert [item["id"] for item in references] == ["character-1"]
         assert references[0]["name"] == "リオン"
         assert not set(PRIVATE_FIELDS) & references[0].keys()
         assert set(references[0]) <= {"id", "name", "age", "gender", "role", "freeform"}
+        assert context["other_character_inputs"] == [{
+            key: payload["cast_inputs"][0][key]
+            for key in ("id", "name", "age", "gender", "role", "freeform")
+        }]
+        assert context["other_character_inputs"][0]["freeform"] == "右腕のない記録係"
+        assert references[0]["freeform"] != context["other_character_inputs"][0]["freeform"]
+        if "-requirements-review-" in call["stage"]:
+            sources, _ = json.JSONDecoder().raw_decode(
+                call["messages"][1]["content"].split("\noriginal_user_inputs: ", 1)[1]
+            )
+            assert sources["applied_instructions"] == history
+
+
+def test_revision_review_repairs_contradiction_without_discarding_requested_edit():
+    payload = _payload()
+    payload["applied_instructions"] = [{
+        "kind": "m2_character", "character_id": "character-2", "scope": "settings",
+        "instruction": "名前をノアに変更し、自己紹介もその名前に揃える。",
+    }]
+    requirement = "生まれつき目が見えず、視覚能力もない星図の修復師"
+    payload["character_input"]["freeform"] = requirement
+    payload["cast_inputs"][1]["freeform"] = requirement
+    payload["character_result"]["settings"] = "生まれつき目が見えず、紙の凹凸と触覚で星図を修復する。"
+    original = copy.deepcopy(payload)
+    bad_settings = "星図に触れたことで視力を取り戻し、目で細かな傷を発見する。"
+    introduction = payload["character_result"]["selfIntroduction"].replace("ノア", "ミナ")
+    patch = {"name": "ミナ", "selfIntroduction": introduction, "settings": bad_settings}
+    reviews = []
+
+    class RepairingRevisionLLM(CharacterLLM):
+        def structured(self, stage, messages, schema):
+            assert not any(item["type"] == "complete_result" for item in self.trace)
+            context, _ = json.JSONDecoder().raw_decode(messages[-1]["content"])
+            assert context["applied_instructions"] == original["applied_instructions"]
+            assert context["instruction"] == original["instruction"]
+            if "-requirements-repair-" in stage:
+                assert pipeline.VOICE_DESIGN_RULES in messages[-1]["content"]
+                assert "changesには明示された要望を満たすために変更が必要な項目だけ" in (
+                    messages[-1]["content"]
+                )
+                self.calls.append({"stage": stage, "messages": copy.deepcopy(messages),
+                                   "schema": copy.deepcopy(schema)})
+                result = {"id": payload["character_id"], "changes": {
+                    "settings": original["character_result"]["settings"],
+                }}
+            else:
+                result = super().structured(stage, messages, schema)
+                if "-requirements-review-" in stage:
+                    content = messages[-1]["content"]
+                    context, _ = json.JSONDecoder().raw_decode(content)
+                    assert context["character_input"]["freeform"] == requirement
+                    assert context["instruction"] == payload["instruction"]
+                    sources, _ = json.JSONDecoder().raw_decode(
+                        content.split("\noriginal_user_inputs: ", 1)[1]
+                    )
+                    assert sources["character_input"] == original["character_input"]
+                    assert sources["applied_instructions"] == original["applied_instructions"]
+                    assert sources["instruction"] == original["instruction"]
+                    reviewed_result = json.loads(content.split("\nresult: ", 1)[1])
+                    assert reviewed_result["selfIntroduction"] == introduction
+                    assert reviewed_result["name"] == "ミナ"
+                    expected_settings = bad_settings if not reviews else (
+                        original["character_result"]["settings"]
+                    )
+                    assert reviewed_result["settings"] == expected_settings
+                    reviews.append(stage)
+                    result = {"issues": [{"requirement": requirement,
+                                          "source_quote": requirement,
+                                          "problem": "視力を取り戻す設定は指定と矛盾している。"}]
+                              if len(reviews) == 1 else []}
+            validate_schema(result, schema)
+            return result
+
+    llm = RepairingRevisionLLM(patch=patch)
+    result = pipeline.generate_text("m2_character", payload, llm)
+
+    assert result == {**original["character_result"], "name": "ミナ",
+                      "selfIntroduction": introduction}
+    assert payload == original
+    assert [call["stage"] for call in llm.calls] == [
+        "character-revision", "m2_character-requirements-review-1",
+        "m2_character-requirements-repair-1", "m2_character-requirements-review-2",
+    ]
+    assert llm.trace[-1]["type"] == "complete_result"
+    assert set(llm.trace[-1]["changed_fields"]) == {"name", "selfIntroduction"}
 
 
 @pytest.mark.parametrize("revision", [False, True], ids=["initial-generation", "revision"])

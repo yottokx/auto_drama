@@ -13,7 +13,7 @@ from packages.contracts.m3 import M3_KINDS
 from packages.narrative import story_state_hash
 from services.coordinator.app import create_app
 from services.coordinator.service import Coordinator
-from tests.integration.test_m2 import action, claim, ready
+from tests.integration.test_m2 import action, claim, ready, report_voice_inventory
 from tests.integration.test_m3 import complete, narrative, output, pin_legacy_production, production
 from tests.integration.test_m3 import finish as finish_default
 from tests.integration.test_project_history import history, restore
@@ -26,8 +26,9 @@ def approve(client):
     # New script production is covered separately without rewriting old histories.
     pin_legacy_production(client, project["project"]["id"])
     worker = client.post("/api/workers", json={
-        "name": "M4 fixture", "capabilities": list(M3_KINDS),
+        "name": "M4 fixture", "capabilities": [*M3_KINDS, "tts_download"],
     }).json()["id"]
+    report_voice_inventory(client, worker)
     return project["project"]["id"], worker
 
 

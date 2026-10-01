@@ -241,11 +241,14 @@ def production(client, project_id):
 
 
 def approved(client):
+    from tests.integration.test_m2 import report_voice_inventory
+
     project, _ = ready(client)
     action(client, project, "approve")
     worker = client.post(
-        "/api/workers", json={"name": "M3 fixture", "capabilities": list(M3_KINDS)}
+        "/api/workers", json={"name": "M3 fixture", "capabilities": [*M3_KINDS, "tts_download"]}
     ).json()["id"]
+    report_voice_inventory(client, worker)
     return project["project"]["id"], worker
 
 

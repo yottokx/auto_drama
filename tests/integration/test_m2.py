@@ -156,7 +156,7 @@ def action(client, project, name, *, status=200, **values):
 
 
 def worker(client):
-    return client.post(
+    identifier = client.post(
         "/api/workers",
         json={
             "name": "fixture",
@@ -167,9 +167,27 @@ def worker(client):
                 "m2_voice",
                 "m2_relationships",
                 "m2_voice_clone",
+                "tts_download",
             ],
         },
     ).json()["id"]
+    report_voice_inventory(client, identifier)
+    return identifier
+
+
+def report_voice_inventory(client, identifier, models=None):
+    """Fixture runtimes advertise installed models without loading real weights."""
+    from packages.contracts.tts_catalog import resolve_bundle
+
+    selections = models or [("irodori-v4.1-small", "fp32")]
+    response = client.post(f"/api/workers/{identifier}/tts-models", json={"models": [
+        {"model_id": model, "precision": precision,
+         "manifest_id": resolve_bundle(model, precision)["manifest_id"],
+         "file_download_ready": True, "generation_ready": True,
+         "generation_purposes": ["voice_design", "voice_clone"]}
+        for model, precision in selections
+    ]})
+    assert response.status_code == 200, response.text
 
 
 def claim(client, identifier):

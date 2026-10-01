@@ -18,6 +18,7 @@ from packages.narrative.continuity import narrative_hash
 from . import narrative, pipeline
 from .cancellation import GenerationCancelled, check_cancelled
 from .causal_runtime import digest
+from .context_budget import OutputTokenPolicy
 from .draft_story import (
     DraftBudgetError,
     DraftExecutionError,
@@ -33,9 +34,15 @@ from .processes import gpu_lock
 from .script_budget import scene_output_budget
 from .script_cast import (
     CAST_INSTRUCTION,
+    CONNECTION_REPAIR_INSTRUCTION,
+    CastConnectionError,
     CastPlan,
+    CastReferenceRepair,
     ScriptOptions,
+    apply_connection_repair,
+    approved_main_assignments,
     check_cast,
+    connection_repair_material,
     script_metrics,
     story_character,
 )
@@ -172,8 +179,18 @@ class ExistingStages:
         system = messages[0]["content"]
         body = "\n".join(item["content"] for item in messages[1:])
         context = {"setting": {}, "outline": "", "brief": body, "chapters": [], "notes": []}
-        return self.run.call(key, self.purpose, self.number, system, context,
-                             extra=extra, allow_length=allow_truncated)
+        reply = self.run.call(key, self.purpose, self.number, system, context,
+                              extra=extra, allow_length=allow_truncated)
+        self.last_reply = (key, reply)
+        return reply
+
+    def validated(self, operation, *args):
+        try:
+            return operation(self, *args)
+        except (ValueError, narrative.StructuredGenerationError) as error:
+            if hasattr(self, "last_reply"):
+                self.run.reject_response(*self.last_reply, error)
+            raise
 
 
 class ScriptRun(DraftRun):
@@ -266,6 +283,7 @@ class ScriptRun(DraftRun):
         report["script_examples"] = self.manifest.get("script_examples", {})
         report["chapter_boundary_corrections"] = self.state.get("chapter_boundary_corrections", {})
         report["chapter_plan_normalizations"] = self.state.get("chapter_plan_normalizations", {})
+        report["cast_connection_repair"] = self.state.get("cast_connection_repair")
         report["content_metrics"] = {
             "chapters": [{"number": row["number"], **script_metrics(row["text"]),
                           "scenes": len(row["narrative"]["scenes"]) if "narrative" in row
@@ -299,8 +317,33 @@ class ScriptRun(DraftRun):
             return value
         context = {"setting": self.setting(), "outline": "", "brief": self.options.for_stage("cast"),
                    "chapters": [], "notes": []}
-        value = self.structured("cast-plan", "script-cast", 1, CAST_INSTRUCTION, context,
-                                CastPlan, lambda value: check_cast(value, main))
+
+        def prepare(value, source_row=None):
+            try:
+                check_cast(value, main)
+            except CastConnectionError:
+                return self.repair_cast_connections(value, main, source_row)
+            return value
+
+        value = None
+        # Old failures may already have exhausted both whole-cast attempts. Reuse
+        # the latest complete reply before retry feedback/material hashes change.
+        for row in reversed(self.state["steps"].get("cast-plan", {}).get("attempts", [])):
+            if row["status"] != "completed" or row.get("reply", {}).get("_finish_reason") != "stop":
+                continue
+            try:
+                candidate = CastPlan.model_validate_json(row["reply"]["content"])
+                check_cast(candidate, main)
+            except CastConnectionError:
+                value = prepare(candidate, row)
+            except ValueError:
+                pass
+            else:
+                value = candidate
+            break
+        if value is None:
+            value = self.structured("cast-plan", "script-cast", 1, CAST_INSTRUCTION, context,
+                                    CastPlan, prepare)
         data = value.model_dump(mode="json")
         record = {"plan": data, "sha256": digest(data), "input_sha256": self.manifest["input_sha256"],
                   "protocol": self.manifest["generator_protocol"]}
@@ -308,6 +351,56 @@ class ScriptRun(DraftRun):
         self.state["cast_plan"] = record
         self.persist()
         return value
+
+    def repair_cast_connections(self, value, main_ids, source_row=None):
+        key = "cast-plan-connections-v1"
+        source_hash = digest(value.model_dump(mode="json"))
+        source = source_row
+        if source is None:
+            for row in reversed(self.state["steps"]["cast-plan"]["attempts"]):
+                if row["status"] != "completed" or row.get("reply", {}).get("_finish_reason") != "stop":
+                    continue
+                try:
+                    candidate = CastPlan.model_validate_json(row["reply"]["content"])
+                except ValueError:
+                    continue
+                if digest(candidate.model_dump(mode="json")) == source_hash:
+                    source = row
+                    break
+        if source is None:
+            raise ValueError("Relationship repair has no matching completed cast response.")
+        identity = {"stage": key, "source_plan_sha256": source_hash,
+                    "source_request": source["request"], "source_request_sha256": source["request_sha256"]}
+        record = self.state.setdefault("cast_connection_repair", identity.copy())
+        if any(record.get(field) != expected for field, expected in identity.items()):
+            raise ValueError("Saved relationship repair source was changed.")
+        self.persist()
+        main = [row["result"] for row in self.payload["approval_snapshot"]["characters"]]
+        material, schema, pairs = connection_repair_material(value, main)
+        context = {"setting": material, "outline": "", "brief": "人物参照の割当のみ。",
+                   "chapters": [], "notes": [], "optional_example": None}
+
+        automatic = approved_main_assignments(value, main_ids)
+
+        def validate(repair):
+            normalized = repair.model_copy(update={"assignments": {**repair.assignments, **automatic}})
+            apply_connection_repair(value, normalized, pairs, main_ids)
+            return normalized
+
+        if len(automatic) == len(value.connections):
+            repair = validate(CastReferenceRepair(assignments=automatic))
+        else:
+            # Retain the v1 material/schema so existing saved repairs still match.
+            # Only exact known main/main rows are resolved without model judgment.
+            repair = self.structured(key, "script-cast", 1, CONNECTION_REPAIR_INSTRUCTION,
+                                     context, CastReferenceRepair, validate, schema)
+        if automatic:
+            record["deterministic_assignments"] = automatic
+        corrected = apply_connection_repair(value, repair, pairs, main_ids)
+        record.update(assignments=repair.assignments, result_sha256=digest(corrected.model_dump(mode="json")))
+        self.llm.trace.append({"type": "cast_connection_repair", **record})
+        self.persist()
+        return corrected
 
     def render_plot(self):
         if "plot" not in self.state:
@@ -329,22 +422,35 @@ class ScriptRun(DraftRun):
                 lines.extend(f"- {step.character_id}: {step.action} → {step.result}" for step in event.steps)
         _text(self.output / "plot.md", "\n".join(lines))
 
+    @staticmethod
+    def _call_material(purpose, system, context, extra, output_budget=None):
+        context = {**context}
+        context.setdefault("optional_example", example_for(purpose))
+        return digest({"system": system, "context": context, "purpose": purpose, "extra": extra,
+                       "output_budget": output_budget})
+
+    @staticmethod
+    def _current_attempts(step):
+        return step["attempts"][step.get("retry_attempt_start", 0):]
+
     def call(self, key, purpose, number, system, context, *, extra=None, allow_length=False,
              output_budget=None):
         extra = extra or {}
         context = {**context}
         context.setdefault("optional_example", example_for(purpose))
-        material = digest({"system": system, "context": context, "purpose": purpose, "extra": extra,
-                           "output_budget": output_budget})
+        material = self._call_material(purpose, system, context, extra, output_budget)
         step = self.state["steps"].setdefault(key, {"attempts": []})
-        for row in step["attempts"]:
+        for row in self._current_attempts(step):
             if (row.get("material_hash") == material and not allow_length
                     and row.get("reply", {}).get("_finish_reason") == "length"):
                 raise DraftExecutionError(f"{key}: saved structured response was truncated; source retained. "
                                           "Review the output budget in a new experiment.")
-            if row.get("material_hash") == material and row["status"] == "completed":
+            if row.get("material_hash") == material and row.get("validation_error"):
+                raise DraftExecutionError(f"{key}: " + row["validation_error"])
+            if (row.get("material_hash") == material and row["status"] == "completed"
+                    and not row.get("validation_error")):
                 return row["reply"]
-        while len(step["attempts"]) < 2:
+        while len(self._current_attempts(step)) < 2:
             check_cancelled()
             self.check_budget(number)
             self.llm.select_purpose(purpose)
@@ -405,38 +511,59 @@ class ScriptRun(DraftRun):
         raise DraftExecutionError(f"{key}: technical retry exhausted. "
                                   + str(step.get("validation_error") or step["attempts"][-1].get("error", "interrupted")))
 
+    def reject_response(self, key, reply, error):
+        """Separate receiving an answer from accepting its validated contents."""
+        step = self.state["steps"][key]
+        detail = str(error)
+        description = f"{type(error).__name__}: {error}"
+        step["validation_error"] = description
+        row = next(row for row in reversed(self._current_attempts(step)) if row.get("reply") == reply)
+        row.update(validation_error=description, validation_feedback=detail)
+        write_json(self.output / "requests" / f"{key}-{row['attempt']}.validation.json",
+                   {"request": row["request"], "request_sha256": row["request_sha256"],
+                    "response": reply, "error": description})
+        self.persist()
+
     def structured(self, key, purpose, number, prompt, context, model, validate=None, schema=None):
         schema = schema or model.model_json_schema()
         extra = {"response_format": {"type": "json_schema", "json_schema": {
             "name": purpose, "strict": True, "schema": schema}}}
         feedback = ""
+        step = self.state["steps"].setdefault(key, {"attempts": []})
         for attempt in range(2):
-            reply = self.call(key, purpose, number, SCRIPT_SYSTEM + PROGRESSION + prompt + feedback,
-                              context, extra=extra)
+            system = SCRIPT_SYSTEM + PROGRESSION + prompt + feedback
+            material = self._call_material(purpose, system, context, extra)
+            rejected = next((row for row in reversed(self._current_attempts(step))
+                             if row.get("material_hash") == material and row.get("validation_error")), None)
+            # A saved rejection may become valid after a deterministic validator
+            # fix (for example pruning unused locations). Always validate it;
+            # never accept the response just because the HTTP request completed.
+            reply = rejected["reply"] if rejected is not None else self.call(
+                key, purpose, number, system, context, extra=extra)
             try:
                 value = model.model_validate_json(reply["content"])
                 if validate:
                     prepared = validate(value)
                     if prepared is not None:
-                        # A validator may return a canonical copy; model replies
-                        # and frozen contract instances are never edited in place.
                         if not isinstance(prepared, model):
                             raise TypeError("Prepared structured value has the wrong contract.")
                         value = prepared
+                row = next(row for row in reversed(self._current_attempts(step)) if row.get("reply") == reply)
+                step["accepted_request"] = row["request"]
+                step.pop("validation_error", None)
+                self.persist()
                 return value
             except ValueError as exc:
-                step = self.state["steps"][key]
-                error = f"{type(exc).__name__}: {exc}"
-                step["validation_error"] = error
-                row = next(row for row in reversed(step["attempts"]) if row.get("reply") == reply)
-                row["validation_error"] = error
-                write_json(self.output / "requests" / f"{key}-{row['attempt']}.validation.json",
-                           {"request": row["request"], "request_sha256": row["request_sha256"],
-                            "response": reply, "error": error})
-                self.persist()
-                if attempt:
-                    raise DraftExecutionError(f"{key}: structure/reference error: {exc}") from exc
-                feedback = "\n同じ資料から形式・参照だけを修正してください。前回の不備: " + str(exc)
+                if rejected is not None:
+                    # Keep the original feedback so a valid saved repair still
+                    # matches its material hash, without rewriting past evidence.
+                    detail = rejected.get("validation_feedback", rejected["validation_error"].partition(": ")[2])
+                else:
+                    detail = str(exc)
+                    self.reject_response(key, reply, exc)
+            if attempt:
+                raise DraftExecutionError(f"{key}: structure/reference error: {detail}")
+            feedback = "\n同じ資料から形式・参照だけを修正してください。前回の不備: " + detail
         raise AssertionError("unreachable")
 
     def structured_core(self, key, purpose, number, prompt, context, model, validate, schema):
@@ -522,18 +649,23 @@ class ScriptRun(DraftRun):
         """Freeze the estimate before dispatch so interrupted scenes reuse it."""
         self.llm.select_purpose("script-scene")
         profile = self.llm.profile
+        policy = OutputTokenPolicy.resolve(self.llm._profile_settings(profile), profile)
         identity = digest({"scene_size": size.model_dump(), "character_ids": character_ids,
                            "profile": profile, "policy": self.options.scene_tokens.model_dump(),
-                           "model_output_limit": self.llm._output_limit(profile)})
+                           "model_output_limit": policy.base_limit})
         records = self.state.setdefault("scene_budgets", {})
         if scope in records:
             record = records[scope]
             if record["input_hash"] != identity or digest(record["budget"]) != record["sha256"]:
                 raise ValueError("Saved scene output budget belongs to changed material.")
             return record["budget"]
-        samples = self.writer_samples(profile["model_id"], excluding=scope + "-text")
+        # Completion usage includes reasoning. Do not learn a larger BODY baseline
+        # from that total and then add a second reasoning allowance on top of it.
+        samples = ([] if policy.extension_tokens and profile.get("reasoning_level", "none") != "none"
+                   else self.writer_samples(profile["model_id"], excluding=scope + "-text"))
         budget = scene_output_budget(size, character_ids, self.options.scene_tokens,
-            min(profile["max_tokens"], self.llm._output_limit(profile)), samples)
+            min(profile["max_tokens"], policy.base_limit), samples,
+            extension_tokens=policy.extension_tokens)
         records[scope] = {"input_hash": identity, "budget": budget, "sha256": digest(budget)}
         self.persist()
         return budget
@@ -544,7 +676,7 @@ class ScriptRun(DraftRun):
             if not key.endswith("-text") or key == excluding:
                 continue
             for row in reversed(step["attempts"]):
-                if (row["status"] != "completed" or row["purpose"] != "script-scene"
+                if (row["status"] != "completed" or row.get("validation_error") or row["purpose"] != "script-scene"
                         or row["profile"]["model_id"] != model_id
                         or row.get("reply", {}).get("_finish_reason") != "stop"):
                     continue
@@ -579,8 +711,10 @@ class ScriptRun(DraftRun):
         prompt = SCENE_INSTRUCTION
         budget = self.output_budget(scope, size, plan.character_ids)
         reply = self.call(scope + "-text", "script-scene", number, prompt, scene_context,
-                          extra={"grammar": narrative._source_grammar(plan), "max_tokens": budget["max_tokens"]},
+                          extra={**narrative._source_options(self.llm.profile, plan),
+                                 "max_tokens": budget["max_tokens"]},
                           allow_length=True, output_budget=budget)
+        writer_replies = [(scope + "-text", reply)]
         raw = reply["content"]
         self.save_source(number, scope, raw, saved_scenes)
         if reply["_finish_reason"] == "length":
@@ -590,15 +724,21 @@ class ScriptRun(DraftRun):
                               prompt + "\n出力上限で切れた現在の場面の続筆です。次の接続文字列を"
                               "先頭に一字も変えず復唱し、その直後から場面を完結させてください。"
                               "それ以外の既出部分は再掲しません。\n接続文字列:\n" + anchor,
-                              continuation_context, extra={"grammar": narrative._source_grammar(plan, raw),
-                                                           "max_tokens": budget["max_tokens"]},
+                              continuation_context,
+                              extra={**narrative._source_options(self.llm.profile, plan, raw),
+                                     "max_tokens": budget["max_tokens"]},
                               allow_length=True, output_budget=budget)
+            writer_replies.append((scope + "-continue", reply))
             if not reply["content"].startswith(anchor):
-                raise DraftExecutionError("Script continuation did not match its original source anchor.")
+                error = DraftExecutionError("Script continuation did not match its original source anchor.")
+                self.reject_response(scope + "-continue", reply, error)
+                raise error
             raw += reply["content"][len(anchor):]
             self.save_source(number, scope, raw, saved_scenes)
             if reply["_finish_reason"] == "length":
-                raise DraftExecutionError("Script still truncated after one continuation; source retained.")
+                error = DraftExecutionError("Script still truncated after one continuation; source retained.")
+                self.reject_response(scope + "-continue", reply, error)
+                raise error
         if number > 1 and not saved_scenes:
             previous = next(row for row in context["chapters"] if row["number"] == number - 1)
             raw, correction = trim_chapter_overlap(previous["text"], raw)
@@ -609,14 +749,22 @@ class ScriptRun(DraftRun):
             # accepted downstream stages and history use the effective source.
             self.partial(number, raw)
             if correction["changed"] and not raw.strip():
-                raise DraftExecutionError("No new script after removing repeated chapter boundary; original source retained.")
-        parse_scene_text(raw, plan.id, set(plan.character_ids))
+                error = DraftExecutionError("No new script after removing repeated chapter boundary; original source retained.")
+                for key, response in writer_replies:
+                    self.reject_response(key, response, error)
+                raise error
+        try:
+            parse_scene_text(raw, plan.id, set(plan.character_ids))
+        except ValueError as error:
+            for key, response in writer_replies:
+                self.reject_response(key, response, error)
+            raise
         context_text = json.dumps(scene_context["setting"], ensure_ascii=False)
         speech_llm = ExistingStages(self, scope + "-speech", "script-speech", number)
-        separation, hints = narrative.separate_speech(speech_llm, context_text, plan, raw, names)
+        separation, hints = speech_llm.validated(narrative.separate_speech, context_text, plan, raw, names)
         utterances = parse_scene_text(separation.raw_text, plan.id, set(plan.character_ids))
         staging_llm = ExistingStages(self, scope + "-staging", "script-staging", number)
-        staging = narrative._staging(staging_llm, context_text + "\n読み上げない声の指示: "
+        staging = staging_llm.validated(narrative._staging, context_text + "\n読み上げない声の指示: "
                                      + json.dumps(hints, ensure_ascii=False), plan, utterances)
         utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
             "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None})
@@ -815,8 +963,11 @@ class ScriptRun(DraftRun):
             "計画済みサブはcharacter_idsへ指定して登場できます。主筋に不可欠でなくても日常や交流を描けます。"
             "未登場人物の設定は過去の発言・出来事ではありません。初登場でも設定にある間柄を維持します。"
             "new_charactersは計画外で今回出演する新規人物だけ。不要なら空配列です。"
-            "各sceneのcharacter_idsは登場人物を最大3人、idはs1,s2など短くします。"
-            "locationsは使う場所だけ。既存の場所IDと名前を維持し、背景の状態は今回に合わせます。"
+            "各sceneのid（場面ID）はs1,s2など短くします。character_idsは登場人物を最大3人、"
+            "資料内の既存人物IDまたはnew_charactersで定義した人物IDをそのまま使い、短縮・改名しません。"
+            "locationsには当章で使う全ての場所を、既存の場所も含めて定義します。"
+            "各sceneのlocation_idに対応する定義を省略せず、未使用の場所は含めません。"
+            "既存の場所IDと名前を維持し、背景の状態は今回に合わせます。"
             "別の場所へ移るなら場面を分け、移動先を登録します。image_promptは人物のいない背景の英語描写です。"
             "素材在庫を理由に同じ人物や舞台へ戻さないでください。"
             + PLOT_PRIORITY +

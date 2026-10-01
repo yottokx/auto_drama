@@ -92,6 +92,7 @@ def test_expired_attempt_recovered_stale_rejected_duplicate_idempotent(tmp_path)
         worker_id = register(client)
         current = claim(client, worker_id)
         assert current["attempt"] == 2
+        assert current["retry_generation"] == old["retry_generation"] == 0
         assert complete(client, old, old_worker, data).status_code == 409
         stale = {"worker_id": old_worker, "lease_id": old["lease_id"]}
         assert client.post(f"/api/jobs/{old['id']}/heartbeat", json=stale).status_code == 409
@@ -268,7 +269,7 @@ def test_migration_idempotence_and_drift_rejected(tmp_path):
     with service.db.transaction() as connection:
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 6
+        assert connection.execute("SELECT COUNT(*) FROM schema_migration").fetchone()[0] == 10
         connection.execute("UPDATE schema_migration SET sha256='changed'")
     with pytest.raises(RuntimeError, match="has changed"):
         service.initialize()

@@ -1,0 +1,767 @@
+{
+  "schema_version": 1,
+  "selected_at": "2026-09-30",
+  "source_commit": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+  "bundles": [
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4.1-small",
+      "label": "Irodori-TTS v4.1 Small",
+      "license": "MIT",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+      "precision": "fp32",
+      "weight_id": "irodori-v4.1-small-full",
+      "quantization": null,
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "EMOJI_ANNOTATIONS.md",
+          "size": 3403,
+          "sha256": "7069633ef97d81ba456df438af0d2eaf4961d29fb35172ffadad56569a443ed7"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "model.safetensors",
+          "size": 3064295596,
+          "sha256": "c85de88c01700cb53538e706f128ebcb1b8513ad21d7d0e75f58bc82cdbf89f6"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "tokenizer/tokenizer.json",
+          "size": 6718495,
+          "sha256": "6a0734cf21c802169defaffe719bc2ef12bb9d0be37e54b61ed27aa89394723d"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 668,
+          "sha256": "d229a271c64de1a7939d20d3665498e873fa91d5ee2edf135d73ec752cb9c9d3"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4.1-small",
+      "label": "Irodori-TTS v4.1 Small",
+      "license": "MIT",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+      "precision": "bf16",
+      "weight_id": "irodori-v4.1-small-full",
+      "quantization": null,
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "EMOJI_ANNOTATIONS.md",
+          "size": 3403,
+          "sha256": "7069633ef97d81ba456df438af0d2eaf4961d29fb35172ffadad56569a443ed7"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "model.safetensors",
+          "size": 3064295596,
+          "sha256": "c85de88c01700cb53538e706f128ebcb1b8513ad21d7d0e75f58bc82cdbf89f6"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "tokenizer/tokenizer.json",
+          "size": 6718495,
+          "sha256": "6a0734cf21c802169defaffe719bc2ef12bb9d0be37e54b61ed27aa89394723d"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small",
+          "revision": "2b28324dc263ed5e6638b3cf3dd94c82ead07b4b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 668,
+          "sha256": "d229a271c64de1a7939d20d3665498e873fa91d5ee2edf135d73ec752cb9c9d3"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4.1-small",
+      "label": "Irodori-TTS v4.1 Small",
+      "license": "MIT",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+      "precision": "int8",
+      "weight_id": "irodori-v4.1-small-int8",
+      "quantization": "int8-weight-only",
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "README.md",
+          "size": 4252,
+          "git_blob_sha1": "a34f15efe241670ee3e71a4ebc54a72ce690c757"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "int8-weight-only/model.safetensors",
+          "size": 914316834,
+          "sha256": "1fb6394b52c11329fd19d6c6f388a1e224721752a32aad906cae8653f5b25dcc"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "tokenizer/tokenizer.json",
+          "size": 6718495,
+          "git_blob_sha1": "1b9a8b7e5e8d37174e6b9e9655cdbd0c9b456af7"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 668,
+          "git_blob_sha1": "e59d0be2a7fd2bc7f7b85136e46c65a41c1c3634"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4.1-small",
+      "label": "Irodori-TTS v4.1 Small",
+      "license": "MIT",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small",
+      "precision": "int4",
+      "weight_id": "irodori-v4.1-small-int4",
+      "quantization": "int4-weight-only",
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "README.md",
+          "size": 4252,
+          "git_blob_sha1": "a34f15efe241670ee3e71a4ebc54a72ce690c757"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "int4-weight-only/model.safetensors",
+          "size": 852031658,
+          "sha256": "0ea9556d0aceaca3aafe904054bcdec357707fccb9c19c38784fc469bd6c03a7"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "tokenizer/tokenizer.json",
+          "size": 6718495,
+          "git_blob_sha1": "1b9a8b7e5e8d37174e6b9e9655cdbd0c9b456af7"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+          "revision": "ef04e6c3ba56138ae23e86a2eabc004f76990e37",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4.1-Small-Quantized",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 668,
+          "git_blob_sha1": "e59d0be2a7fd2bc7f7b85136e46c65a41c1c3634"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4-large",
+      "label": "Irodori-TTS v4 Large",
+      "license": "Gemma",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4-Large",
+      "precision": "fp32",
+      "weight_id": "irodori-v4-large-full",
+      "quantization": null,
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "EMOJI_ANNOTATIONS.md",
+          "size": 3403,
+          "git_blob_sha1": "8892270bd49c55756f109b52b6c085f731b27b44"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "GEMMA_PROHIBITED_USE_POLICY.md",
+          "size": 3852,
+          "git_blob_sha1": "6106d09d95a123f00eb6e4124429597cede29205"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "GEMMA_TERMS_OF_USE.md",
+          "size": 10542,
+          "git_blob_sha1": "db43e6fbc47d2063e64e094886afd3978118d6d5"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "NOTICE",
+          "size": 96,
+          "git_blob_sha1": "1ad0e9f104b03e6b2bd91f3e3f39fd3a34306574"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "model.safetensors",
+          "size": 13152893348,
+          "sha256": "0f3de3cdcb8cb82ac2d0089f2c051ab99e12eb7270625d06e3d1d303bad9e63c"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "tokenizer/tokenizer.json",
+          "size": 33384387,
+          "sha256": "f5b325224482ec441ec5fbe2a5ac08c3758e0f9605f6e54368e31f736fcfb01d"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 802,
+          "git_blob_sha1": "2c2efc2b8149ee437ccf5b62e33c773c258b9bd5"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4-large",
+      "label": "Irodori-TTS v4 Large",
+      "license": "Gemma",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4-Large",
+      "precision": "bf16",
+      "weight_id": "irodori-v4-large-full",
+      "quantization": null,
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "EMOJI_ANNOTATIONS.md",
+          "size": 3403,
+          "git_blob_sha1": "8892270bd49c55756f109b52b6c085f731b27b44"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "GEMMA_PROHIBITED_USE_POLICY.md",
+          "size": 3852,
+          "git_blob_sha1": "6106d09d95a123f00eb6e4124429597cede29205"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "GEMMA_TERMS_OF_USE.md",
+          "size": 10542,
+          "git_blob_sha1": "db43e6fbc47d2063e64e094886afd3978118d6d5"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "NOTICE",
+          "size": 96,
+          "git_blob_sha1": "1ad0e9f104b03e6b2bd91f3e3f39fd3a34306574"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "model.safetensors",
+          "size": 13152893348,
+          "sha256": "0f3de3cdcb8cb82ac2d0089f2c051ab99e12eb7270625d06e3d1d303bad9e63c"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "tokenizer/tokenizer.json",
+          "size": 33384387,
+          "sha256": "f5b325224482ec441ec5fbe2a5ac08c3758e0f9605f6e54368e31f736fcfb01d"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large",
+          "revision": "2e0c55428ce97268a507f1feeb2478f8d9148e8b",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 802,
+          "git_blob_sha1": "2c2efc2b8149ee437ccf5b62e33c773c258b9bd5"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4-large",
+      "label": "Irodori-TTS v4 Large",
+      "license": "Gemma",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4-Large",
+      "precision": "int8",
+      "weight_id": "irodori-v4-large-int8",
+      "quantization": "int8-weight-only",
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "GEMMA_PROHIBITED_USE_POLICY.md",
+          "size": 3852,
+          "git_blob_sha1": "6106d09d95a123f00eb6e4124429597cede29205"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "GEMMA_TERMS_OF_USE.md",
+          "size": 10542,
+          "git_blob_sha1": "db43e6fbc47d2063e64e094886afd3978118d6d5"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "NOTICE",
+          "size": 96,
+          "git_blob_sha1": "1ad0e9f104b03e6b2bd91f3e3f39fd3a34306574"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "int8-weight-only/model.safetensors",
+          "size": 3839580074,
+          "sha256": "b044816d341ae0f56137241d6d9821fe563b63412b693e6fc411d051116eb83a"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "tokenizer/tokenizer.json",
+          "size": 33384387,
+          "sha256": "f5b325224482ec441ec5fbe2a5ac08c3758e0f9605f6e54368e31f736fcfb01d"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 802,
+          "git_blob_sha1": "2c2efc2b8149ee437ccf5b62e33c773c258b9bd5"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    },
+    {
+      "provider_id": "irodori",
+      "model_id": "irodori-v4-large",
+      "label": "Irodori-TTS v4 Large",
+      "license": "Gemma",
+      "source_url": "https://huggingface.co/Aratako/Irodori-TTS-v4-Large",
+      "precision": "int4",
+      "weight_id": "irodori-v4-large-int4",
+      "quantization": "int4-weight-only",
+      "files": [
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "GEMMA_PROHIBITED_USE_POLICY.md",
+          "size": 3852,
+          "git_blob_sha1": "6106d09d95a123f00eb6e4124429597cede29205"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "GEMMA_TERMS_OF_USE.md",
+          "size": 10542,
+          "git_blob_sha1": "db43e6fbc47d2063e64e094886afd3978118d6d5"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "NOTICE",
+          "size": 96,
+          "git_blob_sha1": "1ad0e9f104b03e6b2bd91f3e3f39fd3a34306574"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "int4-weight-only/model.safetensors",
+          "size": 2955004714,
+          "sha256": "5b8b9e2557f6f7f1a3df8dff1cc41d5ea95a8946729f4f4fd45ade5a9cb08a28"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "tokenizer/tokenizer.json",
+          "size": 33384387,
+          "sha256": "f5b325224482ec441ec5fbe2a5ac08c3758e0f9605f6e54368e31f736fcfb01d"
+        },
+        {
+          "repo_id": "Aratako/Irodori-TTS-v4-Large-Quantized",
+          "revision": "bdef9592db4426bd1c99ccdf0cfc3a213223fb61",
+          "local_dir": "services/worker/runtimes/irodori/models/Irodori-TTS-v4-Large-Quantized",
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 802,
+          "git_blob_sha1": "2c2efc2b8149ee437ccf5b62e33c773c258b9bd5"
+        },
+        {
+          "repo_id": "Aratako/Semantic-DACVAE-Japanese-32dim",
+          "revision": "47376ee24834d7a05a48ebabfe3cde29b3c5e214",
+          "local_dir": "services/worker/runtimes/irodori/models/Semantic-DACVAE-Japanese-32dim",
+          "path": "weights.pth",
+          "size": 429620065,
+          "sha256": "db120339c5ee7eca1912cdf29bc612b947a0808e69c3cebfb4936b45a762c1d5"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_c.ckpt",
+          "size": 2008794,
+          "sha256": "c23b57635172b2fbd3a8531d15ba76b5885a10d0fe902ccb823c521c56041b33"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/dec_m_0.ckpt",
+          "size": 9554818,
+          "sha256": "829540c058270d29788f05294894d45bf436e44add0e1099422242ebb94b7088"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/enc_c.ckpt",
+          "size": 184765,
+          "sha256": "ff64f80d2391fdfc888e4103c499be4a2c958e59626587a1eab6db93204814c7"
+        },
+        {
+          "repo_id": "sony/silentcipher",
+          "revision": "a1c4d021905e0dc5b24be5f68db5fc4dba410ee1",
+          "local_dir": "services/worker/runtimes/irodori/models/silentcipher",
+          "path": "44_1_khz/73999_iteration/hparams.yaml",
+          "size": 1474,
+          "sha256": "27735fd4db0c00c29fef7af872ad1e5efe854e48d530a86c75beac2b87f09ce3"
+        }
+      ],
+      "prepared_only": true
+    }
+  ]
+}

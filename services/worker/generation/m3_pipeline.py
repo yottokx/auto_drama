@@ -129,7 +129,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     work.mkdir(parents=True, exist_ok=True)
     if kind in {"m3_image", "m3_voice", "m3_voice_clone"}:
         return _media_job(job, work)
+    from ..model_config import select_config
     config = pipeline.load_config()
+    if kind == "m3_narrative":
+        config = select_config(config, payload, pipeline.ROOT)
     causal = kind == "m3_narrative" and payload.get("story_workflow_version") == 2
     if causal:
         config = {**config, "model_configuration_identity": model_configuration_identity(pipeline.ROOT, config)}
@@ -168,6 +171,7 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         from .script_production import ProductionScriptRun
 
         script_run = ProductionScriptRun(work / "script", config, payload)
+        script_run.retry_failed_steps(job.get("retry_generation", 0))
     with gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock",
                   config["gpu_lock_timeout_seconds"]):
         if kind == "m3_narrative":
@@ -192,9 +196,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
                 finally:
                     write_json(work / "generation-trace.json", list(llm.trace))
                 provenance["llm"] = llm.provenance() if causal else {
-                    "model_id": config["llm"]["model_id"], "revision": llm.base["model"]["revision"],
-                    "sha256": llm.base["model"]["publisher_sha256"], "requests": llm.requests,
-                    "reasoning_level": "none",
+                    "model_id": config["llm"]["model_id"], "revision": llm.base["model"].get("revision"),
+                    "sha256": llm.base["model"].get("publisher_sha256", llm.base["model"].get("local_sha256")), "requests": llm.requests,
+                    "reasoning_level": llm.profile.get("reasoning_level", "none"),
+                    "top_p": llm.profile.get("top_p", 0.95),
                     "retry_seed_segments": llm.retry_seed_segments,
                 }
             trace = list(llm.trace)

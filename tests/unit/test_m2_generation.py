@@ -215,6 +215,30 @@ def relationships(characters):
     }
 
 
+def relationship_response(result, messages, schema):
+    assignments, _ = json.JSONDecoder().raw_decode(
+        messages[-1]["content"].split("出力キーごとの確定済み人物対応: ", 1)[1]
+    )
+    response = {}
+    for key, pair in assignments.items():
+        if "pairs" in result:
+            ids = [pair["first"]["id"], pair["second"]["id"]]
+            description = copy.deepcopy(next(
+                item for item in result["pairs"] if item["characterIds"] == sorted(ids)
+            ))
+            if ids != sorted(ids):
+                description["firstToSecond"], description["secondToFirst"] = (
+                    description["secondToFirst"], description["firstToSecond"]
+                )
+        else:
+            description = result[key]
+        response[key] = {
+            field: description[field.split("（", 1)[0]]
+            for field in schema["properties"][key]["properties"]
+        }
+    return response
+
+
 @pytest.mark.parametrize("count", [2, 3])
 def test_relationships_require_every_unordered_pair_with_both_directions(count):
     people = cast(count)
@@ -299,6 +323,7 @@ class FakeLLM:
         self.profile = {"temperature": 0.5, "max_tokens": 2048}
         self.requests = 0
         self.payload = payload
+        self.calls = []
 
     def __enter__(self):
         type(self).entered += 1
@@ -307,12 +332,19 @@ class FakeLLM:
     def __exit__(self, *args):
         type(self).exited += 1
 
+    def retry_failed_from(self, request_index):
+        self.retry_request_index = request_index
+
     def structured(self, stage, messages, schema):
         self.requests += 1
+        self.calls.append({"stage": stage, "messages": copy.deepcopy(messages),
+                           "schema": copy.deepcopy(schema)})
         if stage == "image-prompt":
             assert self.payload["character_result"]["appearance"] in messages[-1]["content"]
         else:
             assert "菌類" in messages[-1]["content"]
+        if "-requirements-review-" in stage:
+            return {"issues": []}
         if stage.endswith("candidates"):
             return {
                 "candidates": [
@@ -327,12 +359,7 @@ class FakeLLM:
                 rendering="Front view with visible hands." if self.payload["instruction"] else ""
             )
         if stage == "relationships-final":
-            return {
-                f"pair_{index}": {key: value for key, value in pair.items() if key != "characterIds"}
-                for index, pair in enumerate(
-                    relationships(self.payload["cast_results"])["pairs"], start=1
-                )
-            }
+            return relationship_response(relationships(self.payload["cast_results"]), messages, schema)
         if stage == "final" and "id" in schema["properties"] and (
             "selfIntroduction" not in schema["properties"]
         ):
@@ -364,24 +391,29 @@ def unpack(data):
         return json.loads(archive.read("result.json")), set(archive.namelist())
 
 
-def test_hierarchical_world_bundle_and_retry_reuses_completed_bytes(tmp_path, fake_runtime):
-    data = pipeline.generate_job(job(), tmp_path)
+def test_blank_world_brief_uses_hierarchy_and_retry_reuses_completed_bytes(tmp_path, fake_runtime):
+    request = job()
+    request["payload"]["world_input"].update(prompt="", setting="", notes="")
+    data = pipeline.generate_job(request, tmp_path)
     envelope, names = unpack(data)
     assert names == {"result.json"}
-    assert envelope["result"] == world()
+    assert envelope["result"] == {**world(), "prompt": ""}
     assert [entry["type"] for entry in envelope["trace"]].count("adoption") == 2
     assert [entry["type"] for entry in envelope["trace"]].count("candidates") == 2
     assert [entry["type"] for entry in envelope["trace"]].count("random_tool") == 2
-    assert pipeline.generate_job(job(), tmp_path) == data
+    assert pipeline.generate_job(request, tmp_path) == data
     assert FakeLLM.entered == FakeLLM.exited == 1
-    different = job()
+    different = copy.deepcopy(request)
     different["payload"]["seed"] += 1
     with pytest.raises(ValueError, match="another input"):
         pipeline.generate_job(different, tmp_path)
 
 
-def test_every_world_generation_stage_receives_combined_brief_without_stale_cast_results():
+@pytest.mark.parametrize("brief_field", ["prompt", "setting", "notes"])
+def test_authored_world_brief_goes_directly_to_generation_without_stale_cast_results(brief_field):
     payload = job()["payload"]
+    payload["world_input"].update(prompt="", setting="", notes="")
+    payload["world_input"][brief_field] = "菌類だけが暮らす庭で、土壌の記憶を証拠にした裁判を開く。"
     payload.update(
         cast_inputs=[{**character(), "name": "指定した菌類の司書"}],
         relationship_inputs=[{"characterIds": ["one", "two"], "instruction": "親子ではなく師弟"}],
@@ -414,16 +446,17 @@ def test_every_world_generation_stage_receives_combined_brief_without_stale_cast
 
     llm = CombinedBriefLLM(None, None, payload, None)
     pipeline.generate_text("m2_world", payload, llm)
-    assert captured == ["direction-candidates", "direction-consider", "direction-selected",
-                        "details-candidates", "details-consider", "details-selected", "final"]
+    assert captured == ["final", "m2_world-requirements-review-1"]
+    assert not any(entry["type"] in {"candidates", "adoption", "random_tool"} for entry in llm.trace)
     assert payload == original
 
 
-def test_character_generation_keeps_confirmed_world_and_original_combined_brief_together():
+def test_character_generation_uses_original_brief_directly_with_confirmed_world():
     payload = job("m2_character")["payload"]
     payload["world_input"]["setting"] = "確認前の世界観"
     payload["world_result"] = {**world(), "setting": "確認して確定した菌類の世界観"}
     payload["cast_inputs"] = [payload["character_input"]]
+    original_schema = copy.deepcopy(pipeline.CHARACTER_SCHEMA)
     captured = []
 
     class ConfirmedWorldLLM(FakeLLM):
@@ -437,7 +470,265 @@ def test_character_generation_keeps_confirmed_world_and_original_combined_brief_
 
     llm = ConfirmedWorldLLM(None, None, payload, None)
     pipeline.generate_text("m2_character", payload, llm)
-    assert "final" in captured
+    assert captured == ["final", "m2_character-requirements-review-1"]
+    assert not any(entry["type"] in {"candidates", "adoption", "random_tool"} for entry in llm.trace)
+    generated_schema = llm.calls[0]["schema"]
+    order = list(generated_schema["properties"])
+    assert generated_schema["required"] == order
+    assert set(order) == set(original_schema["properties"])
+    assert order.index("selfIntroduction") < order.index("appearance")
+    assert order.index("sampleLines") < order.index("appearance")
+    assert pipeline.CHARACTER_SCHEMA == original_schema
+
+
+def _brief_requirement_case(kind):
+    request = job(kind)
+    payload = request["payload"]
+    people = cast(2)
+    payload.update(cast_inputs=copy.deepcopy(people), relationship_inputs=[])
+    if kind == "m2_world":
+        requirement = "菌類だけが暮らし、人間は存在しない世界"
+        payload["world_input"]["prompt"] = requirement
+        rejected = {**world(), "setting": "人間の王が菌類の市民を統治する庭。",
+                    "prompt": "勝手に変更された入力", "chapterCount": 7}
+        repaired = {**world(), "setting": "菌類だけが暮らす庭。人間は存在せず、胞子の議会が裁判を開く。",
+                    "prompt": "修正時にも変更された入力", "chapterCount": 8}
+        marker = "setting"
+    elif kind == "m2_character":
+        requirement = "生まれつき目が見えず、視覚能力や視力回復はない菌類の弁護士"
+        payload["character_input"]["freeform"] = requirement
+        payload["cast_inputs"][0]["freeform"] = requirement
+        payload["character_result"] = None
+        rejected = {**character(), "settings": "土壌の発光を鋭い目で見抜く菌類の弁護士。",
+                    "height_cm": None, "body_type": "unknown"}
+        repaired = {**rejected, "settings": "生まれつき目が見えず、視覚能力はない。土壌の振動を証拠にする弁護士。"}
+        marker = "settings"
+    else:
+        requirement = "二人は血のつながった兄弟であり、師弟ではない"
+        payload.update(
+            character_id=None, cast_results=people, relationships_result=None,
+            relationship_inputs=[{"characterIds": [person["id"] for person in people],
+                                  "instruction": requirement}],
+            scope="relationships",
+        )
+        rejected = {"pair_1": {
+            "summary": "血縁のない菌類の師弟。", "firstToSecond": "弟子の成長を喜ぶ。",
+            "secondToFirst": "師を尊敬する。",
+        }}
+        repaired = {"pair_1": {
+            "summary": "血のつながった菌類の兄弟で、法廷で協力する。", "firstToSecond": "弟を頼りにする。",
+            "secondToFirst": "兄の慎重さを認める。",
+        }}
+        marker = "summary"
+    issue = {"requirement": requirement, "source_quote": requirement,
+             "problem": "生成した設定がこの明示的な指定と矛盾している。"}
+    return request, rejected, repaired, marker, issue
+
+
+def _reviewed_value(result, marker):
+    if "pair_1" in result:
+        return result["pair_1"][marker]
+    return result["pairs"][0][marker] if "pairs" in result else result[marker]
+
+
+@pytest.mark.parametrize("kind", ["m2_world", "m2_character", "m2_relationships"])
+def test_final_brief_review_repairs_contradictions_before_adopting_result(kind):
+    request, rejected, repaired, marker, issue = _brief_requirement_case(kind)
+    payload = request["payload"]
+    original = copy.deepcopy(payload)
+    reviews = []
+
+    class RepairingLLM(FakeLLM):
+        def structured(self, stage, messages, schema):
+            response = super().structured(stage, messages, schema)
+            content = messages[-1]["content"]
+            if stage in {"final", "relationships-final"}:
+                response = copy.deepcopy(rejected)
+                if kind == "m2_relationships":
+                    response = relationship_response(response, messages, schema)
+            elif "-requirements-review-" in stage:
+                assert not any(item["type"] == "complete_result" for item in self.trace)
+                context, _ = json.JSONDecoder().raw_decode(content)
+                assert context["world_input"] == payload["world_input"]
+                assert context["cast_inputs"] == (
+                    [payload["cast_inputs"][0]] if kind == "m2_character" else payload["cast_inputs"]
+                )
+                assert context["relationship_inputs"] == payload["relationship_inputs"]
+                sources, _ = json.JSONDecoder().raw_decode(
+                    content.split("\noriginal_user_inputs: ", 1)[1]
+                )
+                assert sources["world_input"] == payload["world_input"]
+                assert sources["cast_inputs"] == context["cast_inputs"]
+                assert sources["relationship_inputs"] == payload["relationship_inputs"]
+                assert not {"world_result", "cast_results", "character_result"} & sources.keys()
+                reviewed_result = json.loads(content.split("\nresult: ", 1)[1])
+                expected = rejected if not reviews else repaired
+                assert _reviewed_value(reviewed_result, marker) == _reviewed_value(expected, marker)
+                if kind == "m2_world":
+                    assert reviewed_result["prompt"] == payload["world_input"]["prompt"]
+                    assert reviewed_result["chapterCount"] == payload["world_input"]["chapterCount"]
+                reviews.append(stage)
+                response = {"issues": [issue] if len(reviews) == 1 else []}
+            elif "-requirements-repair-" in stage:
+                assert not any(item["type"] == "complete_result" for item in self.trace)
+                assert issue["source_quote"] in content
+                if kind == "m2_character":
+                    assert pipeline.VOICE_DESIGN_RULES in content
+                    assert "地の文・役名ラベル・括弧による演技説明を含めません。" in content
+                    assert "sampleLinesも実際に発声する本文だけ" in content
+                    assert "実際に出す鳴き声だけをselfIntroduction/sampleLinesに入れます。" in content
+                elif kind == "m2_world":
+                    assert "一つの完全な世界設定を日本語JSONで出力" in content
+                    assert "未確定の候補や質問は残しません" in content
+                    assert "promptは元の入力をそのまま保持" in content
+                    assert "chapterCountは入力の章数" in content
+                response = copy.deepcopy(repaired)
+                if kind == "m2_relationships":
+                    response = relationship_response(response, messages, schema)
+            validate_schema(response, schema)
+            return response
+
+    llm = RepairingLLM(None, None, payload, None)
+    result = pipeline.generate_relationships(payload, llm) if kind == "m2_relationships" else (
+        pipeline.generate_text(kind, payload, llm)
+    )
+
+    if kind == "m2_relationships":
+        expected = {"pairs": [{"characterIds": ["character-1", "character-2"],
+                               **repaired["pair_1"]}]}
+    elif kind == "m2_world":
+        expected = {**repaired, "prompt": payload["world_input"]["prompt"],
+                    "chapterCount": payload["world_input"]["chapterCount"]}
+    else:
+        expected = repaired
+    assert result == expected
+    assert payload == original
+    assert reviews == [f"{kind}-requirements-review-1", f"{kind}-requirements-review-2"]
+    assert [call["stage"] for call in llm.calls][-3:] == [
+        f"{kind}-requirements-review-1", f"{kind}-requirements-repair-1",
+        f"{kind}-requirements-review-2",
+    ]
+    assert sum(item["type"] == "complete_result" for item in llm.trace) == 1
+
+
+@pytest.mark.parametrize("kind", ["m2_world", "m2_character", "m2_relationships"])
+def test_accepted_instruction_history_reaches_generation_review_and_repairs(kind):
+    request, rejected, repaired, _, _ = _brief_requirement_case(kind)
+    payload = request["payload"]
+    if kind == "m2_world":
+        field, requirement = "title", "胞子の約束"
+        repaired[field] = requirement
+        changes = {field: requirement}
+        scope = "world"
+    elif kind == "m2_character":
+        field, requirement = "name", "コケ"
+        repaired[field] = requirement
+        changes = {field: requirement}
+        scope = "settings"
+    else:
+        field, requirement = "summary", "二人は同じ住居で暮らしている"
+        repaired["pair_1"][field] += requirement + "。"
+        changes = {"pairs": [{"characterIds": ["character-1", "character-2"],
+                               **repaired["pair_1"]}]}
+        scope = "relationships"
+    history = [
+        {"kind": "m2_world", "character_id": None, "scope": "world",
+         "instruction": "菌類の社会は平和的で、対立は裁判で解決する。"},
+        {"kind": kind, "character_id": "character-1" if kind == "m2_character" else None,
+         "scope": scope, "changes": changes},
+    ]
+    payload["applied_instructions"] = copy.deepcopy(history)
+    original = copy.deepcopy(payload)
+    stages = []
+    reviews = []
+
+    class HistoricalBriefLLM(FakeLLM):
+        def capture(self, stage, messages):
+            context, _ = json.JSONDecoder().raw_decode(messages[-1]["content"])
+            assert context["applied_instructions"] == history
+            assert context["world_input"] == original["world_input"]
+            assert context["relationship_inputs"] == original["relationship_inputs"]
+            if kind == "m2_character":
+                assert context["character_input"] == original["character_input"]
+            stages.append(stage)
+
+        def random_context(self, stage, messages):
+            self.capture(stage, messages)
+            return super().random_context(stage, messages)
+
+        def structured(self, stage, messages, schema):
+            self.capture(stage, messages)
+            response = super().structured(stage, messages, schema)
+            if stage in {"final", "relationships-final"}:
+                response = copy.deepcopy(rejected)
+                if kind == "m2_relationships":
+                    response = relationship_response(response, messages, schema)
+            elif "-requirements-review-" in stage:
+                sources, _ = json.JSONDecoder().raw_decode(
+                    messages[-1]["content"].split("\noriginal_user_inputs: ", 1)[1]
+                )
+                assert sources["applied_instructions"] == history
+                assert sources["world_input"] == original["world_input"]
+                assert sources["relationship_inputs"] == original["relationship_inputs"]
+                reviews.append(stage)
+                response = {"issues": [{"requirement": requirement,
+                                        "source_quote": requirement,
+                                        "problem": "適用済みの変更が設定結果に反映されていない。"}]
+                            if len(reviews) == 1 else []}
+            elif "-requirements-repair-" in stage:
+                response = copy.deepcopy(repaired)
+                if kind == "m2_relationships":
+                    response = relationship_response(response, messages, schema)
+            validate_schema(response, schema)
+            return response
+
+    llm = HistoricalBriefLLM(None, None, payload, None)
+    result = pipeline.generate_relationships(payload, llm) if kind == "m2_relationships" else (
+        pipeline.generate_text(kind, payload, llm)
+    )
+
+    assert requirement in _reviewed_value(result, field)
+    assert payload == original
+    assert stages == ["relationships-final" if kind == "m2_relationships" else "final",
+                      f"{kind}-requirements-review-1", f"{kind}-requirements-repair-1",
+                      f"{kind}-requirements-review-2"]
+    assert llm.trace[-1]["type"] == "complete_result"
+
+
+@pytest.mark.parametrize("kind", ["m2_world", "m2_character", "m2_relationships"])
+def test_persistently_violated_brief_never_becomes_a_completed_bundle(
+    kind, tmp_path, fake_runtime, monkeypatch,
+):
+    request, rejected, _, _, issue = _brief_requirement_case(kind)
+    instances = []
+
+    class RejectingLLM(FakeLLM):
+        def __init__(self, *args):
+            super().__init__(*args)
+            instances.append(self)
+
+        def structured(self, stage, messages, schema):
+            response = super().structured(stage, messages, schema)
+            if "-requirements-review-" in stage:
+                response = {"issues": [issue]}
+            elif stage in {"final", "relationships-final"} or "-requirements-repair-" in stage:
+                response = copy.deepcopy(rejected)
+                if kind == "m2_relationships":
+                    response = relationship_response(response, messages, schema)
+            validate_schema(response, schema)
+            return response
+
+    monkeypatch.setattr(pipeline, "LocalLLM", RejectingLLM)
+    with pytest.raises(ValueError, match="STEP1"):
+        pipeline.generate_job(request, tmp_path)
+
+    assert not (tmp_path / "result.zip").exists()
+    assert not any(item["type"] == "complete_result" for item in instances[0].trace)
+    assert instances[0].retry_request_index == 1
+    reviews = [call["stage"] for call in instances[0].calls if "-requirements-review-" in call["stage"]]
+    repairs = [call["stage"] for call in instances[0].calls if "-requirements-repair-" in call["stage"]]
+    assert reviews == [f"{kind}-requirements-review-{attempt}" for attempt in range(1, 4)]
+    assert repairs == [f"{kind}-requirements-repair-{attempt}" for attempt in range(1, 3)]
 
 
 def test_candidate_selection_schema_excludes_character_ids_even_after_distracted_consideration():
@@ -811,7 +1102,9 @@ def test_relationship_generation_runs_without_optional_instructions(tmp_path, fa
     envelope, names = unpack(pipeline.generate_job(request, tmp_path))
     assert names == {"result.json"}
     assert envelope["result"] == relationships(cast())
-    assert any(item["type"] == "adoption" for item in envelope["trace"])
+    assert not any(item["type"] in {"candidates", "adoption", "random_tool"}
+                   for item in envelope["trace"])
+    assert envelope["trace"][-1]["type"] == "complete_result"
 
 
 def test_relationship_generation_retains_every_persons_established_settings():
@@ -837,8 +1130,7 @@ def test_relationship_generation_retains_every_persons_established_settings():
 
     result = pipeline.generate_relationships(payload, FullCastLLM(None, None, payload, None))
     assert result == relationships(people)
-    assert "relationships-final" in stages
-    assert any(stage.endswith("-consider") for stage in stages)
+    assert stages == ["relationships-final", "m2_relationships-requirements-review-1"]
 
 
 @pytest.mark.parametrize("count", [2, 3])
@@ -876,22 +1168,33 @@ def test_relationship_generation_schema_is_bound_to_actual_cast_and_pair_count(c
     assert pipeline.RELATIONSHIPS_SCHEMA == original_schema
 
 
-def test_relationship_generation_assigns_uuid_pairs_and_perspectives_independent_of_cast_order():
+@pytest.mark.parametrize("duplicate_names", [False, True])
+def test_relationship_generation_assigns_uuid_pairs_and_perspectives_independent_of_cast_order(
+    duplicate_names,
+):
     people = [
         {**character(), "id": "character-1", "name": "主人公"},
         {
             **character(),
             "id": "character-97480dad-d560-446f-bde5-44babc28bb5c",
             "name": "ヒロイン",
+            "role": "勇者",
         },
         {
             **character(),
             "id": "character-1def5441-dbdc-4382-9a26-e2a06b675027",
             "name": "ライバル",
+            "role": "魔王",
         },
     ]
+    if duplicate_names:
+        people[2]["name"] = people[1]["name"]
     payload = job("m2_relationships")["payload"]
     payload.update(cast_results=people, relationship_inputs=[])
+    by_id = {person["id"]: person for person in people}
+
+    def perspective(first, second):
+        return f"{first['name']}（{first['role']}）から{second['name']}（{second['role']}）への認識。"
 
     class AssignedLLM(FakeLLM):
         def structured(self, stage, messages, schema):
@@ -901,13 +1204,33 @@ def test_relationship_generation_assigns_uuid_pairs_and_perspectives_independent
             assignments = json.loads(
                 content.split("出力キーごとの確定済み人物対応: ", 1)[1].split("\n", 1)[0]
             )
-            assert assignments["pair_3"]["first"]["name"] == "ライバル"
-            assert assignments["pair_3"]["second"]["name"] == "ヒロイン"
+            first_name, second_name = people[1]["name"], people[2]["name"]
+            assert assignments["pair_3"]["first"] == {
+                "id": people[1]["id"], "name": first_name,
+            }
+            assert assignments["pair_3"]["second"] == {
+                "id": people[2]["id"], "name": second_name,
+            }
+            forward = f"firstToSecond（{first_name}→{second_name}）"
+            reverse = f"secondToFirst（{second_name}→{first_name}）"
+            assert assignments["pair_3"][forward] == {
+                "認識する人物": {"name": first_name, "role": "勇者"},
+                "認識される相手": {"name": second_name, "role": "魔王"},
+            }
+            assert assignments["pair_3"][reverse] == {
+                "認識する人物": {"name": second_name, "role": "魔王"},
+                "認識される相手": {"name": first_name, "role": "勇者"},
+            }
+            assert list(schema["properties"]["pair_3"]["properties"]) == ["summary", forward, reverse]
             result = {
                 key: {
                     "summary": f"{pair['first']['name']}と{pair['second']['name']}の関係。",
-                    "firstToSecond": f"{pair['first']['name']}から{pair['second']['name']}への認識。",
-                    "secondToFirst": f"{pair['second']['name']}から{pair['first']['name']}への認識。",
+                    f"firstToSecond（{pair['first']['name']}→{pair['second']['name']}）": perspective(
+                        by_id[pair["first"]["id"]], by_id[pair["second"]["id"]],
+                    ),
+                    f"secondToFirst（{pair['second']['name']}→{pair['first']['name']}）": perspective(
+                        by_id[pair["second"]["id"]], by_id[pair["first"]["id"]],
+                    ),
                 }
                 for key, pair in assignments.items()
             }
@@ -920,8 +1243,8 @@ def test_relationship_generation_assigns_uuid_pairs_and_perspectives_independent
         [people[0]["id"], people[1]["id"]],
         [people[2]["id"], people[1]["id"]],
     ]
-    assert result["pairs"][2]["firstToSecond"] == "ライバルからヒロインへの認識。"
-    assert result["pairs"][2]["secondToFirst"] == "ヒロインからライバルへの認識。"
+    assert result["pairs"][2]["firstToSecond"] == perspective(people[2], people[1])
+    assert result["pairs"][2]["secondToFirst"] == perspective(people[1], people[2])
 
 
 def test_queued_legacy_character_job_keeps_its_original_result_schema(tmp_path, fake_runtime):

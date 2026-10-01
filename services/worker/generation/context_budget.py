@@ -11,6 +11,45 @@ def positive_integer(value: object, name: str, *, minimum: int = 1) -> int:
 
 
 @dataclass(frozen=True)
+class OutputTokenPolicy:
+    """Split common-setting context growth equally between input and generation.
+
+    Profiles retain their 16k baseline values so saved model identities remain
+    stable. The extension is applied once when constructing the request; explicit
+    request limits (including frozen scene budgets) are already total limits.
+    This policy is independent of the provider and reasoning-effort vocabulary.
+    """
+
+    base_limit: int
+    extension_tokens: int = 0
+
+    @classmethod
+    def resolve(cls, settings: dict, profile: dict) -> OutputTokenPolicy:
+        worker_limit = positive_integer(settings.get("max_output_tokens", 8192),
+                                        "max_output_tokens", minimum=256)
+        base_limit = positive_integer(profile.get("max_output_tokens", worker_limit),
+                                      "profile.max_output_tokens", minimum=256)
+        if base_limit > worker_limit:
+            raise ValueError("Profile max_output_tokens exceeds the worker output allowance.")
+        extension = 0
+        if profile.get("common_settings_version"):
+            context = positive_integer(profile.get("context_size", settings.get("context_size")),
+                                       "context_size", minimum=16384)
+            # Give an odd leftover token to input. Never round generation upward.
+            extension = (context - 16384) // 2
+        return cls(base_limit, extension)
+
+    @property
+    def limit(self) -> int:
+        return self.base_limit + self.extension_tokens
+
+    def tokens(self, baseline: int) -> int:
+        if positive_integer(baseline, "baseline output tokens") > self.base_limit:
+            raise ValueError("Baseline output tokens exceed the worker output allowance.")
+        return baseline + self.extension_tokens
+
+
+@dataclass(frozen=True)
 class ContextPolicy:
     target: int
     permitted_maximum: int

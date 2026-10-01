@@ -118,3 +118,7 @@ Get-Content -LiteralPath (Join-Path $run.run_dir 'progress.log') -Tail 20 -Wait
 - `scripts/m0/serve_scene.py`: 指定したティラノ環境と生成した一場面を配信
 
 `run_generation_checks.py` が生成・変換・組み立ての各スクリプトを対象ランタイムの `.venv/Scripts/python.exe` で順番に起動します。モデルの同時GPUロードを避け、画像→TTS→LLMの順でプロセス終了後の解放を確認します。配信とブラウザーでの確認は別に実施します。生成検証の終了状態 `generation_completed_review_pending` はM0全体の完了を意味しません。目視・試聴・実再生の結果と、許容した制約や残る品質評価を記録して最終判定します。今回の記録は `completed_with_known_limitations` です。外部LLM APIの接続検証はユーザー指定により後回しです。
+
+## LLM共通設定
+
+[モデル・生成パラメータの設定とWorkerのモデル配置](docs/setup/llm-settings.md)を参照してください。

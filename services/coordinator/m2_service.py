@@ -134,6 +134,7 @@ class M2Service:
         if row is None:
             raise ServiceError(404, "M2の作品が見つかりません。")
         state = json.loads(row["state"])
+        state.setdefault("appliedInstructions", [])
         draft = state["draft"]
         if draft["step"] == "character-input":
             draft["step"] = "world-input"
@@ -248,6 +249,7 @@ class M2Service:
             )
             state = {
                 "wizardStepVersion": 2,
+                "appliedInstructions": [],
                 "draft": {
                     "revision": 1,
                     "step": "world-input",
@@ -391,6 +393,20 @@ class M2Service:
             request["characterId"] = character["id"]
         draft["requests"].append(request)
 
+    @staticmethod
+    def _remember_instruction(state: dict, kind: str, *, character_id: str | None = None,
+                              scope: str = "all", instruction: str = "",
+                              changes: dict | None = None) -> None:
+        """Retain only accepted user edits, never inferred generated facts."""
+        if not instruction.strip() and not changes:
+            return
+        entry = {"kind": kind, "character_id": character_id, "scope": scope}
+        if instruction.strip():
+            entry["instruction"] = instruction.strip()
+        if changes:
+            entry["changes"] = copy.deepcopy(changes)
+        state.setdefault("appliedInstructions", []).append(entry)
+
     def _artifact(
         self,
         connection,
@@ -495,6 +511,10 @@ class M2Service:
             self._invalidate_relationships(draft)
 
     def _profile(self) -> dict:
+        from .llm_settings import saved_settings
+        common = saved_settings(self.coordinator)
+        if common is not None:
+            return {**common.profile(), "max_tokens": 3072, "prompt_version": 4}
         configuration = json.loads((ROOT / "config/m2-generation.json").read_text(encoding="utf-8"))
         llm = configuration["llm"]
         return {
@@ -503,7 +523,7 @@ class M2Service:
             "temperature": llm["temperature"],
             "max_tokens": llm["max_tokens"],
             "reasoning_level": llm["reasoning_level"],
-            "prompt_version": 2,
+            "prompt_version": 4,
         }
 
     def _queue_next(self, connection: sqlite3.Connection, project_id: str, state: dict) -> None:
@@ -518,6 +538,10 @@ class M2Service:
             else None
         )
         profile = self._profile()
+        from .tts_settings import VOICE_PURPOSES, TTSService
+
+        tts_profile = (TTSService(self.coordinator).profile(connection)
+                       if descriptor["kind"] in VOICE_PURPOSES else None)
         payload = {
             "schema_version": 1,
             "seed": descriptor["seed"],
@@ -529,8 +553,10 @@ class M2Service:
             "character_result": character["result"] if character else None,
             "scope": descriptor["scope"],
             "instruction": descriptor["instruction"],
+            "applied_instructions": copy.deepcopy(state.get("appliedInstructions", [])),
             "locked": character["locked"] if character else {name: False for name in GROUPS},
             "profile": profile,
+            **({"tts_profile": tts_profile} if tts_profile is not None else {}),
             "character_contract_version": 2
             if descriptor["kind"] == "m2_character"
             or not character
@@ -574,6 +600,7 @@ class M2Service:
                     {
                         "schema_version": 1,
                         "profile": profile,
+                        **({"tts_profile": tts_profile} if tts_profile is not None else {}),
                         "base_revision": draft["revision"],
                         "seed": descriptor["seed"],
                     }
@@ -647,6 +674,7 @@ class M2Service:
                     draft["relationshipInputs"],
                 )
                 if current != previous:
+                    state["appliedInstructions"] = []
                     self._invalidate(state)
                     draft["revision"] += 1
                     draft["worldPendingChanges"] = True
@@ -672,6 +700,9 @@ class M2Service:
             if name == "save-world":
                 value = body.world.model_dump()
                 if value != draft["worldInput"]:
+                    state["appliedInstructions"] = [
+                        item for item in state["appliedInstructions"] if item["kind"] != "m2_world"
+                    ]
                     draft["worldInput"] = value
                     draft["worldPendingChanges"] = True
                     self._invalidate_world(draft)
@@ -684,7 +715,10 @@ class M2Service:
                     raise ServiceError(
                         422, "世界観のタイトル・ジャンル・雰囲気・設定を入力してください。"
                     ) from exc
+                changes = {key: value for key, value in result.items()
+                           if (draft["worldResult"] or {}).get(key) != value}
                 self._result(connection, project_id, draft, None, result)
+                self._remember_instruction(state, "m2_world", scope="world", changes=changes)
                 draft["step"] = "world-review"
             elif name == "generate-world":
                 self._invalidate_world(draft)
@@ -726,10 +760,12 @@ class M2Service:
             self._save(connection, project_id, state)
             return self._view(connection, project_id, state)
 
-    def _save_characters(self, draft: dict, body) -> None:
+    def _save_characters(self, draft: dict, body) -> bool:
         if len(body.characters) > 3:
             raise ServiceError(422, "メインキャラクターは3人以下にしてください。")
         previous = {value["id"]: value for value in draft["characters"]}
+        previous_inputs = [copy.deepcopy(value["input"]) for value in draft["characters"]]
+        previous_relationships = copy.deepcopy(draft["relationshipInputs"])
 
         def identity_inputs(characters):
             return {
@@ -787,6 +823,8 @@ class M2Service:
             if not value.get("characterId") or value["characterId"] in retained
         ]
         draft["step"] = "world-input"
+        return (previous_inputs != [value["input"] for value in replacements]
+                or previous_relationships != draft["relationshipInputs"])
 
     def _queue_characters(self, state: dict, *, force: bool = False) -> None:
         draft = state["draft"]
@@ -826,7 +864,22 @@ class M2Service:
     def _character_action(self, connection, project_id: str, state: dict, body) -> None:
         draft, name = state["draft"], body.action
         if name == "save-characters":
-            self._save_characters(draft, body)
+            previous_inputs = {person["id"]: copy.deepcopy(person["input"])
+                               for person in draft["characters"]}
+            previous_relationships = copy.deepcopy(draft["relationshipInputs"])
+            if self._save_characters(draft, body):
+                current_inputs = {person["id"]: person["input"] for person in draft["characters"]}
+                changed_ids = {identifier for identifier in previous_inputs.keys() | current_inputs.keys()
+                               if previous_inputs.get(identifier) != current_inputs.get(identifier)}
+                reset_relationships = (
+                    previous_relationships != draft["relationshipInputs"]
+                    or bool(previous_inputs.keys() - current_inputs.keys())
+                )
+                state["appliedInstructions"] = [
+                    item for item in state["appliedInstructions"]
+                    if not (item["kind"] == "m2_character" and item["character_id"] in changed_ids)
+                    and not (item["kind"] == "m2_relationships" and reset_relationships)
+                ]
             return
         draft["step"] = "character-review"
         if len(draft["characters"]) > 3 and (
@@ -841,6 +894,10 @@ class M2Service:
                 [value.model_dump() for value in body.relationshipInputs], draft["characters"]
             )
             if instructions != draft["relationshipInputs"]:
+                state["appliedInstructions"] = [
+                    item for item in state["appliedInstructions"]
+                    if item["kind"] != "m2_relationships"
+                ]
                 draft["relationshipInputs"] = instructions
                 self._invalidate_relationships(draft)
             return
@@ -886,7 +943,11 @@ class M2Service:
                 raise ServiceError(
                     422, "キャラクターの生成結果に必要な設定を入力してください。"
                 ) from exc
+            changes = {key: result[key] for key in body.patch
+                       if character["result"].get(key) != result[key]}
             self._result(connection, project_id, draft, character, result)
+            self._remember_instruction(state, "m2_character", character_id=character["id"],
+                                       changes=changes)
         elif name == "revise-character":
             self._can_generate_character(character, body.scope)
             if character["pendingChanges"] and body.scope != "all":
@@ -1201,6 +1262,11 @@ class M2Service:
                 provenance=envelope["provenance"],
                 job=job,
                 attempt=attempt,
+            )
+        if job["kind"] in ("m2_world", "m2_character", "m2_relationships"):
+            self._remember_instruction(
+                state, job["kind"], character_id=payload["character_id"],
+                scope=payload["scope"], instruction=payload.get("instruction", ""),
             )
         draft["revision"] += 1
         state["activeJobId"] = None

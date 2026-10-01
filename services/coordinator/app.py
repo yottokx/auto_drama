@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from starlette.concurrency import run_in_threadpool
 
 from packages.contracts import Script
+from packages.contracts.llm_settings import LLMCapability, LLMSettings
 
 from .service import Coordinator, ServiceError
 
@@ -51,6 +52,12 @@ class DemoInput(InputModel):
 class WorkerInput(InputModel):
     name: Label
     capabilities: list[Label] = Field(default_factory=lambda: ["tyrano_export"], max_length=32)
+    llm_models: list[LLMCapability] = Field(default_factory=list, max_length=256)
+
+
+class WorkerCapabilitiesInput(InputModel):
+    capabilities: list[Label] = Field(max_length=32)
+    llm_models: list[LLMCapability] = Field(max_length=256)
 
 
 class LeaseInput(InputModel):
@@ -94,10 +101,12 @@ def create_app(
     from .m2_routes import router as m2_router
     from .m3_player import install_player_routes
     from .m3_routes import router as m3_router
+    from .tts_settings import register_routes as register_tts_routes
 
     app.include_router(m2_router(service))
     app.include_router(m3_router(service))
     install_player_routes(app, service)
+    register_tts_routes(app, service)
 
     @app.exception_handler(ServiceError)
     async def service_error(request: Request, exc: ServiceError):
@@ -188,7 +197,23 @@ def create_app(
 
     @app.post("/api/workers", status_code=201)
     def register_worker(body: WorkerInput):
-        return service().register_worker(body.name, body.capabilities)
+        return service().register_worker(body.name, body.capabilities,
+                                         [model.model_dump() for model in body.llm_models])
+
+    @app.post("/api/workers/{worker_id}/capabilities")
+    def update_worker_capabilities(worker_id: str, body: WorkerCapabilitiesInput):
+        return service().update_worker_capabilities(worker_id, body.capabilities,
+            [model.model_dump() for model in body.llm_models])
+
+    @app.get("/api/settings/llm")
+    def llm_settings():
+        from .llm_settings import read_settings
+        return read_settings(service())
+
+    @app.post("/api/settings/llm")
+    def update_llm_settings(body: LLMSettings):
+        from .llm_settings import save_settings
+        return save_settings(service(), body)
 
     @app.post("/api/workers/{worker_id}/claim")
     def claim(worker_id: str):

@@ -203,6 +203,14 @@ class M3Service(ChapterProduction):
             if profile_job
             else M2Service(self.coordinator)._profile()
         )
+        from .tts_settings import TTSService
+
+        # The first narrative fixes both voice models for the entire production,
+        # including asset jobs and every later chapter.
+        if profile_job:
+            tts_profile = json.loads(profile_job["settings_snapshot"]).get("tts_profile")
+        else:
+            tts_profile = TTSService(self.coordinator).profile(connection)
         workflow = {}
         if kind == "m3_narrative" and profile_job:
             pinned = json.loads(profile_job["payload"])
@@ -219,7 +227,8 @@ class M3Service(ChapterProduction):
                        if key not in {"max_tokens", "prompt_version"}}
             settings = json.loads((GENERATION_ROOT / "config/m2-generation.json").read_text(
                 encoding="utf-8"))["llm"]
-            profile.update(reasoning_level="none", context_size=settings.get("context_size", 16384))
+            if not profile.get("common_settings_version"):
+                profile.update(reasoning_level="none", context_size=settings.get("context_size", 16384))
         payload = {
             "schema_version": 1,
             "production_id": production["id"],
@@ -228,6 +237,7 @@ class M3Service(ChapterProduction):
             "m4": bool(production["m4_enabled"]),
             "approval_snapshot": snapshot,
             "profile": profile,
+            **({"tts_profile": tts_profile} if tts_profile is not None else {}),
             "seed": int(identifier[:8], 16) & 0x7FFFFFFF,
             **workflow,
             **descriptor,
@@ -257,6 +267,7 @@ class M3Service(ChapterProduction):
                     {
                         "schema_version": 1,
                         "profile": profile,
+                        **({"tts_profile": tts_profile} if tts_profile is not None else {}),
                         "approval_artifact_id": production["approval_artifact_id"],
                         "seed": payload["seed"],
                     }

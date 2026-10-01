@@ -40,7 +40,7 @@ def required(connection: sqlite3.Connection, table: str, identifier: str) -> dic
 def public(record: dict) -> dict:
     result = dict(record)
     result.pop("storage_key", None)
-    for key in ("payload", "settings_snapshot", "capabilities", "provenance", "policy"):
+    for key in ("payload", "settings_snapshot", "capabilities", "provenance", "policy", "llm_models"):
         if key in result:
             result[key] = json.loads(result[key])
     for key in (
@@ -363,7 +363,7 @@ class Coordinator:
             # An explicit user retry grants one additional attempt and preserves history.
             connection.execute(
                 "UPDATE job SET status='pending',max_attempts=attempt_count+1,error=NULL,"
-                "updated_at=? WHERE id=?",
+                "retry_generation=retry_generation+1,updated_at=? WHERE id=?",
                 (self.clock(), identifier),
             )
             connection.execute(
@@ -371,14 +371,22 @@ class Coordinator:
             )
             return public(required(connection, "job", identifier))
 
-    def register_worker(self, name: str, capabilities: list[str]) -> dict:
+    def register_worker(self, name: str, capabilities: list[str], llm_models: list[dict] | None = None) -> dict:
         with self.db.transaction() as connection:
             identifier = uuid4().hex
             connection.execute(
-                "INSERT INTO worker (id,name,capabilities,last_seen_at) VALUES (?,?,?,?)",
-                (identifier, name, json.dumps(sorted(set(capabilities))), self.clock()),
+                "INSERT INTO worker (id,name,capabilities,last_seen_at,llm_models) VALUES (?,?,?,?,?)",
+                (identifier, name, json.dumps(sorted(set(capabilities))), self.clock(),
+                 json.dumps(llm_models or [])),
             )
             return public(required(connection, "worker", identifier))
+
+    def update_worker_capabilities(self, worker_id: str, capabilities: list[str], models: list[dict]) -> dict:
+        with self.db.transaction() as connection:
+            required(connection, "worker", worker_id)
+            connection.execute("UPDATE worker SET capabilities=?,llm_models=?,last_seen_at=? WHERE id=?",
+                (json.dumps(sorted(set(capabilities))), json.dumps(models), self.clock(), worker_id))
+            return public(required(connection, "worker", worker_id))
 
     def workers(self) -> list[dict]:
         with self.db.transaction() as connection:
@@ -412,7 +420,25 @@ class Coordinator:
                 "OR h.production_frozen=1 OR h.production_id!=root.id)) "
                 "ORDER BY priority DESC, created_at, id"
             )
-            job = next((dict(row) for row in candidates if row["kind"] in capabilities), None)
+            from packages.contracts.llm_settings import LLMCapability
+            models = [LLMCapability.model_validate(value) for value in json.loads(worker["llm_models"])]
+
+            def supported(row):
+                if row["kind"] not in capabilities:
+                    return False
+                payload = json.loads(row["payload"])
+                from .tts_settings import TTSService
+
+                if not TTSService.supports(connection, worker, row["kind"], payload.get("tts_profile")):
+                    return False
+                profile = payload.get("profile", {})
+                uses_llm = row["kind"] in {"m2_world", "m2_character", "m2_relationships",
+                                           "m2_image", "m3_narrative", "m3_image"}
+                return (not uses_llm
+                        or (not profile.get("common_settings_version") and not models)
+                        or any(model.supports(profile) for model in models))
+
+            job = next((dict(row) for row in candidates if supported(row)), None)
             if job is None:
                 return None
             attempt = job["attempt_count"] + 1

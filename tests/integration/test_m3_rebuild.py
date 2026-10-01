@@ -138,6 +138,12 @@ def test_migration_preserves_existing_published_build(tmp_path, monkeypatch):
             connection.execute(f"INSERT INTO {table}_legacy ({columns}) SELECT {columns} FROM {table}")
             connection.execute(f"DROP TABLE {table}")
             connection.execute(f"ALTER TABLE {table}_legacy RENAME TO {table}")
+        # Remove all tables introduced after this historical schema, including
+        # current TTS management state populated by the fixture runtime.
+        for table in ("tts_worker_inventory", "tts_download", "tts_settings", "llm_settings"):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("ALTER TABLE worker DROP COLUMN llm_models")
+        connection.execute("ALTER TABLE job DROP COLUMN retry_generation")
         connection.execute("DELETE FROM schema_migration WHERE version>=4")
     with TestClient(create_app(data_dir)) as client:
         migrated = production(client, project)

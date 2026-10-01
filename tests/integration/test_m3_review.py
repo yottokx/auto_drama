@@ -11,7 +11,7 @@ from packages.contracts.m3 import M3_KINDS
 from packages.narrative.validation import script_character_id
 from services.coordinator.app import create_app
 from services.worker.client import WorkerClient
-from tests.integration.test_m2 import action
+from tests.integration.test_m2 import action, report_voice_inventory
 from tests.integration.test_m3 import approved, narrative, output, production
 
 
@@ -55,7 +55,9 @@ def test_real_worker_transport_replay_and_later_draft_edits_keep_approved_chapte
             return output(job)
 
         worker = WorkerClient(transport, generation_runner=generate,
-                              generation_kinds=M3_KINDS, work_dir=tmp_path / "worker")
+                              generation_kinds=M3_KINDS, work_dir=tmp_path / "worker",
+                              extra_capabilities=["tts_download"])
+        report_voice_inventory(client, worker.register())
         for _ in range(40):
             result = worker.run_once()
             if result == "idle":

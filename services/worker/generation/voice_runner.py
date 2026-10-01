@@ -19,11 +19,14 @@ from typing import TextIO
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from scripts.m0.tts_smoke import (
-    MANIFEST_PATH,
     RUNTIME_ROOT,
     configure_environment,
     inspect_wav,
-    verify_models,
+)
+from services.worker.generation.tts_runtime import (
+    TTSRuntimeProfile,
+    resolve_request_profile,
+    verify_profile_files,
 )
 
 
@@ -50,19 +53,19 @@ class VoiceRuntimeSession:
 
     def __init__(self) -> None:
         self.runtime = None
-        self.model_precision = None
+        self.profile = None
+        self.quantization_metadata = None
 
-    def _initialize(self, precision: str) -> None:
+    def _initialize(self, profile: TTSRuntimeProfile) -> None:
         if Path(sys.prefix).resolve() != (RUNTIME_ROOT / ".venv").resolve():
             raise RuntimeError("Voice design requires the isolated worker Irodori Python.")
         configure_environment()
-        self.manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         self.commit = subprocess.check_output(
             ["git", "-C", str(RUNTIME_ROOT / "source"), "rev-parse", "HEAD"], text=True
         ).strip()
-        if self.commit != self.manifest["source_commit"]:
+        if self.commit != profile.bundle["source_commit"]:
             raise RuntimeError("Pinned Irodori source revision mismatch.")
-        paths = verify_models(self.manifest, RUNTIME_ROOT / "models")
+        verify_profile_files(profile, ROOT)
         import numpy as np
         import silentcipher
         import soundfile as sf
@@ -72,7 +75,25 @@ class VoiceRuntimeSession:
 
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is unavailable for Irodori voice design.")
-        watermark = paths["irodori-silentcipher"] / "44_1_khz/73999_iteration"
+        if profile.compute_precision == "bf16" and not torch.cuda.is_bf16_supported():
+            raise RuntimeError("The selected TTS precision requires a CUDA GPU with bf16 support.")
+        if profile.bundle["quantization"] is not None:
+            from irodori_tts.quantization import parse_quantization_metadata
+            from packaging.version import Version
+            from safetensors import safe_open
+
+            if not Version("0.16") <= Version(importlib.metadata.version("torchao")) < Version("0.17"):
+                raise RuntimeError("Official quantized TTS weights require torchao >=0.16,<0.17.")
+            if torch.cuda.get_device_capability()[0] < 8:
+                raise RuntimeError("Official quantized TTS weights require CUDA compute capability >=8.0.")
+            with safe_open(str(profile.path(profile.file("model.safetensors"))),
+                           framework="pt", device="cpu") as checkpoint:
+                quantization = parse_quantization_metadata(checkpoint.metadata() or {})
+            expected = profile.bundle["quantization"].replace("-", "_")
+            if quantization is None or quantization["quantization_type"] != expected:
+                raise ValueError("TTS checkpoint quantization differs from its pinned model selection.")
+            self.quantization_metadata = quantization
+        watermark = profile.path(profile.file("hparams.yaml", repo_id="sony/silentcipher")).parent
         silentcipher.get_model = functools.partial(
             silentcipher.get_model,
             ckpt_path=str(watermark),
@@ -80,38 +101,40 @@ class VoiceRuntimeSession:
         )
         runtime = InferenceRuntime.from_key(
             RuntimeKey(
-                checkpoint=str(paths["irodori-v4.1-small"] / "model.safetensors"),
+                checkpoint=str(profile.path(profile.file("model.safetensors"))),
                 model_device="cuda",
-                model_precision=precision,
-                codec_repo=str(paths["irodori-dacvae"] / "weights.pth"),
+                model_precision=profile.compute_precision,
+                codec_repo=str(profile.path(profile.file("weights.pth"))),
                 codec_device="cuda",
                 codec_precision="fp32",
             )
         )
         if not runtime.watermarker.ready:
             raise RuntimeError("Pinned automatic voice watermark failed to initialize.")
-        self.versions = {
-            name: importlib.metadata.version(name)
-            for name in ("torch", "transformers", "soundfile", "silentcipher")
-        }
+        libraries = ["torch", "torchaudio", "torchcodec", "transformers", "safetensors",
+                     "soundfile", "dacvae", "silentcipher"]
+        if profile.bundle["quantization"] is not None:
+            libraries.append("torchao")
+        self.versions = {name: importlib.metadata.version(name) for name in libraries}
         self.np, self.sf = np, sf
         self.sampling_request = SamplingRequest
         self.normalize_text = normalize_text
-        self.model_precision = precision
+        self.profile = profile
         self.runtime = runtime
 
     def generate(self, output: Path) -> None:
         started = time.perf_counter()
         request = json.loads((output / "request.json").read_text(encoding="utf-8"))
         reference = validate_request(request, output)
+        profile = resolve_request_profile(request)
         model_reused = self.runtime is not None
         initialization_seconds = 0.0
         if model_reused:
-            if self.model_precision != request["model_precision"]:
-                raise RuntimeError("Voice model precision changed; restart the voice runtime.")
+            if self.profile.identity != profile.identity:
+                raise RuntimeError("Voice model selection changed; restart the voice runtime.")
         else:
             initialization_started = time.perf_counter()
-            self._initialize(request["model_precision"])
+            self._initialize(profile)
             initialization_seconds = time.perf_counter() - initialization_started
         runtime = self.runtime
         if reference is not None and not runtime.model_cfg.use_speaker_condition_resolved:
@@ -166,9 +189,8 @@ class VoiceRuntimeSession:
         signal.pop("path", None)
         report = {
             **signal,
-            "model": "Irodori-TTS-v4.1-Small",
-            "source_commit": self.commit,
-            "model_revision": self.manifest["models"][0]["revision"],
+            **profile.provenance(),
+            "quantization_metadata": self.quantization_metadata,
             "seed": generated.used_seed,
             "mode": request.get("mode", "design"),
             "text": request["text"],

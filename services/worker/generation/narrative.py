@@ -96,6 +96,15 @@ class Staging(Contract):
     directions: list[FocusAnnotation | PauseAnnotation] = Field(max_length=50)
 
 
+class SceneStaging(Staging):
+    """Combine validated batches; the per-response cap is not a scene cap.
+
+    NarrativeScene validates the final scene's overall direction limit, including
+    the enter events added by the harness. Keep Staging's request schema stable.
+    """
+    directions: list[FocusAnnotation | PauseAnnotation]
+
+
 class SpeechMeaning(Contract):
     candidate_id: str
     kind: Literal["spoken", "stage_direction", "delivery"]
@@ -168,7 +177,8 @@ def _purpose(llm: LocalLLM, purpose: str) -> None:
                     if value["llm"]["model_id"] == profile["model_id"])
     if profile.get("provider", "local") != "local":
         raise ValueError("M3 currently supports the pinned local provider only.")
-    if profile.get("reasoning_level", "none") not in settings.get("reasoning_levels", ["none"]):
+    if (not profile.get("common_settings_version")
+            and profile.get("reasoning_level", "none") not in settings.get("reasoning_levels", ["none"])):
         raise ValueError("The selected local model does not support this reasoning_level.")
     if (not 0 <= profile["temperature"] <= 2 or type(profile["max_tokens"]) is not int
             or not 256 <= profile["max_tokens"] <= settings.get("max_output_tokens", 8192)):
@@ -292,6 +302,17 @@ def _source_grammar(plan: ScenePlan, raw: str = "") -> str:
     return 'root ::= ' + root + '\nutterance ::= (' + choices + r') [^\r\n]+' + '\n'
 
 
+def _source_options(profile: dict, plan: ScenePlan, raw: str = "") -> dict:
+    """A body-only grammar cannot constrain a response with a reasoning channel.
+
+    Keep the requested effort intact and validate the final source/anchor after
+    generation. Only an explicit 'none' profile retains the eager body grammar.
+    """
+    if profile.get("reasoning_level", "none") != "none":
+        return {}
+    return {"grammar": _source_grammar(plan, raw)}
+
+
 def _scene_text(llm: LocalLLM, prompt: str, plan: ScenePlan) -> tuple[str, list[MappedUtterance]]:
     # Keep valid cached source requests identical, including their request order.
     checkpoint = getattr(llm, "requests", 0) + 1
@@ -320,7 +341,7 @@ def _scene_text_attempt(
     for continuation in range(3):
         check_cancelled()
         checkpoint = getattr(llm, "requests", 0) + 1
-        options = {"grammar": _source_grammar(plan, raw)} if constrained else {}
+        options = _source_options(llm.profile, plan, raw) if constrained else {}
         message = llm.chat("scene-text-" + plan.id, messages, allow_truncated=True, **options)
         check_cancelled()
         chunk = message.get("content")
@@ -498,10 +519,10 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
                 feedback = "\n構造化だけ再試行します。本文は変更禁止。前回の不備: " + str(error)
                 llm.trace.append({"type": "staging_rejected", "scene_id": plan.id,
                                   "reason": str(error)})
-    return Staging(emotions=emotions, directions=directions)
+    return SceneStaging(emotions=emotions, directions=directions)
 
 
-def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Staging):
+def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Staging | SceneStaging):
     directions = []
     positions = ("left", "right", "center") if len(plan.character_ids) > 1 else ("center",)
     for index, character_id in enumerate(plan.character_ids):

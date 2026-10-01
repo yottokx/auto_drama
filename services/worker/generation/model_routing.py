@@ -6,6 +6,7 @@ import json
 import time
 from copy import deepcopy
 
+from ..model_config import model_base
 from .cancellation import check_cancelled
 from .context_budget import ContextPolicy, positive_integer
 from .llm import LocalLLM, write_json
@@ -119,9 +120,16 @@ def resolve_purpose_profile(config: dict, payload: dict, purpose: str) -> tuple[
 
 def model_configuration_identity(root, config: dict) -> dict:
     """Stable registry identity, independent of selected task and loaded process."""
+    def identity_base(value):
+        base = model_base(root, value) if value.get("llm_config") else None
+        if base is not None and "llm_base" in value:
+            # The same model may be installed at different paths on each worker.
+            base["model"].pop("relative_path", None)
+            base["server"].pop("executable", None)
+        return base
+
     return {name: {"settings": deepcopy(value["llm"]),
-                   "base": json.loads((root / value["llm_config"]).read_text(encoding="utf-8"))
-                   if value.get("llm_config") else None}
+                   "base": identity_base(value)}
             for name, value in route_configs(config).items()}
 
 
@@ -135,7 +143,7 @@ class RoutedLLM(LocalLLM):
     def __init__(self, root, config, payload, output, *, replay_outputs=()):
         self._route_configs = route_configs(config)
         self._routing_identity = model_configuration_identity(root, config)
-        self._route_bases = {name: value["base"] for name, value in self._routing_identity.items()}
+        self._route_bases = {name: model_base(root, value) for name, value in self._route_configs.items()}
         self._routing_hash = _digest(self._routing_identity)
         self._active = None
         self._active_route = None
@@ -193,7 +201,7 @@ class RoutedLLM(LocalLLM):
     def runtime_identity(self):
         settings = self._profile_settings(self.profile)
         policy = ContextPolicy.resolve(settings, self.profile)
-        return {"version": 3, "model": self.base["model"], "profile": dict(self.profile),
+        return {"version": 3, "model": self._routing_identity[self._route_name(self.profile)]["base"]["model"], "profile": dict(self.profile),
                 "output_limit": self._output_limit(self.profile),
                 "context": {**policy.identity(), "server_context_size":
                             self.server_context_size or self._startup_context_size()},

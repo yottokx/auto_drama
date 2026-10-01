@@ -77,6 +77,21 @@ def test_profile_cap_is_explicit_without_rewriting_target_or_recommendation():
     assert unrestricted["max_tokens"] > 8192
 
 
+def test_context_extension_is_added_after_body_estimation_and_baseline_cap():
+    target = size(8000, 4000)
+    baseline = scene_output_budget(target, ["aoi"], SceneTokenPolicy(), 4096)
+    expanded = scene_output_budget(target, ["aoi"], SceneTokenPolicy(), 4096,
+                                   extension_tokens=8192)
+    assert expanded["baseline_max_tokens"] == baseline["max_tokens"] == 4096
+    assert expanded["max_tokens"] == expanded["profile_output_limit"] == 12288
+    assert expanded["recommended_tokens"] == baseline["recommended_tokens"] + 8192
+    assert expanded["limited_by_profile"] is True
+    assert expanded["scene_size"] == baseline["scene_size"] == target.model_dump()
+    assert expanded["samples"] == baseline["samples"]
+    assert scene_output_budget(target, ["aoi"], SceneTokenPolicy(), 4096,
+                               extension_tokens=0) == baseline
+
+
 @pytest.mark.parametrize("limit", [0, -1, True, 4.5])
 def test_invalid_profile_allowance_is_not_silently_accepted(limit):
     with pytest.raises(ValueError, match="allowance"):

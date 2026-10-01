@@ -19,16 +19,15 @@ from scripts.m0.llm_smoke import WindowsChildJob
 
 from .cancellation import check_cancelled, register_cancel_callback
 from .processes import kill_owned_process
+from .tts_runtime import runtime_identity
 
 VOICE_KINDS = frozenset({"m2_voice", "m2_voice_clone", "m3_voice", "m3_voice_clone"})
 _active: ContextVar[VoiceSession | None] = ContextVar("voice_session", default=None)
 
 
 class VoiceSession:
-    def __init__(self, *, max_seconds: float = 60):
-        self.max_seconds = max_seconds
+    def __init__(self):
         self._lease = None
-        self._began = 0.0
         self._process = None
         self._child_job = None
         self._stderr = None
@@ -36,13 +35,11 @@ class VoiceSession:
 
     @contextmanager
     def gpu_scope(self, lease):
-        # Bound continuous ownership even when there is a long queue of speech.
-        if self._lease is not None and time.monotonic() - self._began >= self.max_seconds:
-            self.close()
+        # Keep the model loaded throughout consecutive voice jobs. The worker
+        # releases it on idle/error or before another kind of GPU work.
         if self._lease is None:
             lease.__enter__()
             self._lease = lease
-            self._began = time.monotonic()
         try:
             check_cancelled()
             yield
@@ -87,7 +84,7 @@ class VoiceSession:
         started = time.monotonic()
         output = log.parent.resolve()
         request = json.loads((output / "request.json").read_text(encoding="utf-8"))
-        key = (tuple(command[:2]), request["model_precision"])
+        key = (tuple(command[:2]), runtime_identity(request))
         try:
             check_cancelled()
             if key != self._key or self._process is None or self._process.poll() is not None:

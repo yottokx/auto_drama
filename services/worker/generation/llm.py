@@ -9,8 +9,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from ..model_config import model_base, runtime_paths
 from .cancellation import check_cancelled
-from .context_budget import ContextPolicy, positive_integer, server_context_from_properties
+from .context_budget import ContextPolicy, OutputTokenPolicy, positive_integer, server_context_from_properties
 from .processes import owned_process
 from .random_tools import TOOL_DEFINITIONS, RandomTools
 from .schemas import validate_schema
@@ -30,7 +31,7 @@ class LocalLLM:
     def __init__(self, root: Path, config: dict, payload: dict, output: Path, *,
                  replay_outputs: tuple[Path, ...] = ()):
         self.root, self.config, self.payload, self.output = root, config, payload, output
-        self.base = json.loads((root / config["llm_config"]).read_text(encoding="utf-8"))
+        self.base = model_base(root, config)
         self.profile = {**config["llm"], **payload.get("profile", {})}
         self._validate_profile(self.profile)
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -52,21 +53,28 @@ class LocalLLM:
         self.trace: list[dict] = []
 
     def _validate_profile(self, profile: dict) -> None:
+        import math
+        if not math.isfinite(profile.get("top_p", 0.95)) or not 0 < profile.get("top_p", 0.95) <= 1:
+            raise ValueError("top_p must be finite and greater than zero, at most one.")
         settings = self._profile_settings(profile)
         if profile.get("provider", "local") != "local":
             raise ValueError("M2 supports the configured local provider only.")
         if profile["model_id"] != settings["model_id"]:
             raise ValueError("Requested model_id is not the configured pinned local model.")
-        allowed = settings.get("reasoning_levels", ["none"])
-        if profile.get("reasoning_level", "none") not in allowed:
-            raise ValueError("Unsupported reasoning_level for this configured local model.")
-        if profile.get("reasoning_level", "none") != "none" and settings.get("reasoning_template") != "qwen3":
-            raise ValueError("Thinking requires an explicitly verified reasoning template.")
+        effort = profile.get("reasoning_level", "none")
+        if not isinstance(effort, str):
+            raise ValueError("reasoning_level must be a string.")
+        if not profile.get("common_settings_version"):
+            allowed = settings.get("reasoning_levels", ["none"])
+            if effort not in allowed:
+                raise ValueError("Unsupported reasoning_level for this configured local model.")
+            if effort != "none" and settings.get("reasoning_template") != "qwen3":
+                raise ValueError("Thinking requires an explicitly verified reasoning template.")
         budget = profile.get("reasoning_budget_tokens")
         if budget is not None and (settings.get("reasoning_template") != "qwen3"
                                    or type(budget) is not int or not 0 <= budget <= 8192):
             raise ValueError("Reasoning budget requires a supported Qwen template and a bounded token count.")
-        output_limit = self._output_limit(profile)
+        output_limit = OutputTokenPolicy.resolve(settings, profile).base_limit
         if (not 0 <= profile["temperature"] <= 2
                 or type(profile["max_tokens"]) is not int
                 or not 256 <= profile["max_tokens"] <= output_limit):
@@ -78,13 +86,12 @@ class LocalLLM:
         return self.config["llm"]
 
     def _output_limit(self, profile: dict) -> int:
-        worker_limit = positive_integer(self._profile_settings(profile).get("max_output_tokens", 8192),
-                                        "max_output_tokens", minimum=256)
-        limit = positive_integer(profile.get("max_output_tokens", worker_limit),
-                                 "profile.max_output_tokens", minimum=256)
-        if limit > worker_limit:
-            raise ValueError("Profile max_output_tokens exceeds the worker output allowance.")
-        return limit
+        return OutputTokenPolicy.resolve(self._profile_settings(profile), profile).limit
+
+    def generation_tokens(self) -> int:
+        """Effective total generation cap; profile.max_tokens stays the baseline."""
+        return OutputTokenPolicy.resolve(self._profile_settings(self.profile), self.profile).tokens(
+            self.profile["max_tokens"])
 
     def set_profile(self, profile: dict) -> None:
         """Select a stage profile without pretending to resize a running model."""
@@ -113,12 +120,15 @@ class LocalLLM:
             policy = ContextPolicy.resolve(self.config["llm"], self.profile)
             context = {**policy.identity(), "server_context_size":
                        self.server_context_size or self._startup_context_size()}
-        return {"version": 2, "model": self.base["model"], "context": context,
+        model = dict(self.base["model"])
+        if "llm_base" in self.config:
+            model.pop("relative_path", None)
+        return {"version": 2, "model": model, "context": context,
                 "profile": dict(self.profile), "output_limit": self._output_limit(self.profile)}
 
     def context_budget(self, *, prompt_tokens: int = 0, output_tokens: int | None = None) -> dict:
         """Share the same budget with evidence retrieval and scene splitting."""
-        output = self.profile["max_tokens"] if output_tokens is None else output_tokens
+        output = self.generation_tokens() if output_tokens is None else output_tokens
         if positive_integer(output, "output_tokens") > self._output_limit(self.profile):
             raise ValueError("Output tokens exceed the configured output allowance.")
         policy = ContextPolicy.resolve(self._profile_settings(self.profile), self.profile)
@@ -136,13 +146,12 @@ class LocalLLM:
     def __enter__(self):
         check_cancelled()
         self.output.mkdir(parents=True, exist_ok=True)
-        model = (self.root / self.base["model"]["relative_path"]).resolve(strict=True)
+        model, server = runtime_paths(self.root, self.config, self.base)
         if model.stat().st_size != self.base["model"]["size_bytes"]:
             raise ValueError("Pinned local model size mismatch.")
         with model.open("rb") as stream:
             if stream.read(4) != b"GGUF":
                 raise ValueError("Local model has no GGUF header.")
-        server = (self.root / self.base["server"]["executable"]).resolve(strict=True)
         with socket.socket() as reserved:
             reserved.bind(("127.0.0.1", 0))
             port = reserved.getsockname()[1]
@@ -270,11 +279,12 @@ class LocalLLM:
         seed = (self.payload["seed"] + number + salt) % (2**31)
         request = {"model": "m2-local", "messages": messages, "stream": False,
             "seed": seed, "temperature": self.profile["temperature"],
-            "max_tokens": self.profile["max_tokens"], "top_p": 0.95,
+            "max_tokens": self.generation_tokens(), "top_p": self.profile.get("top_p", 0.95),
             "reasoning_effort": self.profile.get("reasoning_level", "none")}
         if self._profile_settings(self.profile).get("reasoning_template") == "qwen3":
             request["chat_template_kwargs"] = {
                 "enable_thinking": self.profile.get("reasoning_level", "none") != "none"}
+        # Explicit limits, e.g. durable scene budgets, already include expansion.
         request.update(extra)
         output = positive_integer(request["max_tokens"], "request.max_tokens")
         if output > self._output_limit(self.profile):

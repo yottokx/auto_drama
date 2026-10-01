@@ -1,0 +1,8 @@
+.llm-settings-fields { border: 0; padding: 0; margin: 20px 0; display: grid; gap: 16px; min-width: 0; }
+.llm-settings-fields label { display: grid; gap: 6px; font-weight: 600; }
+.llm-settings-fields input, .llm-settings-fields select { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #cbd5d0; border-radius: 8px; background: white; color: #24352e; font: inherit; }
+.llm-settings-fields small { font-weight: 400; }
+.llm-settings-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.llm-settings-actions button { padding: 10px 16px; border-radius: 8px; border: 1px solid #cbd5d0; }
+.llm-settings-actions button[type=submit] { background: #315b48; color: white; }
+.llm-settings-actions button:disabled { opacity: .5; cursor: not-allowed; }
