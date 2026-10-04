@@ -148,6 +148,103 @@ const job = (id, kind, status, extra = {}) => ({ id, kind, status, attempt_count
 const requirement = (kind, target_id, artifact_id = null, job_id = null, descriptor = {}) => ({ kind, target_id, artifact_id, job_id, descriptor: JSON.stringify(descriptor) })
 const supporting = { character_result: { name: '案内役' } }
 
+test('music planning and scene tracks participate in progress and block building until all music is ready', () => {
+  const current = chapter(1, 'generating_assets', {
+    jobs: [job('music-plan', 'm3_music_plan', 'completed'), job('music-two', 'm3_music', 'running')],
+    requirements: [
+      requirement('m3_music_plan', 'chapter-1', 'music-prompts', 'music-plan'),
+      requirement('m3_music', 'scene-1', 'music-one'),
+      requirement('m3_music', 'scene-2', null, 'music-two'),
+    ],
+  })
+  const groups = chapterAssetProgress(current)
+  assert.deepEqual(groups.map(item => item.id), ['m3_image', 'm3_background', 'm3_voice', 'm3_voice_clone', 'm3_music_plan', 'm3_music'])
+  assert.deepEqual(groups.slice(-2).map(item => [item.current, item.total, item.status]), [[1, 1, 'completed'], [1, 2, 'running']])
+  assert.equal(chapterGenerationProgress(current).at(-1).status, 'pending')
+  assert.match(productionCurrentProgress([current]), /場面のBGM（1\/2）/)
+  current.requirements[2].artifact_id = 'music-two'
+  current.jobs[1].status = 'completed'
+  assert.equal(chapterGenerationProgress(current).at(-1).status, 'running')
+})
+
+test('enabled music stages are present from chapter start and design directly follows validation without a job counter', () => {
+  const current = chapter(1, 'writing', { music_enabled: true, jobs: [job('narrative', 'm3_narrative', 'running')] })
+  const saved = structuredClone(current)
+  const rows = chapterGenerationProgress(current)
+  assert.deepEqual(rows.map(item => item.id), ['narrative', 'scene-creation', 'chapter-validation', 'm3_music_plan', 'm3_background', 'm3_voice_clone', 'm3_music', 'build'])
+  const design = rows.find(item => item.id === 'm3_music_plan'), tracks = rows.find(item => item.id === 'm3_music')
+  assert.equal(design.status, 'pending')
+  assert.equal(design.total, 1, 'the internal fixed total still prevents premature building')
+  assert.equal(progressItemLabel(design), 'BGM・場面転換の設計')
+  assert.equal(tracks.status, 'pending')
+  assert.equal(tracks.total, null)
+  assert.equal(progressItemLabel(tracks), '場面のBGM')
+  assert.equal(rows.at(-1).status, 'pending')
+  assert.deepEqual(current, saved)
+})
+
+test('track count stays unknown while the music plan is queued, running, failed or completed without adoption', () => {
+  for (const status of ['pending', 'running', 'failed', 'completed']) {
+    const current = chapter(1, 'generating_assets', { music_enabled: true,
+      jobs: [job('music-plan', 'm3_music_plan', status, { attempt_count: status === 'pending' ? 0 : 1 })],
+      requirements: [requirement('m3_music_plan', 'chapter-music', null, 'music-plan'), requirement('m3_background', 'port', 'background')],
+    })
+    const rows = chapterGenerationProgress(current)
+    const tracks = rows.find(item => item.id === 'm3_music'), design = rows.find(item => item.id === 'm3_music_plan')
+    assert.equal(tracks.total, null)
+    assert.equal(tracks.status, 'pending')
+    assert.equal(progressItemLabel(tracks), '場面のBGM')
+    assert.equal(progressItemLabel(design), 'BGM・場面転換の設計')
+    assert.notEqual(design.status, 'completed', 'job completion cannot replace plan artifact adoption')
+    assert.equal(rows.at(-1).status, 'pending')
+  }
+})
+
+test('an adopted silence-only plan fixes zero tracks and lets building proceed without artificial generation', () => {
+  const current = chapter(1, 'generating_assets', { music_enabled: true,
+    jobs: [job('music-plan', 'm3_music_plan', 'completed')],
+    requirements: [requirement('m3_music_plan', 'chapter-music', 'music-plan', 'music-plan')],
+  })
+  const rows = chapterGenerationProgress(current)
+  const design = rows.find(item => item.id === 'm3_music_plan'), tracks = rows.find(item => item.id === 'm3_music')
+  assert.equal(design.status, 'completed')
+  assert.equal(progressItemLabel(design), 'BGM・場面転換の設計')
+  assert.deepEqual([tracks.status, tracks.total, tracks.completed], ['skipped', 0, 0])
+  assert.equal(progressItemLabel(tracks), '場面のBGM（0曲）')
+  assert.equal(rows.at(-1).status, 'running')
+})
+
+test('music design precedes later narrative memory steps and media while active counts appear only for accepted tracks', () => {
+  const current = chapter(2, 'generating_assets', { music_enabled: true, jobs: [
+    job('narrative', 'm3_narrative', 'completed', { progress: llmProgress({ active: false, steps: [
+      { id: 'scene-plan', stage: 'chapter_scene_plan', status: 'completed', chapter_number: 2 },
+      ...['script', 'speech_extraction', 'staging'].map(stage => ({ id: stage, stage, status: 'completed', chapter_number: 2, scene_number: 1 })),
+      { id: 'validate', stage: 'validation', status: 'completed', chapter_number: 2 },
+      { id: 'memory', stage: 'memory', status: 'completed', chapter_number: 2 },
+    ] }) }), job('plan', 'm3_music_plan', 'completed'), job('track', 'm3_music', 'running'),
+  ], requirements: [requirement('m3_music_plan', 'chapter-music', 'plan-artifact', 'plan'), requirement('m3_music', 'scene-1', null, 'track')] })
+  const rows = chapterGenerationProgress(current), validation = rows.findIndex(item => item.id === 'chapter-validation')
+  assert.deepEqual(rows.slice(validation, validation + 3).map(item => item.id), ['chapter-validation', 'm3_music_plan', 'memory'])
+  assert.equal(rows.filter(item => item.id === 'm3_music_plan').length, 1)
+  assert.equal(progressItemLabel(rows.find(item => item.id === 'm3_music')), '場面のBGM（0/1）')
+  assert.equal(productionCurrentProgress([current]), '第2章・場面のBGM（0/1）を制作中')
+})
+
+test('disabled and pre-music legacy chapters retain their original phases while old music jobs remain visible', () => {
+  for (const music_enabled of [undefined, false]) {
+    const current = chapter(1, 'writing', { music_enabled })
+    assert.equal(chapterGenerationProgress(current).some(item => item.id.startsWith('m3_music')), false)
+    assert.equal(chapterAssetProgress(current).length, 4)
+  }
+  const legacy = chapter(1, 'generating_assets', { jobs: [job('plan', 'm3_music_plan', 'completed'), job('track', 'm3_music', 'running')] })
+  assert.equal(progressItemLabel(chapterGenerationProgress(legacy).find(item => item.id === 'm3_music_plan')), 'BGM・場面転換の設計')
+  assert.equal(progressItemLabel(chapterGenerationProgress(legacy).find(item => item.id === 'm3_music')), '場面のBGM（0/1）')
+  const inherited = productionChapters(production({ music_enabled: true }), 3)
+  assert.ok(inherited.every(item => item.music_enabled === true))
+  const overridden = productionChapters(production({ music_enabled: true, chapters: [chapter(1, 'writing', { music_enabled: false })] }), 1)
+  assert.equal(overridden[0].music_enabled, false)
+})
+
 test('media progress groups required assets in model order and includes reused and unqueued work without main cast', () => {
   const current = chapter(2, 'generating_assets', {
     jobs: [job('image-live', 'm3_image', 'running'), job('voice-failed', 'm3_voice', 'failed')],

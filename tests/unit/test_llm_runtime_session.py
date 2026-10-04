@@ -212,10 +212,10 @@ def test_other_job_kind_closes_llm_and_restores_ephemeral_lifetime(runtime):
     with llm_session.reuse_llm_runtime() as session:
         with session.gpu_scope(runtime.lease()), runtime.client("first"):
             pass
-        llm_session.prepare_job("m3_plan")
+        llm_session.prepare_job("m3_background")
         assert session._backend is session._lease is None
         assert not session.enabled
-        with runtime.lease(), runtime.client("m3"):
+        with runtime.lease(), runtime.client("media-conversion"):
             pass
         assert runtime.starts[-1][1]["timeout"] == 10
         assert "cancellable" not in runtime.starts[-1][1]
@@ -304,3 +304,178 @@ def test_pipeline_text_and_portrait_batch_share_llm_then_release_before_image(ru
         assert session._backend is session._lease is None
     assert runtime.events == ["acquire", "start", "stop", "release",
                               "acquire", "image", "release", "acquire", "image", "release"]
+
+
+def test_long_chapter_keeps_runtime_for_music_then_expires_from_last_completion(runtime):
+    with llm_session.reuse_llm_runtime() as session:
+        llm_session.prepare_job("m3_narrative")
+        with llm_session.gpu_scope("m3_narrative", runtime.lease()), runtime.client("chapter"):
+            runtime.now = 620
+            assert not session.expire_if_needed()
+        assert session._loaded_at == 0 and session._idle_since == 620
+        assert runtime.held, "a chapter exceeding 300 seconds must retain its completed reviewer"
+        llm_session.prepare_job("m3_music_plan")
+        with llm_session.gpu_scope("m3_music_plan", runtime.lease()), runtime.client("music-plan") as client:
+            assert client.trace[0]["type"] == "model_reuse"
+            runtime.now = 650
+        assert len(runtime.starts) == 1 and session._loaded_at == 0
+        assert session._idle_since == 650
+        runtime.now = 949
+        llm_session.prepare_job("m3_music_plan")
+        assert not session.expire_if_needed()
+        assert session._idle_since == 650, "claiming/polling alone must not extend the idle deadline"
+        runtime.now = 950
+        assert session.expire_if_needed() and not runtime.held
+
+
+def test_returning_from_long_m3_to_m2_preserves_original_m2_load_deadline(runtime):
+    with llm_session.reuse_llm_runtime():
+        llm_session.prepare_job("m3_narrative")
+        with llm_session.gpu_scope("m3_narrative", runtime.lease()), runtime.client("chapter"):
+            runtime.now = 620
+        llm_session.prepare_job("m2_character")
+        with llm_session.gpu_scope("m2_character", runtime.lease()), runtime.client("character"):
+            pass
+        assert len(runtime.starts) == 2
+        assert runtime.events == ["acquire", "start", "stop", "release", "acquire", "start"]
+
+
+@pytest.mark.parametrize("kind", ["m3_background", "m3_image", "m3_voice", "m3_voice_clone", "m3_music"])
+def test_worker_preparation_releases_long_m3_llm_before_every_media_kind(runtime, kind):
+    from services.worker.__main__ import prepare_media_job
+
+    with llm_session.reuse_llm_runtime() as session:
+        llm_session.prepare_job("m3_narrative")
+        with llm_session.gpu_scope("m3_narrative", runtime.lease()), runtime.client("chapter"):
+            runtime.now = 620
+        prepare_media_job(kind)
+        assert not session.enabled and session._backend is session._lease is None
+        assert runtime.events == ["acquire", "start", "stop", "release"]
+        with runtime.lease():
+            assert all(process.poll() is not None for process in runtime.processes)
+
+
+@pytest.fixture
+def m3_chain(runtime, tmp_path, monkeypatch):
+    from services.worker.generation import m3_pipeline, model_routing, music_pipeline, pipeline
+
+    runtime.config["model_routing"] = {}
+    runtime.config["llm"]["total_timeout_seconds"] = 1800
+    runtime.config["music"] = {"python": "fake/python.exe"}
+    monkeypatch.setattr(pipeline, "load_config", lambda: copy.deepcopy(runtime.config))
+    monkeypatch.setattr(m3_pipeline, "gpu_lock", lambda *_args: runtime.lease())
+    monkeypatch.setattr(music_pipeline, "gpu_lock", lambda *_args: runtime.lease())
+    monkeypatch.setattr(llm_module.urllib.request, "build_opener", lambda *_args: runtime.http_factory())
+    monkeypatch.setattr(model_routing, "time", SimpleNamespace(monotonic=lambda: runtime.now))
+    from services.worker import model_config
+
+    monkeypatch.setattr(model_config, "select_config", lambda config, *_args: config)
+    profile = {"common_settings_version": 1, "model_id": runtime.config["llm"]["model_id"],
+               "context_size": 16384, "temperature": .65, "max_tokens": 3072, "reasoning_level": "none"}
+    frozen = {"approval_snapshot": {}, "narrative": {"scenes": [{"id": "s1"}]}}
+
+    def narrative(payload, client):
+        if hasattr(client, "select_purpose"):
+            client.select_purpose("quality_review")
+        client.chat("content-consistency", [{"role": "user", "content": "Validate finalized text."}])
+        runtime.now = 620
+        return frozen["narrative"]
+
+    def plan(payload, client):
+        client.chat("music-boundaries", [{"role": "user", "content": "Choose continuous scene music."}])
+        client.chat("group-caption", [{"role": "user", "content": "Caption the whole group."}])
+        return {"scenes": [{"scene_id": "s1", "prompt": "Instrumental pop.", "interpretation": "明るい場面"}]}
+
+    monkeypatch.setattr(m3_pipeline, "generate_narrative", narrative)
+    monkeypatch.setattr(music_pipeline, "plan_music", plan)
+    return SimpleNamespace(runtime=runtime, pipeline=m3_pipeline, music=music_pipeline,
+        narrative={"kind": "m3_narrative", "payload": {"schema_version": 1, "seed": 10, "profile": profile}},
+        plan={"kind": "m3_music_plan", "payload": {"schema_version": 1, "seed": 20, "profile": profile, "context": frozen}},
+        work=tmp_path)
+
+
+@pytest.mark.parametrize("causal", [False, True])
+def test_m3_pipeline_long_narrative_and_music_planning_share_one_actual_runtime(m3_chain, causal):
+    from zipfile import ZipFile
+
+    chain, probe = m3_chain, m3_chain.runtime
+    if causal:
+        chain.narrative["payload"]["story_workflow_version"] = 2
+    with llm_session.reuse_llm_runtime() as session:
+        chain.pipeline.generate_job(chain.narrative, chain.work / "chapter")
+        assert session._backend is not None and probe.held
+        plan = chain.pipeline.generate_job(chain.plan, chain.work / "music-plan")
+        assert len(probe.starts) == 1 and len(probe.requests) == 3
+        with ZipFile(BytesIO(plan)) as archive:
+            trace = json.loads(archive.read("result.json"))["trace"]
+        assert any(row["type"] == "model_reuse" for row in trace)
+        assert session._idle_since == 620
+    assert probe.events == ["acquire", "start", "stop", "release"]
+
+
+@pytest.mark.parametrize("failure", ["validation", "cancel"])
+def test_failed_or_cancelled_music_plan_closes_reused_chapter_llm_and_lease(m3_chain, monkeypatch, failure):
+    chain, probe = m3_chain, m3_chain.runtime
+    with llm_session.reuse_llm_runtime() as session:
+        chain.pipeline.generate_job(chain.narrative, chain.work / "chapter")
+        with cancellation_scope() as token:
+            def rejected(payload, client):
+                client.chat("music-plan", [{"role": "user", "content": "Create scene plan."}])
+                if failure == "cancel":
+                    token.cancel()
+                    client.request("/health")
+                raise ValueError("invalid scene plan")
+
+            monkeypatch.setattr(chain.music, "plan_music", rejected)
+            with pytest.raises(GenerationCancelled if failure == "cancel" else ValueError):
+                chain.pipeline.generate_job(chain.plan, chain.work / "music-plan")
+        assert len(probe.starts) == 1
+        assert session._active_client is session._backend is session._lease is None
+        assert not probe.held and probe.processes[0].poll() is not None
+
+
+def test_actual_music_job_acquires_gpu_only_after_retained_planner_is_released(m3_chain, monkeypatch):
+    chain, probe = m3_chain, m3_chain.runtime
+    monkeypatch.setattr(chain.music, "music_settings", lambda *_args: {"model": "medium"})
+    monkeypatch.setattr(chain.music, "model_identity", lambda *_args: "fake-music-model")
+
+    class MusicRuntime:
+        def gpu_scope(self, lease):
+            return lease
+
+        def run(self, request, **options):
+            assert probe.held and all(process.poll() is not None for process in probe.processes)
+            probe.events.append("music")
+            output = Path(request["output_dir"])
+            (output / "music.mp3").write_bytes(b"ID3fake-loop")
+            (output / "source.mp3").write_bytes(b"ID3fake-source")
+            return {"result": {"scene_id": "s1", "prompt": request["prompt"], "loop_start_seconds": 10,
+                "loop_end_seconds": 70, "duration_seconds": 70, "source_duration_seconds": 120,
+                "sample_rate": 44100, "quality": {}}, "provenance": {"model_reused": False}}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(chain.music.music_session, "MusicSession", MusicRuntime)
+    with llm_session.reuse_llm_runtime() as session:
+        chain.pipeline.generate_job(chain.narrative, chain.work / "chapter")
+        chain.pipeline.generate_job(chain.plan, chain.work / "music-plan")
+        chain.pipeline.generate_job({"kind": "m3_music", "payload": {"schema_version": 1,
+            "seed": 30, "scene_id": "s1", "prompt": "Instrumental pop.", "context": chain.plan["payload"]["context"]}},
+            chain.work / "music")
+        assert session._backend is session._lease is None
+        assert probe.events == ["acquire", "start", "stop", "release", "acquire", "music", "release"]
+
+
+def test_music_planner_context_change_reloads_under_retained_exclusive_lease(runtime):
+    with llm_session.reuse_llm_runtime() as session:
+        llm_session.prepare_job("m3_narrative")
+        with llm_session.gpu_scope("m3_narrative", runtime.lease()), runtime.client("chapter"):
+            runtime.now = 620
+        llm_session.prepare_job("m3_music_plan")
+        with llm_session.gpu_scope("m3_music_plan", runtime.lease()), runtime.client("larger-planner", profile={"context_size": 32768}):
+            assert len(runtime.starts) == 2
+            assert runtime.processes[0].poll() is not None
+            assert runtime.processes[1].poll() is None
+            assert runtime.events == ["acquire", "start", "stop", "start"]
+        assert session._loaded_at == 620

@@ -44,6 +44,8 @@ _DIRECTORY = Path(__file__).parent
 _PLAYER_ASSETS = {
     "data/others/auto_drama_player.js": (_DIRECTORY / "player.js").read_text("utf-8").encode(),
     "data/others/auto_drama_playback.js": (_DIRECTORY / "playback.js").read_text("utf-8").encode(),
+    "data/others/auto_drama_music.js": (_DIRECTORY / "music.js").read_text("utf-8").encode(),
+    "data/others/auto_drama_transitions.js": (_DIRECTORY / "transitions.js").read_text("utf-8").encode(),
     "data/others/auto_drama_player.css": (_DIRECTORY / "player.css").read_text("utf-8").encode(),
 }
 
@@ -102,6 +104,8 @@ def player_html() -> bytes:
 ''' + "\n".join(dependencies) + '''
 <link rel="stylesheet" href="./data/others/auto_drama_player.css">
 <script defer src="./data/others/auto_drama_playback.js"></script>
+<script defer src="./data/others/auto_drama_music.js"></script>
+<script defer src="./data/others/auto_drama_transitions.js"></script>
 <script defer src="./data/others/auto_drama_player.js"></script></head>
 <body>
 <nav id="ad-toolbar" aria-label="鑑賞操作">
@@ -110,7 +114,8 @@ def player_html() -> bytes:
 <button id="ad-backlog" disabled>バックログ</button>
 <label>文字 <select id="ad-font" disabled><option value="20">小</option>
 <option value="24" selected>標準</option><option value="28">大</option></select></label>
-<label>音量 <input id="ad-volume" type="range" min="0" max="100" value="100" disabled></label>
+<label>音声 <input id="ad-volume" type="range" min="0" max="100" value="100" disabled></label>
+<label>BGM <input id="ad-bgm-volume" type="range" min="0" max="100" value="100" disabled></label>
 <span id="ad-status" role="status"></span></nav>
 <div id="tyrano_base" class="tyrano_base" style="overflow:hidden"></div>
 <div id="vchat_base" class="vchat_base" style="overflow:hidden"></div>
@@ -123,6 +128,7 @@ def player_html() -> bytes:
 <p id="ad-next-status" role="status"></p>
 <button id="ad-next-button" hidden>次の章へ進む</button>
 </section>
+<div id="ad-chapter-transition" aria-hidden="true" hidden></div>
 <dialog id="ad-log" aria-labelledby="ad-log-title"><button id="ad-log-close">閉じる</button>
 <h2 id="ad-log-title">バックログ</h2><p>表示済みの本文を確認し、台詞を聴き直せます。閉じると再開します。</p><div id="ad-log-items"></div></dialog>
 <div class="remodal-bg"></div><div class="remodal" data-remodal-id="modal"

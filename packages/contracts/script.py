@@ -23,6 +23,8 @@ NormalizedCoordinate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf
 DisplayOffset = Annotated[float, Field(strict=True, ge=-640, le=640, allow_inf_nan=False)]
 DisplayScale = Annotated[float, Field(strict=True, ge=0.1, le=3, allow_inf_nan=False)]
 StageCoordinate = Annotated[float, Field(strict=True, ge=-1_000_000, le=1_000_000, allow_inf_nan=False)]
+MusicSeconds = Annotated[float, Field(strict=True, ge=0, le=3600, allow_inf_nan=False)]
+MusicVolume = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
 
 
 class Contract(BaseModel):
@@ -41,7 +43,7 @@ class Contract(BaseModel):
 
 class AssetReference(Contract):
     id: Identifier
-    kind: Literal["background", "character", "audio"]
+    kind: Literal["background", "character", "audio", "music"]
     artifact_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")]
     filename: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -57,9 +59,11 @@ class AssetReference(Contract):
         ):
             raise ValueError("Windows device filenames are not supported")
         extension = self.filename.rsplit(".", 1)[1].lower()
-        supported = (
-            {"wav", "mp3", "ogg", "m4a"} if self.kind == "audio" else {"png", "jpg", "jpeg", "webp"}
-        )
+        supported = {"png", "jpg", "jpeg", "webp"}
+        if self.kind == "audio":
+            supported = {"wav", "mp3", "ogg", "m4a"}
+        elif self.kind == "music":
+            supported = {"mp3"}
         if extension not in supported:
             raise ValueError("asset extension does not match its supported media kind")
         return self
@@ -190,6 +194,47 @@ Direction = Annotated[
 ]
 
 
+class SceneTransitionSpec(Contract):
+    """Bounded presentation choices decided after the chapter text is frozen."""
+
+    visual: Literal["none", "dissolve", "fade", "cut"] = "fade"
+    duration_ms: Annotated[int, Field(strict=True, ge=0, le=3000)] = 500
+    music_fade_out_ms: Annotated[int, Field(strict=True, ge=0, le=5000)] = 1000
+    music_fade_in_ms: Annotated[int, Field(strict=True, ge=0, le=5000)] = 1000
+
+
+class SceneTransitionCue(SceneTransitionSpec):
+    id: Identifier
+    utterance_id: Identifier
+
+
+class MusicCue(Contract):
+    """Backend-neutral scene music; media and engine code are adopted separately."""
+
+    id: Identifier
+    utterance_id: Identifier
+    action: Literal["play", "stop", "continue"]
+    asset_id: Identifier | None = Field(default=None, exclude_if=lambda value: value is None)
+    loop_start_seconds: MusicSeconds | None = Field(default=None, exclude_if=lambda value: value is None)
+    loop_end_seconds: MusicSeconds | None = Field(default=None, exclude_if=lambda value: value is None)
+    volume: MusicVolume = 0.35
+
+    @model_validator(mode="after")
+    def playback_parameters_match_action(self) -> Self:
+        if self.action == "play":
+            if self.asset_id is None:
+                raise ValueError("play music cue requires an adopted music asset")
+            if (self.loop_start_seconds is None) != (self.loop_end_seconds is None):
+                raise ValueError("music loop points must be provided together")
+            if (self.loop_start_seconds is not None
+                    and self.loop_end_seconds <= self.loop_start_seconds):
+                raise ValueError("music loop points must satisfy 0 <= A < B")
+        elif (self.asset_id is not None or self.loop_start_seconds is not None
+                or self.loop_end_seconds is not None):
+            raise ValueError("stop and continue music cues cannot select media or loop points")
+        return self
+
+
 class Script(Contract):
     schema_version: Literal[1] = 1
     id: Identifier
@@ -198,6 +243,10 @@ class Script(Contract):
     utterances: list[Utterance] = Field(min_length=1, max_length=10_000)
     directions: list[Direction] = Field(default_factory=list, max_length=50_000)
     assets: list[AssetReference] = Field(default_factory=list, max_length=20_000)
+    music_cues: list[MusicCue] = Field(default_factory=list, max_length=10_000,
+                                      exclude_if=lambda value: not value)
+    scene_transitions: list[SceneTransitionCue] = Field(default_factory=list, max_length=10_000,
+                                                      exclude_if=lambda value: not value)
     portrait_baseline: PortraitBaseline | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("schema_version", mode="before")
@@ -209,7 +258,8 @@ class Script(Contract):
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
-        for values in (self.characters, self.utterances, self.directions, self.assets):
+        for values in (self.characters, self.utterances, self.directions, self.assets,
+                       self.music_cues, self.scene_transitions):
             ids = [value.id for value in values]
             if len(ids) != len(set(ids)):
                 raise ValueError("duplicate stable IDs in a script collection")
@@ -235,6 +285,19 @@ class Script(Contract):
             if utterance.speaker_id is not None and utterance.speaker_id not in characters:
                 raise ValueError(f"unknown speaker: {utterance.speaker_id}")
             asset(utterance.audio_asset_id, "audio")
+        music_anchors = [value.utterance_id for value in self.music_cues]
+        if len(music_anchors) != len(set(music_anchors)):
+            raise ValueError("one music cue is allowed per utterance")
+        for cue in self.music_cues:
+            if cue.utterance_id not in utterances:
+                raise ValueError(f"unknown music cue utterance: {cue.utterance_id}")
+            asset(cue.asset_id, "music")
+        transition_anchors = [value.utterance_id for value in self.scene_transitions]
+        if len(transition_anchors) != len(set(transition_anchors)):
+            raise ValueError("one scene transition is allowed per utterance")
+        for transition in self.scene_transitions:
+            if transition.utterance_id not in utterances:
+                raise ValueError(f"unknown scene transition utterance: {transition.utterance_id}")
         for direction in self.directions:
             if direction.utterance_id not in utterances:
                 raise ValueError(f"unknown direction utterance: {direction.utterance_id}")

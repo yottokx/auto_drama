@@ -15,3 +15,35 @@ export function adjustmentFixture() {
     jobs: [], edition: { id: 'edition-1' }, limits: { upload_bytes: 33554432, image_max_side: 4096, audio_min_seconds: 0.25, audio_max_seconds: 30 },
   }
 }
+
+export function adjustmentMusicFixture() {
+  const source = adjustmentFixture()
+  source.scenes = source.scenes.map((scene, index) => ({ ...scene, production_id: `chapter-${index + 1}`, scene_id: 'scene-1', music_prompt: null }))
+  source.draft.scene_music = source.scenes.map(scene => ({ production_id: scene.production_id, scene_id: scene.scene_id, candidate_id: null, action: 'stop', volume: .35 }))
+  source.music_candidates = [{ id: 'music-1', production_id: 'chapter-1', scene_id: 'scene-1', source: 'generated', artifact_id: 'music-artifact-1', music_url: '/music/prepared.mp3', source_url: '/music/original.mp3', prompt: 'Genre: Quirky Pop. Instruments: Synthesizer, guitar.', loop_start_seconds: 8, loop_end_seconds: 72, duration_seconds: 72, source_duration_seconds: 120, job_id: null, status: 'completed', error: null, quality: { needs_review: false, near_silence_seconds: 0 } }]
+  source.limits.music_upload_bytes = 33554432
+  source.limits.music_max_seconds = 380
+  return source
+}
+
+export function adjustmentContinuityFixture() {
+  const source = adjustmentMusicFixture()
+  const first = source.scenes[0]
+  const transition = { visual: 'fade', duration_ms: 500, music_fade_out_ms: 1000, music_fade_in_ms: 1000 }
+  source.scenes = ['港の出会い', '港での会話', '出航', '夜の街', '帰港'].map((title, index) => ({ ...first, scene_id: `scene-${index + 1}`, title }))
+  source.scenes.push({ ...first, chapter_number: 2, production_id: 'chapter-2', scene_id: 'scene-1', title: '翌日の港' })
+  source.music_candidates[0].scene_id = 'scene-1'
+  source.music_candidates.push({ ...source.music_candidates[0], id: 'music-4', scene_id: 'scene-4', music_url: '/music/night.mp3', artifact_id: 'night-artifact' })
+  source.draft.scene_music = source.scenes.map((scene, index) => {
+    const action = ['play', 'continue', 'continue', 'stop', 'continue', 'stop'][index]
+    const reason = `自動判断：${scene.title}`
+    const cueTransition = action === 'continue' ? { ...transition, visual: 'dissolve', music_fade_out_ms: 0, music_fade_in_ms: 0 } : transition
+    const row = { production_id: scene.production_id, scene_id: scene.scene_id, candidate_id: action === 'play' ? 'music-1' : null, action, volume: index === 0 ? .22 : .35, transition: structuredClone(cueTransition), reason }
+    scene.music_plan = { action, candidate_id: row.candidate_id, source_scene_id: index < 3 ? 'scene-1' : null, reason, transition: structuredClone(cueTransition), prompt: 'A scene score.' }
+    return row
+  })
+  // Default fixture is fully valid; tests introduce invalid continuation explicitly.
+  source.draft.scene_music[4].action = 'stop'
+  source.scenes[4].music_plan.action = 'stop'
+  return source
+}

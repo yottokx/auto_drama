@@ -78,6 +78,28 @@ test('the initial chapter view shows gray scene and validation waiting rows befo
   }
 })
 
+test('enabled music starts as gray waiting rows, with design immediately after validation and no unknown counts', () => {
+  const current = { chapter_number: 1, status: 'writing', narrative_artifact_id: null, build: null, music_enabled: true,
+    jobs: [{ id: 'narrative', kind: 'm3_narrative', status: 'running', attempt_count: 1 }],
+  }
+  const markup = renderToStaticMarkup(GenerationProgress({ items: chapterGenerationProgress(current), label: '制作工程' }))
+  const rows = markup.match(/<li\b[^>]*>[\s\S]*?<\/li>/g) ?? []
+  const validation = rows.findIndex(row => row.includes('内容・整合性の確認'))
+  assert.ok(rows[validation + 1].includes('BGM・場面転換の設計'))
+  const music = rows.filter(row => row.includes('BGM・場面転換の設計') || row.includes('場面のBGM'))
+  assert.equal(music.length, 2)
+  assert.ok(music.every(row => row.includes('generation-progress-pending') && row.includes('待機中')))
+  assert.ok(music.every(row => !row.includes('（') && !row.includes('STEP')))
+  assert.ok(!markup.includes('対象なし'))
+  current.narrative_artifact_id = 'narrative'
+  current.jobs = [{ id: 'plan', kind: 'm3_music_plan', status: 'completed', attempt_count: 1 }]
+  current.requirements = [{ kind: 'm3_music_plan', artifact_id: 'accepted-plan', job_id: 'plan' }]
+  const accepted = renderToStaticMarkup(GenerationProgress({ items: chapterGenerationProgress(current), label: '制作工程' }))
+  assert.ok(accepted.includes('場面のBGM（0曲）'))
+  assert.ok(accepted.includes('対象なし'))
+  assert.ok(!accepted.includes('BGM・場面転換の設計（'))
+})
+
 test('completed and in-progress scene requests render as one STEP row per scene', () => {
   const sceneRows = llmProgressItems({ id: 'narrative', kind: 'm3_narrative', status: 'running', attempt_count: 1, progress: {
     schema_version: 1, sequence: 4, phase: 'chapter', current_step: 'scene2-script', attempt: 1, active: true,

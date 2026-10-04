@@ -9,8 +9,9 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 #ad-toolbar > * { pointer-events: auto; }
 #ad-toolbar label { display: flex; align-items: center; gap: 5px;
   padding: 4px 8px; background: #101923e8; border-radius: 7px; }
-#ad-volume { width: 85px; accent-color: #95cabc; }
+#ad-volume, #ad-bgm-volume { width: 85px; accent-color: #95cabc; }
 #ad-status { background: #101923e8; padding: 4px; }
+.ad-stage-transition { position: absolute; inset: 0; z-index: 9997; pointer-events: none; }
 #ad-start { position: fixed; inset: 0; z-index: 1000000; display: grid; place-items: center;
   text-align: center; background: #101923; padding: 24px; }
 #ad-start[hidden] { display: none; }
@@ -20,6 +21,9 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
   background: #101923f2; border: 1px solid #729088; border-radius: 12px;
   padding: 20px; text-align: center; line-height: 1.8; }
 #ad-chapter-end[hidden] { display: none; }
+#ad-chapter-transition { position: fixed; inset: 0; background: #000; z-index: 1000001;
+  opacity: 0; pointer-events: auto; }
+#ad-chapter-transition[hidden] { display: none; }
 #ad-log { box-sizing: border-box; width: min(850px, 92vw); max-height: 85vh;
   background: #101923; color: #f3f4f6; border: 1px solid #729088; border-radius: 12px; padding: 24px; }
 #ad-log::backdrop { background: #000b; }
@@ -28,4 +32,4 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px s
 #ad-log-items p { white-space: pre-wrap; line-height: 1.7; }
 #ad-log-items audio { display: block; max-width: 100%; margin-top: 12px; }
 @media(max-width: 650px) { #ad-toolbar { gap: 4px; font-size: 11px; inset: 5px 5px auto; }
-  #ad-toolbar button { padding: 7px 9px; } #ad-volume { width: 60px; } }
+  #ad-toolbar button { padding: 7px 9px; } #ad-volume, #ad-bgm-volume { width: 60px; } }

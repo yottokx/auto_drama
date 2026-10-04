@@ -8,17 +8,19 @@ export type AssetRequirement = {
 export type GenerationProgressItem = {
   id: string; label: string; status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
   current: number; total: number | null; completed: number
-  counter?: 'step'; statusText?: string; stepIds?: string[]
+  counter?: 'step' | 'none'; statusText?: string; stepIds?: string[]
 }
 export type ProductionChapter = {
   chapter_number: number; production_id: string | null; narrative_artifact_id: string | null
   status: 'waiting' | 'writing' | 'generating_assets' | 'published' | 'failed'
   jobs: Job[]; requirements?: AssetRequirement[]; build: PublishedBuild | null; error: string | null
   player_url: string | null; export_url: string | null
+  music_enabled?: boolean
 }
 export type Production = {
   id: string; approval_id: string; plan_approval_id?: string | null; chapter_number: number; chapter_count?: number
   narrative_artifact_id: string | null; history_frozen?: boolean
+  music_enabled?: boolean
   status: 'pending' | 'running' | 'failed' | 'published'
   stage: 'narrative' | 'assets' | 'building' | 'published'
   control_state?: 'running' | 'stopping' | 'paused' | 'interrupted'
@@ -40,6 +42,7 @@ export const jobNames: Record<string, string> = {
   m3_narrative: 'シーン・台本の生成', m3_background: '背景',
   m3_image: 'サブキャラの立ち絵', m3_voice: 'サブキャラの基準音声',
   m3_voice_clone: '台詞の音声', m3_dialogue: '台詞の音声',
+  m3_music_plan: 'BGM・場面転換の設計', m3_music: '場面のBGM', music: '場面のBGM',
 }
 export const assetPhaseOrder = ['m3_image', 'm3_background', 'm3_voice', 'm3_voice_clone'] as const
 export const llmStageNames: Record<JobProgressStep['stage'], string> = {
@@ -51,7 +54,9 @@ export const llmStageNames: Record<JobProgressStep['stage'], string> = {
 }
 
 export function progressItemLabel(item: GenerationProgressItem): string {
+  if (item.counter === 'none') return item.label
   if (item.counter === 'step') return `${item.label} STEP ${item.current}/${item.total}`
+  if (item.id === 'm3_music' && item.total === 0) return `${item.label}（0曲）`
   return `${item.label}${item.total === null || item.total === 0 ? '' : `（${item.completed}/${item.total}）`}`
 }
 
@@ -156,11 +161,22 @@ function supportingRequirement(requirement: AssetRequirement): boolean {
 export function chapterAssetProgress(chapter: ProductionChapter): GenerationProgressItem[] {
   const byId = new Map(chapter.jobs.map(job => [job.id, job]))
   const requirements = chapter.requirements
-  const hasMediaJobs = chapter.jobs.some(job => job.kind === 'm3_dialogue' || assetPhaseOrder.includes(job.kind as typeof assetPhaseOrder[number]))
+  const hasMusic = chapter.music_enabled === true || chapter.jobs.some(job => job.kind === 'm3_music_plan' || job.kind === 'm3_music')
+    || requirements?.some(item => item.kind === 'm3_music_plan' || item.kind === 'm3_music')
+  const phaseOrder: readonly string[] = hasMusic ? [...assetPhaseOrder, 'm3_music_plan', 'm3_music'] : assetPhaseOrder
+  const hasMediaJobs = chapter.jobs.some(job => job.kind === 'm3_dialogue' || phaseOrder.includes(job.kind))
   const useRequirements = requirements !== undefined && (requirements.length > 0 || !hasMediaJobs)
   const known = Boolean(chapter.narrative_artifact_id || requirements?.length
     || hasMediaJobs)
-  return assetPhaseOrder.map(kind => {
+  const planRequirements = requirements?.filter(item => item.kind === 'm3_music_plan') ?? []
+  const planJobs = chapter.jobs.filter(job => job.kind === 'm3_music_plan')
+  const hasTrackWork = Boolean(requirements?.some(item => item.kind === 'm3_music') || chapter.jobs.some(job => job.kind === 'm3_music'))
+  // An accepted plan fixes the number of new tracks, including a valid zero.
+  // Older snapshots without requirements can still identify a completed plan
+  // or existing track jobs; an enabled flag alone never fixes their count.
+  const tracksKnown = planRequirements.length > 0 ? planRequirements.every(item => Boolean(item.artifact_id))
+    : planJobs.length > 0 ? planJobs.every(job => job.status === 'completed') : hasTrackWork
+  return phaseOrder.map(kind => {
     const matching = useRequirements ? requirements?.filter(item => item.kind === kind && supportingRequirement(item)) : undefined
     const jobs = chapter.jobs.filter(job => job.kind === kind || (kind === 'm3_voice_clone' && job.kind === 'm3_dialogue'))
     const items = matching !== undefined ? matching.map(item => ({ completed: Boolean(item.artifact_id), job: item.job_id ? byId.get(item.job_id) : undefined }))
@@ -171,10 +187,13 @@ export function chapterAssetProgress(chapter: ProductionChapter): GenerationProg
     const started = items.some(item => item.job?.status === 'completed'
       || !item.completed && (item.job?.status === 'running' || (item.job?.attempt_count ?? 0) > 0))
     const failed = items.some(item => !item.completed && item.job?.status === 'failed')
-    const total = known ? items.length : null
+    const total = kind === 'm3_music' ? tracksKnown ? items.length : null
+      : kind === 'm3_music_plan' && !items.length ? chapter.music_enabled === true || !hasTrackWork ? 1 : 0
+        : known ? items.length : null
     const status = total === null ? 'pending' : total === 0 ? 'skipped' : completed === total ? 'completed'
       : failed ? 'failed' : started ? 'running' : 'pending'
-    return { id: kind, label: jobNames[kind], status, current: completed, total, completed }
+    return { id: kind, label: jobNames[kind], status, current: completed, total, completed,
+      ...(kind === 'm3_music_plan' ? { counter: 'none' as const } : {}) }
   })
 }
 
@@ -214,7 +233,12 @@ export function chapterGenerationProgress(chapter: ProductionChapter): Generatio
   const supportingCount = plan?.chapter_number === chapter.chapter_number ? plan.supporting_character_count : 0
   const visibleAssets = assets.filter(item => !['m3_image', 'm3_voice'].includes(item.id)
     || (item.total === null ? supportingCount > 0 : item.total > 0))
-  return [...textItems, ...visibleAssets, { id: 'build', label: '章の検査・組み立て', current: 0, total: null,
+  const musicPlan = visibleAssets.find(item => item.id === 'm3_music_plan')
+  if (musicPlan) {
+    const validationIndex = textItems.findIndex(item => item.id === 'chapter-validation')
+    textItems.splice(validationIndex < 0 ? textItems.length : validationIndex + 1, 0, musicPlan)
+  }
+  return [...textItems, ...visibleAssets.filter(item => item.id !== 'm3_music_plan'), { id: 'build', label: '章の検査・組み立て', current: 0, total: null,
     completed: chapter.build ? 1 : 0, status: chapter.build ? 'completed' : assetsReady ? chapter.error ? 'failed' : 'running' : 'pending' }]
 }
 
@@ -240,14 +264,14 @@ export const chapterStatusNames: Record<ProductionChapter['status'], string> = {
 export function productionChapters(production: Production | null, chapterCount: number): ProductionChapter[] {
   if (!production) return []
   // Saved one-chapter productions remain viewable after upgrading the server.
-  const existing: ProductionChapter[] = production.chapters ?? [{
+  const existing: ProductionChapter[] = (production.chapters ?? [{
     chapter_number: production.chapter_number, production_id: production.id,
     narrative_artifact_id: production.narrative_artifact_id, jobs: production.jobs,
     status: production.build ? 'published' : production.status === 'failed' ? 'failed'
       : production.narrative_artifact_id ? 'generating_assets' : 'writing',
     build: production.build, player_url: production.player_url, export_url: production.export_url,
     error: production.error,
-  }]
+  }]).map(chapter => ({ ...chapter, ...(chapter.music_enabled === undefined && production.music_enabled !== undefined ? { music_enabled: production.music_enabled } : {}) }))
   const count = Math.max(production.chapter_count ?? chapterCount, ...existing.map(chapter => chapter.chapter_number), 1)
   return Array.from({ length: count }, (_, index) => existing.find(chapter => chapter.chapter_number === index + 1) ?? {
     chapter_number: index + 1, production_id: null, narrative_artifact_id: null, status: 'waiting',

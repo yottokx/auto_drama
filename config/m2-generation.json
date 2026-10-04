@@ -46,6 +46,27 @@
     "reference_text": "はじめまして。今日は、お話しできるのを楽しみにしていました。少しずつ、お互いのことを知っていけたら嬉しいです。これから、よろしくお願いします。",
     "timeout_seconds": 900
   },
+  "music": {
+    "enabled": true,
+    "backend": "stable_audio3",
+    "model": "medium",
+    "python": "services/worker/runtimes/stable_audio3/.venv/Scripts/python.exe",
+    "models": {
+      "medium": "services/worker/runtimes/stable_audio3/models/medium",
+      "small": "services/worker/runtimes/stable_audio3/models/small"
+    },
+    "device": "cuda",
+    "cpu_offload": false,
+    "duration_seconds": 120,
+    "steps": 8,
+    "guidance_scale": 1.0,
+    "precision": "float32",
+    "mp3_bitrate_kbps": 192,
+    "loop_method": "smart_region",
+    "loop_target_seconds": 60,
+    "crossfade_seconds": 0.5,
+    "timeout_seconds": 900
+  },
   "gpu_lock_timeout_seconds": 3600,
   "max_zip_bytes": 33554432
 }

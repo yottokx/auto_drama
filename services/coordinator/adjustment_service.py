@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
 import wave
 import zipfile
@@ -100,6 +101,9 @@ class AdjustmentService:
                 background = next(row for row in requirements if row["kind"] == "m3_background"
                                   and row["target_id"] == scene.plan.location_id)
                 scenes.append({"chapter_number": chapter["chapter_number"], "scene_id": scene.id,
+                    "production_id": chapter["id"],
+                    "music_prompt": next((json.loads(row["descriptor"]).get("prompt", "") for row in requirements
+                                          if row["kind"] == "m3_music" and row["target_id"] == scene.id), ""),
                     "title": f"シーン{number}・{locations[scene.plan.location_id]}", "character_ids": scene.plan.character_ids,
                     "background_url": f"/api/artifacts/{background['artifact_id']}/content"})
                 for cid in scene.plan.character_ids:
@@ -193,9 +197,19 @@ class AdjustmentService:
                     row["character_id"], row["kind"]),
             }
         state = preview or json.loads(draft["state"]) if draft else None
+        from .music_adjustments import inspect_music
+        from .music_service import effective_settings, plan_metadata
+
+        automatic = {chapter["id"]: plan_metadata(connection, chapter, self.m3, state) for chapter in chapters}
+        for scene in scenes:
+            scene["music_plan"] = automatic[scene["production_id"]][scene["scene_id"]]
+
+        music_candidates, music_jobs = inspect_music(self, connection, root, draft)
+        jobs.extend(music_jobs)
         if draft:
             baseline, geometry = self._geometry(connection, draft, state)
-            draft = {**draft, "characters": state["characters"], "baseline": baseline, "geometry": geometry}
+            draft = {**draft, "characters": state["characters"], "baseline": baseline, "geometry": geometry,
+                     "scene_music": effective_settings(connection, chapters, self.m3, state)}
             draft.pop("state", None)
             selected = {row["character_id"]: row for row in state["characters"]}
             for row in cast:
@@ -208,7 +222,7 @@ class AdjustmentService:
         selection = self.history.selection(connection, project_id)
         return {"project_id": project_id, "complete": bool(chapters), "readonly": not bool(chapters),
                 "busy": bool(draft and draft["status"] == "applying") or any(j["status"] in {"pending", "running"} for j in jobs),
-                "draft": draft, "cast": cast, "scenes": scenes, "candidates": candidates, "jobs": jobs,
+                "draft": draft, "cast": cast, "scenes": scenes, "candidates": candidates, "music_candidates": music_candidates, "jobs": jobs,
                 "edition": self._edition(connection, selection["edition_id"]) if selection else None, "limits": LIMITS}
 
     def project(self, project_id):
@@ -239,11 +253,24 @@ class AdjustmentService:
             if current and current["status"] == "applying":
                 raise ServiceError(409, "調整版を反映中です。")
             if current and current["base_edition_id"] == selection["edition_id"] and current["status"] != "applied":
+                state = json.loads(current["state"])
+                if "scene_music" not in state:
+                    from .music_service import original_settings
+
+                    self.history.begin(connection, project_id, "既存の調整に場面のBGM設定を追加", "m3-adjustment-start", concurrent=True)
+                    state["scene_music"] = original_settings(connection, chapters, self.m3)
+                    connection.execute("UPDATE adjustment_draft SET state=?,revision=revision+1 WHERE id=?",
+                                       (json.dumps(state), current["id"]))
+                    self.history.finish(connection, project_id)
                 return self._view(connection, project_id)
             self.history.begin(connection, project_id, "完成後の調整を開始", "m3-adjustment-start", concurrent=True)
             edition_id = selection["edition_id"]
             if edition_id:
                 state = json.loads(required(connection, "publication_edition", edition_id)["state"])
+                if "scene_music" not in state:
+                    from .music_service import original_settings
+
+                    state["scene_music"] = original_settings(connection, chapters, self.m3)
             else:
                 cast, _scenes = self._inspect(connection, root, chapters)
                 settings = {}
@@ -280,7 +307,10 @@ class AdjustmentService:
                     characters.append(AdjustmentCharacter(character_id=cid, **values,
                         framing=setting.get("framing", "auto"), height_cm=setting.get("height_cm", person["result"].get("height_cm")),
                         body_bounds=setting.get("body_bounds")).model_dump(mode="json"))
-                state = {"characters": characters, "baseline": None, "requirements": requirements}
+                from .music_service import original_settings
+
+                state = {"characters": characters, "baseline": None, "requirements": requirements,
+                         "scene_music": original_settings(connection, chapters, self.m3)}
                 edition_id = uuid4().hex
                 temporary = {"project_id": project_id, "production_id": root["id"]}
                 state["baseline"], _ = self._geometry(connection, temporary, state)
@@ -317,6 +347,10 @@ class AdjustmentService:
                     and value["body_bounds"] == prior[cid]["body_bounds"]):
                 value["body_bounds"] = None
         state["characters"] = values
+        if request.scene_music is not None:
+            from .music_adjustments import validate_settings
+
+            validate_settings(self, connection, draft, state, request.scene_music)
         state["baseline"], _ = self._geometry(connection, draft, state)
         return state
 
@@ -495,12 +529,29 @@ class AdjustmentService:
                             row["artifact_id"] = job["artifact_id"]
                 state["requirements"] = requirements
                 state["baseline"], _ = self._geometry(connection, draft, state)
+                source = json.loads(required(connection, "publication_edition", draft["base_edition_id"])["state"])
+                music_fields = {"scene_music", "music_plans"}
+                unchanged = state == source
+                music_only = ({key: value for key, value in state.items() if key not in music_fields}
+                              == {key: value for key, value in source.items() if key not in music_fields})
                 builds = {row["id"]: row["build"]["id"] for row in chapters}
                 publisher = _AdjustmentPublisher(self.coordinator, builds, state)
                 for chapter in chapters:
                     before = publisher._latest_build(connection, chapter["id"])
-                    publisher._publish(connection, chapter, requirements[chapter["id"]], presentation=state)
-                    latest = publisher._latest_build(connection, chapter["id"])
+                    def bindings(value, production_id):
+                        return {row["scene_id"]: row for row in value.get("scene_music", [])
+                                if row["production_id"] == production_id}
+                    same_plan = state.get("music_plans", {}).get(chapter["id"]) == source.get("music_plans", {}).get(chapter["id"])
+                    if unchanged:
+                        # Refresh the runtime without recalculating adopted
+                        # portrait placement, music bindings, or scene settings.
+                        # History can select an older build than the latest one.
+                        latest = self._refresh_player(connection, chapter, chapter["build"])
+                    elif music_only and same_plan and bindings(state, chapter["id"]) == bindings(source, chapter["id"]):
+                        latest = before
+                    else:
+                        publisher._publish(connection, chapter, requirements[chapter["id"]], presentation=state)
+                        latest = publisher._latest_build(connection, chapter["id"])
                     # Even unchanged exports receive a distinct build identity:
                     # an old URL can never navigate into a newer edition.
                     if latest["id"] == before["id"]:
@@ -514,7 +565,7 @@ class AdjustmentService:
                 connection.execute("UPDATE adjustment_apply SET status='completed',edition_id=?,error=NULL WHERE id=?", (edition, identifier))
                 connection.execute("UPDATE adjustment_draft SET status='applied',error=NULL WHERE id=?", (draft["id"],))
                 self.history.finish(connection, draft["project_id"])
-        except (OSError, ValueError, ServiceError):
+        except (OSError, ValueError, ServiceError, zipfile.BadZipFile):
             with self.db.transaction() as connection:
                 operation = required(connection, "adjustment_apply", identifier)
                 if operation["status"] != "completed":
@@ -522,6 +573,24 @@ class AdjustmentService:
                     connection.execute("UPDATE adjustment_apply SET status='failed',error=? WHERE id=?", (error, identifier))
                     connection.execute("UPDATE adjustment_draft SET status='failed',error=? WHERE id=? AND active_apply_id=?",
                                        (error, operation["draft_id"], identifier))
+
+    def _refresh_player(self, connection, chapter, build):
+        from packages.contracts import Script
+        from packages.tyrano_export import compile_bundle
+
+        script = Script.model_validate_json(self.store.read(required(connection, "artifact", build["script_artifact_id"])))
+        assets = {asset.id: self.store.read(required(connection, "artifact", asset.artifact_id)) for asset in script.assets}
+        original = self.store.read(required(connection, "artifact", build["export_artifact_id"]))
+        with zipfile.ZipFile(io.BytesIO(original)) as archive:
+            documents = {name: archive.read(name) for name in archive.namelist()
+                         if name in {"approval.json", "narrative.json", "chapter-manifest.json"}
+                         or name.startswith("sources/")}
+        bundle = compile_bundle(script, assets, documents=documents)
+        if bundle == original:
+            return self._clone_build(connection, build)
+        record = self.m3._artifact(connection, chapter, "export-" + chapter["id"],
+                                  "tyrano_export", "tyrano-source.zip", bundle)
+        return self._clone_build(connection, {**build, "export_artifact_id": record["id"]})
 
     def _clone_build(self, connection, build):
         value = dict(build)
@@ -559,6 +628,15 @@ class AdjustmentService:
             connection.execute("UPDATE adjustment_draft SET status='applying',error=NULL WHERE id=?", (link["id"],))
 
     def retry(self, project_id, request):
+        with self.db.transaction() as connection:
+            selected = self._draft(connection, project_id)
+            music_failed = selected and connection.execute("SELECT 1 FROM job j WHERE j.status='failed' AND j.id IN "
+                "(SELECT job_id FROM music_adjustment_job WHERE draft_id=? UNION SELECT job_id FROM music_replan_job WHERE draft_id=?)",
+                (selected["id"], selected["id"])).fetchone()
+        if music_failed:
+            from .music_adjustments import MusicAdjustmentService
+
+            return MusicAdjustmentService(self.coordinator).retry(project_id, request)
         with self.db.transaction() as connection:
             draft, _root, _ = self._editable(connection, project_id, request.expected_revision)
             identifier = draft["active_apply_id"]

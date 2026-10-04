@@ -1,4 +1,4 @@
-"""Retain STEP3's local LLM and GPU lease for five minutes from readiness."""
+"""Share serial LLM jobs; M2 expires from load, M3 after completed use."""
 from __future__ import annotations
 
 import time
@@ -7,7 +7,9 @@ from contextvars import ContextVar
 
 from .cancellation import check_cancelled
 
-LLM_KINDS = frozenset({"m2_world", "m2_character", "m2_relationships"})
+LLM_KINDS = frozenset({"m2_world", "m2_character", "m2_relationships",
+                       "m3_plan", "m3_narrative", "m3_music_plan"})
+COMPLETION_RETENTION_KINDS = frozenset({"m3_plan", "m3_narrative", "m3_music_plan"})
 CONVERSION_KINDS = frozenset({"m2_image"})
 MODEL_RETENTION_SECONDS = 300.0
 _active: ContextVar[LLMSession | None] = ContextVar("llm_session", default=None)
@@ -17,11 +19,13 @@ class LLMSession:
     def __init__(self):
         self._lease = self._backend = self._key = self._loaded_at = None
         self._active_client = None
+        self._idle_since = None
+        self._retention_from_completion = False
         self.enabled = True
 
     def _expired(self) -> bool:
-        return (self._loaded_at is not None
-                and time.monotonic() - self._loaded_at >= MODEL_RETENTION_SECONDS)
+        origin = self._idle_since if self._retention_from_completion else self._loaded_at
+        return origin is not None and time.monotonic() - origin >= MODEL_RETENTION_SECONDS
 
     def expire_if_needed(self) -> bool:
         """Idle polling expires weights; active inference finishes before expiry."""
@@ -46,7 +50,7 @@ class LLMSession:
     def release_model(self, *args):
         """Stop the server while retaining GPU ownership for a replacement."""
         backend, self._backend = self._backend, None
-        self._key = self._loaded_at = None
+        self._key = self._loaded_at = self._idle_since = None
         if backend is not None:
             backend._stop_runtime(*(args or (None, None, None)))
 
@@ -81,6 +85,8 @@ class LLMSession:
             client.trace.append({"type": "llm_runtime", **client.runtime_identity(),
                                  "context_source": client.context_source})
         self._active_client = client
+        if self._retention_from_completion:
+            self._idle_since = None
 
     def detach(self, client, args):
         if self._active_client is client:
@@ -88,6 +94,11 @@ class LLMSession:
         if args[0] is not None:
             self.close()
         else:
+            # Chapter writing may take longer than five minutes. Its successor
+            # can reuse the completed review; the original M2 load deadline is
+            # unchanged, and idle polling still releases M3 after five minutes.
+            if self._retention_from_completion and self._backend is not None:
+                self._idle_since = time.monotonic()
             self.expire_if_needed()
 
 
@@ -113,6 +124,12 @@ def prepare_job(kind: str):
     session = current_session()
     if session is not None:
         session.expire_if_needed()
+        completion_retention = kind in COMPLETION_RETENTION_KINDS
+        if completion_retention != session._retention_from_completion:
+            # Changing job kinds alone does not grant a fresh retention window.
+            if completion_retention and session._backend is not None:
+                session._idle_since = session._loaded_at
+            session._retention_from_completion = completion_retention
         session.enabled = kind in LLM_KINDS | CONVERSION_KINDS
         if not session.enabled:
             session.close()

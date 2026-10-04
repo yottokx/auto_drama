@@ -13,7 +13,7 @@ from packages.contracts import Script
 from .player import player_files
 from .presentation import BACKGROUND, MESSAGE_WINDOW, PORTRAIT_Z_INDEX, script_portrait_layouts
 
-ASSET_FOLDERS = {"background": "bgimage", "character": "fgimage", "audio": "sound"}
+ASSET_FOLDERS = {"background": "bgimage", "character": "fgimage", "audio": "sound", "music": "bgm"}
 
 # Compiler-owned code only. Tyrano's story text uses a text sink, but its backlog
 # uses HTML; escaping solely the .ks parser would leave an HTML injection there.
@@ -52,6 +52,57 @@ def literal_text(value: str, *, next_tag: str = "[r]") -> str:
     )
 
 
+def scene_stage_data(script: Script, images: dict[str, bytes]) -> dict:
+    """Compile typed scene-entry directions into complete, immutable stage targets.
+
+    The narrative converter resets all portraits before each scene. Folding the
+    entry directions first lets the player reconcile the final cast instead of
+    briefly hiding and recreating characters who remain in the same position.
+    Mid-scene directions still update the compiler's state and run normally.
+    """
+    assets = {value.id: value for value in script.assets}
+    characters = {value.id: value for value in script.characters}
+    portraits = script_portrait_layouts(script, images)
+    specs = {value.utterance_id: value for value in script.scene_transitions}
+    music = {value.utterance_id: value.id for value in script.music_cues}
+    directions = {}
+    for value in script.directions:
+        directions.setdefault((value.utterance_id, value.timing), []).append(value)
+    background, cast, scenes = None, {}, []
+
+    def apply(direction):
+        nonlocal background
+        if direction.kind == "background":
+            background = {"storage": assets[direction.asset_id].filename,
+                          "position": BACKGROUND["position"] if script.portrait_baseline else ""}
+        elif direction.kind == "exit":
+            cast.pop(direction.character_id, None)
+        elif direction.kind in {"enter", "position"}:
+            if direction.kind == "position" and direction.character_id not in cast:
+                return
+            portrait = portraits[direction.character_id]
+            character = characters[direction.character_id]
+            cast[direction.character_id] = {
+                "id": direction.character_id, "storage": assets[character.image_asset_id].filename,
+                "left": portrait.left(direction.position), "top": portrait.top,
+                "width": portrait.width, "height": portrait.height,
+                "z_index": PORTRAIT_Z_INDEX if script.portrait_baseline else 1,
+            }
+
+    for utterance in script.utterances:
+        for timing in ("before", "start"):
+            for direction in directions.get((utterance.id, timing), []):
+                apply(direction)
+        if utterance.id in specs:
+            scenes.append({**specs[utterance.id].model_dump(mode="json"),
+                           "music_cue_id": music.get(utterance.id),
+                           "background": dict(background) if background else None,
+                           "characters": [dict(cast[cid]) for cid in sorted(cast)]})
+        for direction in directions.get((utterance.id, "after"), []):
+            apply(direction)
+    return {"schema_version": 1, "scenes": scenes}
+
+
 def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
     script = Script.model_validate(script.model_dump(mode="json"))
     characters = {value.id: value for value in script.characters}
@@ -77,6 +128,8 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
             lines.append(f'[chara_new name="ad_{character.id}" storage="{filename}"]')
     lines.extend([literal_text(script.title, next_tag="[p]"), "[cm]"])
     directions_by_anchor = {}
+    music_by_anchor = {cue.utterance_id: cue for cue in script.music_cues}
+    transitions_by_anchor = {cue.utterance_id: cue for cue in script.scene_transitions}
     for direction in script.directions:
         directions_by_anchor.setdefault((direction.utterance_id, direction.timing), []).append(
             direction
@@ -85,6 +138,9 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
     def direction_lines(utterance_id: str, timing: str) -> list[str]:
         result = []
         for direction in directions_by_anchor.get((utterance_id, timing), []):
+            if (utterance_id in transitions_by_anchor and timing in {"before", "start"}
+                    and direction.kind in {"background", "enter", "exit", "position", "blackout"}):
+                continue
             match direction.kind:
                 case "background":
                     filename = assets[direction.asset_id].filename
@@ -126,6 +182,10 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
 
     for utterance in script.utterances:
         lines.extend([f"*utterance_{utterance.id}", "[cm]"])
+        if utterance.id in transitions_by_anchor:
+            lines.append(f'[ad_transition cue="{transitions_by_anchor[utterance.id].id}"]')
+        elif utterance.id in music_by_anchor:
+            lines.append(f'[ad_music cue="{music_by_anchor[utterance.id].id}"]')
         lines.extend(direction_lines(utterance.id, "before"))
         character = characters.get(utterance.speaker_id)
         if character:
@@ -146,7 +206,10 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
             lines.append("[wse]")
         lines.extend(direction_lines(utterance.id, "after"))
         lines.append("[p]")
-    lines.extend(["*auto_drama_chapter_end", "[cm]", literal_text("この章はここまでです。"), "[s]"])
+    lines.extend(["*auto_drama_chapter_end", "[cm]", literal_text("この章はここまでです。")])
+    # Retain the last scene's loop while the reader waits at the boundary.
+    # The owned Next button fades it only when leaving this chapter.
+    lines.append("[s]")
     return "\n".join(lines) + "\n"
 
 
@@ -163,6 +226,8 @@ def _bundle_files(
         "data/scenario/make.ks": b"[return]\n",
         "data/others/auto_drama_backlog.js": BACKLOG_SAFETY,
     }
+    if script.scene_transitions:
+        files["data/others/auto_drama_stages.json"] = canonical_json(scene_stage_data(script, assets))
     files.update(player_files(files["script.json"]))
     for path, content in (documents or {}).items():
         if path not in {"approval.json", "narrative.json", "chapter-manifest.json"} and not re.fullmatch(

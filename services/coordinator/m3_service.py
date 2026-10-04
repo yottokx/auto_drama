@@ -208,6 +208,8 @@ class M3Service(ChapterProduction):
             if filename.endswith(".png")
             else "audio/wav"
             if filename.endswith(".wav")
+            else "audio/mpeg"
+            if filename.endswith(".mp3")
             else "application/zip"
             if filename.endswith(".zip")
             else "text/plain; charset=utf-8"
@@ -389,11 +391,13 @@ class M3Service(ChapterProduction):
             if (plan["project_id"] != project_id or draft["main_approval_id"] != approval_id
                     or draft["approved_plan_id"] != plan_approval_id):
                 raise ServiceError(409, "承認した構成とメイン設定が一致しません。")
+        from .music_service import enabled_for_new_series
+
         connection.execute(
             "INSERT INTO m3_production (id,project_id,approval_id,approval_artifact_id,created_at,"
-            "storyline_id,m4_enabled,plan_approval_id,sequential_publication) VALUES (?,?,?,?,?,?,1,?,?)",
+            "storyline_id,m4_enabled,plan_approval_id,sequential_publication,music_enabled) VALUES (?,?,?,?,?,?,1,?,?,?)",
             (identifier, project_id, approval_id, approval["artifact_id"], self.clock(), identifier,
-             plan_approval_id, int(bool(plan_approval_id))),
+             plan_approval_id, int(bool(plan_approval_id)), int(enabled_for_new_series(plan_approval_id))),
         )
         production = required(connection, "m3_production", identifier)
         self.history.set_selection(connection, project_id, identifier, None, None)
@@ -667,10 +671,25 @@ class M3Service(ChapterProduction):
             if row is None:
                 return {"project_id": project_id, "production": None}
             production = public(dict(row))
+            production["music_enabled"] = bool(row["music_enabled"])
             production_id = production["id"]
             selected = self.history.selection(connection, project_id)
             production["history_frozen"] = bool(selected and selected["production_frozen"])
             chapters = self._chapters(connection, row)
+            from .music_service import plan_metadata
+
+            presentation = json.loads(required(connection, "publication_edition", selected["edition_id"])["state"]) if (
+                selected and selected.get("edition_id")) else None
+            for chapter in chapters:
+                chapter["music_enabled"] = production["music_enabled"]
+                chapter["scenes"] = []
+                if not chapter["narrative_artifact_id"]:
+                    continue
+                adopted = required(connection, "m3_production", chapter["production_id"])
+                adopted["narrative_artifact_id"] = chapter["narrative_artifact_id"]
+                metadata = plan_metadata(connection, adopted, self, presentation)
+                chapter["scenes"] = [{"scene_id": scene.id, "music_plan": metadata[scene.id]}
+                                     for scene in self._load_narrative(connection, adopted).scenes]
             production["chapters"] = chapters
             production["chapter_count"] = len(chapters)
             self._settle_control(connection, row)
@@ -854,6 +873,11 @@ class M3Service(ChapterProduction):
                             "delivery": utterance.delivery,
                         },
                     )
+        if self._root(connection, production)["music_enabled"]:
+            from .music_service import context
+
+            self._requirement(connection, production, "m3_music_plan", "chapter-music",
+                              {"context": context(self, connection, production, narrative), "planning_version": 2})
 
     def advance(self, production_id: str) -> None:
         with self.db.transaction() as connection:
@@ -1000,6 +1024,8 @@ class M3Service(ChapterProduction):
         references, content = {}, {}
         omitted_portraits = set()
         for item in requirements:
+            if item["kind"] in {"m3_music_plan", "m3_music"}:
+                continue
             record = required(connection, "artifact", item["artifact_id"])
             data = self.store.read(record)
             if record["project_id"] != production["project_id"]:
@@ -1043,6 +1069,9 @@ class M3Service(ChapterProduction):
             portrait_settings=portrait_settings,
             omitted_portraits=omitted_portraits,
         )
+        from .music_service import add_to_script
+
+        script = add_to_script(self, connection, production, narrative, script, content, requirements, presentation)
         if presentation is not None:
             from packages.narrative.validation import script_character_id
             from packages.tyrano_export.presentation import apply_portrait_presentation
@@ -1168,6 +1197,10 @@ class M3Service(ChapterProduction):
             payload = json.loads(job["payload"])
         try:
             envelope, files = validate_bundle(data, job["kind"])
+            from .music_service import validate_plan, validate_result
+
+            music_plan = validate_plan(envelope["result"], payload) if job["kind"] == "m3_music_plan" else None
+            music = validate_result(envelope["result"], payload, files) if job["kind"] == "m3_music" else None
             omission = None
             if job["kind"] == "m3_image" and envelope["result"]:
                 omission = PortraitOmission.model_validate(envelope["result"]["portrait"])
@@ -1311,12 +1344,29 @@ class M3Service(ChapterProduction):
                     "m3_background": "background",
                     "m3_voice": "audio",
                     "m3_voice_clone": "audio",
+                    "m3_music_plan": "music_plan",
+                    "m3_music": "music",
                 }[job["kind"]]
                 filename = "voice.wav" if kind == "audio" else "image.png"
+                if music_plan is not None:
+                    filename = "music-plan.json"
+                    files[filename] = encode_json(music_plan.model_dump(mode="json"))
+                    for scene_prompt in music_plan.scenes:
+                        if scene_prompt.action != "play":
+                            continue
+                        self._requirement(connection, production, "m3_music", scene_prompt.scene_id,
+                            {"scene_id": scene_prompt.scene_id, "prompt": scene_prompt.prompt,
+                             "context": payload["context"], "duration_seconds": 120,
+                             "backend": "stable_audio3", "model": "medium"})
+                if music is not None:
+                    from .music_service import store_candidate
+
+                    record, _candidate = store_candidate(self, connection, production, music.model_dump(mode="json"),
+                        files, job=job, attempt=attempt, provenance=envelope["provenance"])
                 if omission is not None:
                     kind, filename = "portrait_omission", "portrait-omission.json"
                     files[filename] = encode_json(omission.model_dump())
-                record = self._artifact(
+                record = record if music is not None else self._artifact(
                     connection,
                     production,
                     "media-" + requirement["id"],

@@ -12,7 +12,8 @@
           "enum": [
             "background",
             "character",
-            "audio"
+            "audio",
+            "music"
           ],
           "title": "Kind",
           "type": "string"
@@ -376,6 +377,86 @@
       "title": "FocusDirection",
       "type": "object"
     },
+    "MusicCue": {
+      "additionalProperties": false,
+      "description": "Backend-neutral scene music; media and engine code are adopted separately.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "play",
+            "stop",
+            "continue"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "asset_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Id"
+        },
+        "loop_start_seconds": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loop Start Seconds"
+        },
+        "loop_end_seconds": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loop End Seconds"
+        },
+        "volume": {
+          "default": 0.35,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "action"
+      ],
+      "title": "MusicCue",
+      "type": "object"
+    },
     "PauseDirection": {
       "additionalProperties": false,
       "properties": {
@@ -627,6 +708,59 @@
       "title": "PositionDirection",
       "type": "object"
     },
+    "SceneTransitionCue": {
+      "additionalProperties": false,
+      "properties": {
+        "visual": {
+          "default": "fade",
+          "enum": [
+            "none",
+            "dissolve",
+            "fade",
+            "cut"
+          ],
+          "title": "Visual",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 500,
+          "maximum": 3000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "music_fade_out_ms": {
+          "default": 1000,
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Music Fade Out Ms",
+          "type": "integer"
+        },
+        "music_fade_in_ms": {
+          "default": 1000,
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Music Fade In Ms",
+          "type": "integer"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id"
+      ],
+      "title": "SceneTransitionCue",
+      "type": "object"
+    },
     "Utterance": {
       "additionalProperties": false,
       "properties": {
@@ -788,6 +922,22 @@
       },
       "maxItems": 20000,
       "title": "Assets",
+      "type": "array"
+    },
+    "music_cues": {
+      "items": {
+        "$ref": "#/$defs/MusicCue"
+      },
+      "maxItems": 10000,
+      "title": "Music Cues",
+      "type": "array"
+    },
+    "scene_transitions": {
+      "items": {
+        "$ref": "#/$defs/SceneTransitionCue"
+      },
+      "maxItems": 10000,
+      "title": "Scene Transitions",
       "type": "array"
     },
     "portrait_baseline": {

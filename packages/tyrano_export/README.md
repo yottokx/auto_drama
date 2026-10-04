@@ -39,6 +39,18 @@ ZIP には `script.json`、`manifest.json`、`data/scenario/first.ks` と `make.
 `after` は本文表示と音声の完了後、次のクリック待ちより前に実行します。
 暗転は `duration_ms` を片道の所要時間とする黒へのフェードと復帰です。
 
+`Script.scene_transitions` は台本確定後の場面入口の演出です。空なら従来の台本をそのまま
+コンパイルします。指定された入口では背景・人物の到達状態を
+`data/others/auto_drama_stages.json` にまとめ、固定タグ `ad_transition` で先読み・音楽フェード・
+画面交換を一度だけ実行します。同じ舞台の不要な消去と再表示や、入口の重複暗転を整理します。
+本文と発話IDは変えず、入口以外の演出は従来どおり処理します。`none` / `cut` は即時表示、
+`dissolve` は旧画面の減衰、`fade` は黒への減衰と復帰です。音楽のフェード時間は画面と独立し、
+`continue` は現在の曲・音量・A/Bループ位相を引き継ぎます。
+
+`music.js` と `transitions.js` は調整画面のつなぎ目試聴からも利用します。試聴が渡す外部
+AudioContext は本編の録画出力へ登録しません。転換中の途中保存を防ぎ、読込・画面破棄では
+保留中の処理を取り消します。準備失敗時は本文が進まなくなる状態を避けて通知します。
+
 `tests/unit/test_contracts_export.py` は再現性、参照不整合、途中 ZIP、不正パス、
 タグ注入とバックログの HTML エスケープを検証します。
 `tests/unit/test_m3_player.py` は公開境界、パス、HTTP Range、ハッシュ検査、鑑賞操作を確認します。

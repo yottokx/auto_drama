@@ -8,6 +8,10 @@ export type Job = {
   priority: number; attempt_count: number; max_attempts: number; error: string | null
   created_at: string; updated_at: string; result_artifact_id: string | null
   progress?: JobProgress | null
+  generation_kind?: string
+  purpose?: string
+  adoption_status?: 'adopted' | 'stale'
+  adoption_reason?: string
 }
 export type JobProgressStep = {
   id: string

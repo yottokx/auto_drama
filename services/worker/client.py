@@ -28,6 +28,7 @@ from services.worker.generation.cancellation import (
 )
 from services.worker.generation.image_session import current_session as current_image_session
 from services.worker.generation.llm_session import current_session as current_llm_session
+from services.worker.generation.music_session import current_session as current_music_session
 from services.worker.generation.progress import progress_scope
 from services.worker.generation.voice_session import current_session
 
@@ -367,6 +368,9 @@ class WorkerClient:
             llms = current_llm_session()
             if llms is not None:
                 llms.close()
+            music = current_music_session()
+            if music is not None:
+                music.close()
             logger.info("Job %s no longer belongs to this worker", job["id"])
             return "stale"
         except httpx.HTTPError:

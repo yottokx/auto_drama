@@ -11,7 +11,7 @@ from pathlib import Path
 
 from packages.contracts.m3 import EMOTION_TAGS, M3_KINDS, GenerationEnvelope, Location
 
-from . import image_session, pipeline
+from . import image_session, llm_session, music_session, pipeline
 from .cancellation import check_cancelled
 from .causal_runtime import digest
 from .llm import LocalLLM, write_json
@@ -29,7 +29,7 @@ from .workflow_version import generator_protocol
 def generation_kinds(available: list[str]) -> list[str]:
     kinds = []
     if "m2_world" in available:
-        kinds.extend(("m3_plan", "m3_narrative"))
+        kinds.extend(("m3_plan", "m3_narrative", "m3_music_plan"))
     if "m2_image" in available:
         kinds.extend(("m3_background", "m3_image"))
     if "m2_voice" in available:
@@ -117,6 +117,11 @@ def _media_job(job: dict, work: Path) -> bytes:
 def generate_job(job: dict, work_dir: Path) -> bytes:
     check_cancelled()
     kind, payload = job.get("kind"), job.get("payload")
+    music_session.prepare_job(kind)
+    if kind in {"m3_music_plan", "m3_music"}:
+        from .music_pipeline import generate_job as generate_music
+
+        return generate_music(job, work_dir)
     pipeline.voice_session.prepare_job(kind)
     image_session.prepare_job(kind)
     pipeline.llm_session.prepare_job(kind)
@@ -205,8 +210,8 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
 
         script_run = CommonPlanRun(work / "script", config, payload)
         script_run.retry_failed_steps(job.get("retry_generation", 0))
-    with image_session.gpu_scope(kind, gpu_lock(
-            pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"])):
+    with llm_session.gpu_scope(kind, image_session.gpu_scope(kind, gpu_lock(
+            pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"]))):
         if kind in {"m3_plan", "m3_narrative"}:
             # Existing M3 jobs replay their exact v4 request cache; state-aware
             # prompts have an independent namespace and never overwrite it.

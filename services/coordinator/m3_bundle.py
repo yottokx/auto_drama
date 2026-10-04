@@ -24,6 +24,8 @@ def validate_bundle(data: bytes, kind: str) -> tuple[dict, dict[str, bytes]]:
         expected.add("image.png")
     elif kind in ("m3_voice", "m3_voice_clone"):
         expected.add("voice.wav")
+    elif kind == "m3_music":
+        expected.update({"music.mp3", "source.mp3"})
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         entries = archive.infolist()
         names = {entry.filename for entry in entries}
@@ -44,8 +46,16 @@ def validate_bundle(data: bytes, kind: str) -> tuple[dict, dict[str, bytes]]:
         if set(envelope["result"]) != {"portrait"}:
             raise ValueError("Missing explicit portrait omission")
         PortraitOmission.model_validate(envelope["result"]["portrait"])
-    if envelope["kind"] != kind or (kind not in {"m3_narrative", "m3_plan"} and not omission_bundle and envelope["result"]):
+    if envelope["kind"] != kind or (kind not in {"m3_narrative", "m3_plan", "m3_music_plan", "m3_music"} and not omission_bundle and envelope["result"]):
         raise ValueError("result differs from job contract")
+    if kind == "m3_music_plan":
+        from packages.contracts.music import MusicPlan
+
+        MusicPlan.model_validate(envelope["result"])
+    elif kind == "m3_music":
+        from packages.contracts.music import MusicResult
+
+        MusicResult.model_validate(envelope["result"])
     if kind == "m3_background":
         validate_background(files["image.png"])
     elif kind == "m3_image" and not omission_bundle:

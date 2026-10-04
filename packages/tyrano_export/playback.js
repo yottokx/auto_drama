@@ -94,7 +94,7 @@ window.AutoDramaPlayback = function (k, script) {
   }
 
   function advance() {
-    if (log || advancing) return false;
+    if (log || advancing || k.tmp.auto_drama_transition) return false;
     const line = currentLine();
     if (!line) return false;
     stopModes();
@@ -133,7 +133,8 @@ window.AutoDramaPlayback = function (k, script) {
   }
 
   function canOpenLog() {
-    return !advancing && !log && (!!k.key_mouse.util.canShowMenu() || tag()?.name === "wse");
+    return !k.tmp.auto_drama_transition && !advancing && !log &&
+      (!!k.key_mouse.util.canShowMenu() || tag()?.name === "wse");
   }
   function openLog() {
     if (!canOpenLog()) return false;

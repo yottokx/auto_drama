@@ -357,8 +357,10 @@ class Coordinator:
                 raise ServiceError(409, "失敗したジョブだけ再試行できます。")
             if json.loads(job["payload"]).get("adjustment"):
                 from .adjustment_service import AdjustmentService
+                from .music_adjustments import MusicAdjustmentService
 
-                AdjustmentService(self).validate_retry(connection, job)
+                music = json.loads(job["payload"])["adjustment"].get("music")
+                (MusicAdjustmentService(self) if music else AdjustmentService(self)).validate_retry(connection, job)
             elif job["kind"].startswith("m2_"):
                 from .m2_service import M2Service
 
@@ -434,9 +436,12 @@ class Coordinator:
                 "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
                 "JOIN m3_requirement r ON r.production_id=pj.production_id "
                 "WHERE pj.job_id=job.id AND r.artifact_id IS NULL AND ("
+                "(job.kind IN ('m3_image','m3_background','m3_voice','m3_voice_clone','m3_music') "
+                "AND r.kind='m3_music_plan') OR "
                 "(job.kind='m3_background' AND r.kind='m3_image') OR "
                 "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background')) OR "
-                "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_voice')))) "
+                "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_voice')) OR "
+                "(job.kind='m3_music' AND r.kind IN ('m3_image','m3_background','m3_voice','m3_voice_clone')))) "
                 "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
                 "JOIN m3_production p ON p.id=pj.production_id "
                 "JOIN m3_production root ON root.id=p.storyline_id "
@@ -468,7 +473,7 @@ class Coordinator:
                     return False
                 profile = payload.get("profile", {})
                 uses_llm = row["kind"] in {"m2_world", "m2_character", "m2_relationships",
-                                            "m2_image", "m3_narrative", "m3_image", "m3_plan"}
+                                            "m2_image", "m3_narrative", "m3_image", "m3_plan", "m3_music_plan"}
                 return (not uses_llm
                         or (not profile.get("common_settings_version") and not models)
                         or any(model.supports(profile) for model in models))

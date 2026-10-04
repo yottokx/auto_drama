@@ -1,13 +1,15 @@
 """Publication keeps its source, staging, portraits and asset references unchanged."""
 
 import hashlib
+import io
+from zipfile import ZipFile
 
 import pytest
 
 from packages.contracts.m3 import NarrativeResult, PortraitSetting
 from packages.narrative.script_conversion import narrative_to_script, stable_id
 from packages.narrative.validation import script_character_id
-from packages.tyrano_export import compile_bundle, demo_content
+from packages.tyrano_export import compile_bundle, compile_scenario, demo_content
 from packages.tyrano_export.compiler import canonical_json
 from tests.unit.test_m3_narrative import narrative_fixture
 
@@ -52,8 +54,17 @@ def test_publication_conversion_matches_the_pre_extraction_output():
     # Fingerprints recorded from the original M3Service._publish conversion.
     assert hashlib.sha256(canonical_json(script.model_dump(mode="json"))).hexdigest() == (
         "e9e35ce081fab8825ff395d5aadf844122ff9aa66c9cab1dc6999fe6b5fe25e1")
-    assert hashlib.sha256(compile_bundle(script, assets)).hexdigest() == (
-        "a02f1e95c78bc0a24686b9b9dbf3961c9dac0703fcbda52b4ec35a81e4e2f6c8")
+    # Player code may be upgraded without changing this conversion's story,
+    # staging, or adopted media. Pin those outputs independently of the runtime.
+    scenario = compile_scenario(script, assets).encode("utf-8")
+    assert hashlib.sha256(scenario).hexdigest() == (
+        "3bb5dce3ed88445976b9337b23cf05929a19c760b7db36a046fdbd728a64a61a")
+    with ZipFile(io.BytesIO(compile_bundle(script, assets))) as archive:
+        assert archive.read("script.json") == canonical_json(script.model_dump(mode="json"))
+        assert archive.read("data/scenario/first.ks") == scenario
+        for asset in script.assets:
+            folder = {"background": "bgimage", "character": "fgimage", "audio": "sound"}[asset.kind]
+            assert archive.read(f"data/{folder}/{asset.filename}") == assets[asset.id]
 
 
 def test_source_fields_and_all_existing_stage_directions_survive_conversion():

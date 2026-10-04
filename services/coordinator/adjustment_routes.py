@@ -7,11 +7,13 @@ from starlette.exceptions import HTTPException
 
 from packages.contracts.adjustments import (
     AdjustmentGenerate,
+    AdjustmentMusicGenerate,
     AdjustmentRevision,
     AdjustmentSample,
     AdjustmentSave,
     AdjustmentStart,
 )
+from packages.contracts.music import MusicReplanRequest
 
 from .adjustment_service import LIMITS, AdjustmentService
 from .service import Coordinator, ServiceError
@@ -39,6 +41,57 @@ def router(coordinator: Callable[[], Coordinator]):
     @routes.post("/generate")
     def generate(project_id: str, body: AdjustmentGenerate):
         return AdjustmentService(coordinator()).generate(project_id, body)
+
+    @routes.post("/music/generate")
+    def generate_music(project_id: str, body: AdjustmentMusicGenerate):
+        from .music_adjustments import MusicAdjustmentService
+
+        return MusicAdjustmentService(coordinator()).generate(project_id, body)
+
+    @routes.post("/music/upload")
+    async def upload_music(project_id: str, request: Request):
+        try:
+            size = int(request.headers.get("content-length", "0"))
+        except ValueError as exc:
+            raise ServiceError(422, "アップロードのサイズが不正です。") from exc
+        if size > LIMITS["upload_bytes"] + 65536:
+            raise ServiceError(413, "アップロードは32MiB以内にしてください。")
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > LIMITS["upload_bytes"] + 65536:
+                raise ServiceError(413, "アップロードは32MiB以内にしてください。")
+        request._body = bytes(data)
+        try:
+            form = await request.form(max_files=1, max_fields=3)
+        except (HTTPException, ValueError) as exc:
+            raise ServiceError(422, "アップロードのフォームを読み取れませんでした。") from exc
+        try:
+            revision = int(form.get("expected_revision", ""))
+            pid, sid, file = form.get("production_id"), form.get("scene_id"), form.get("file")
+            if revision < 1 or not isinstance(pid, str) or not isinstance(sid, str) or not hasattr(file, "read"):
+                raise ValueError("章・場面と音楽ファイルを指定してください。")
+            original = await file.read(LIMITS["upload_bytes"] + 1)
+            if len(original) > LIMITS["upload_bytes"]:
+                raise ServiceError(413, "アップロードは32MiB以内にしてください。")
+            from .music_adjustments import MusicAdjustmentService
+            from .music_import import normalize_music
+
+            music = MusicAdjustmentService(coordinator())
+            await run_in_threadpool(music.validate_upload, project_id, revision, pid, sid)
+            files, result = await run_in_threadpool(normalize_music, original, sid)
+            return await run_in_threadpool(music.upload,
+                                          project_id, revision, pid, sid, files, result)
+        except (ValueError, TypeError) as exc:
+            raise ServiceError(422, str(exc)) from exc
+        finally:
+            await form.close()
+
+    @routes.post("/music/replan")
+    def replan_music(project_id: str, body: MusicReplanRequest):
+        from .music_adjustments import MusicAdjustmentService
+
+        return MusicAdjustmentService(coordinator()).replan(project_id, body)
 
     @routes.post("/sample")
     def sample(project_id: str, body: AdjustmentSample):

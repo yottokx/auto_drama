@@ -1,5 +1,8 @@
+from types import SimpleNamespace
+
 import pytest
 
+from scripts.record import record_player as recorder
 from scripts.record.record_player import player_url, successor
 
 
@@ -23,3 +26,119 @@ def test_player_url_rejects_non_http():
     for url in ["file:///tmp/index.html", "invalid", "http://localhost/?unexpected=1"]:
         with pytest.raises(ValueError):
             player_url(url)
+
+
+@pytest.mark.parametrize("ending", ["chapter", "limit", "stop"])
+def test_chapter_end_or_partial_stop_captures_one_bounded_fade_tail(tmp_path, monkeypatch, ending):
+    """An indefinitely looping chapter outro cannot extend the recording."""
+    probe = SimpleNamespace(now=0.0, started_at=None, fade_at=[], writes=[], events=[], waits=0)
+    monkeypatch.setattr(recorder, "time", SimpleNamespace(monotonic=lambda: probe.now))
+
+    class Locator:
+        def __init__(self, selector):
+            self.selector = selector
+
+        def wait_for(self):
+            pass
+
+        def click(self):
+            probe.started_at = probe.now
+
+        def dispatch_event(self, event):
+            assert event == "click"
+
+        def evaluate(self, _expression):
+            assert self.selector == "#ad-chapter-end"
+            return ending == "chapter" and probe.now >= .55
+
+    class Page:
+        def goto(self, *_args, **_options):
+            pass
+
+        def wait_for_function(self, *_args, **_options):
+            pass
+
+        def add_style_tag(self, **_options):
+            pass
+
+        def expose_function(self, _name, callback):
+            self.chunk = callback
+
+        def screenshot(self, **_options):
+            probe.now += .01
+            return b"frame"
+
+        def locator(self, selector):
+            return Locator(selector)
+
+        def evaluate(self, expression, argument=None):
+            if expression == recorder.PLAYER_PROGRESS:
+                return {"utterance_current": 1, "utterance_total": 1}
+            if expression == recorder.AUDIO_START:
+                self.chunk("AQI=")
+                return
+            if "fadeRecordingAudio" in expression:
+                assert argument == 400
+                probe.fade_at.append(probe.now)
+                return
+            assert "finishRecordingAudio" in expression
+            probe.events.append("audio-finished")
+
+        def wait_for_timeout(self, milliseconds):
+            probe.waits += 1
+            assert probe.waits < 30, "chapter-end BGM must not be recorded indefinitely"
+            probe.now += milliseconds / 1000
+
+    class Context:
+        def new_page(self):
+            return Page()
+
+        def close(self):
+            probe.events.append("context-closed")
+
+    class Browser:
+        def new_context(self, **_options):
+            return Context()
+
+    class Pipe:
+        def write(self, data):
+            probe.writes.append(data)
+
+        def close(self):
+            probe.events.append("video-closed")
+
+    class Encoder:
+        def __init__(self, command, **_options):
+            self.stdin, self.returncode = Pipe(), 0
+            recorder.Path(command[-1]).write_bytes(b"video")
+
+        def wait(self, **_options):
+            probe.events.append("video-finished")
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(recorder.subprocess, "Popen", Encoder)
+    monkeypatch.setattr(recorder, "encode", lambda command, _log: recorder.Path(command[-1]).write_bytes(b"mp4"))
+    args = SimpleNamespace(width=1280, height=720, fps=10, ffmpeg="fake-ffmpeg", output_dir=tmp_path,
+                           max_seconds=.8 if ending == "limit" else 10, keep_raw=True)
+    if ending == "stop":
+        (tmp_path / "stop.request").touch()
+    states = []
+    if ending == "chapter":
+        result = recorder.record_chapter(Browser(), "http://localhost/player/fixture/", tmp_path / "chapter",
+                                         args, lambda **state: states.append(state))
+        assert result.name == "chapter.mp4"
+    else:
+        with pytest.raises(RuntimeError, match="途中の録画"):
+            recorder.record_chapter(Browser(), "http://localhost/player/fixture/", tmp_path / "chapter",
+                                    args, lambda **state: states.append(state))
+        assert (tmp_path / "chapter/partial.mp4").exists()
+    assert len(probe.fade_at) == 1
+    # Audio remains active while frame capture advances through the ramp.
+    assert .4 <= probe.now - probe.fade_at[0] <= .51
+    recorded = len(probe.writes) / args.fps
+    assert recorded == states[-2]["chapter_recorded_seconds"]
+    assert probe.fade_at[0] - probe.started_at + .4 <= recorded <= probe.fade_at[0] - probe.started_at + .51
+    assert any(state.get("finishing") and state["fade_tail_seconds"] == .4 for state in states)
+    assert "audio-finished" in probe.events and probe.events[-1] == "context-closed"
