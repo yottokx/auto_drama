@@ -6,6 +6,7 @@ param(
     [switch]$Once,
     [switch]$ExportOnly,
     [switch]$NoVoiceReuse,
+    [switch]$NoImageReuse,
     [string]$WorkDir
 )
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,7 @@ $workerArguments = @('-I', '-u', '-X', 'utf8', $entrypoint, '--coordinator', $Co
 if ($Once) { $workerArguments += '--once' }
 if ($ExportOnly) { $workerArguments += '--export-only' }
 if ($NoVoiceReuse) { $workerArguments += '--no-voice-reuse' }
+if ($NoImageReuse) { $workerArguments += '--no-image-reuse' }
 if ($WorkDir) { $workerArguments += @('--work-dir', $WorkDir) }
 Push-Location $projectRoot
 try {

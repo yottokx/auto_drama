@@ -9,21 +9,31 @@ from test_m2 import action, create, detail, ready
 
 from services.coordinator.app import create_app
 from services.coordinator.service import Coordinator
+from tests.integration.planning_fixtures import complete_and_approve_plan
 
 
-def test_approval_enters_production_and_revisiting_settings_preserves_existing_work(tmp_path):
+def test_approval_enters_planning_then_approved_plan_enters_production(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         project, _ = ready(client)
         assert project["draft"]["step"] == "character-review"
         approved = action(client, project, "approve")
+        assert approved["draft"]["step"] == "planning-review"
+        assert not approved["draft"]["hasProduction"]
+        assert approved["draft"]["planningRequired"]
+        assert not approved["draft"]["planApproved"]
+        assert len([job for job in approved["jobs"] if job["kind"] == "m3_plan"]) == 1
+        assert not any(job["kind"] == "m3_narrative" for job in approved["jobs"])
+        action(client, project, "go-to", step="production", status=409)
+        complete_and_approve_plan(client, project)
+        approved = detail(client, project)
         assert approved["draft"]["step"] == "production"
-        assert approved["draft"]["hasProduction"]
+        assert approved["draft"]["hasProduction"] and approved["draft"]["planApproved"]
         snapshot = approved["draft"]["approval"]
         frozen = client.get(f"/api/artifacts/{snapshot['artifactId']}/content").content
         revision, jobs = approved["draft"]["revision"], approved["jobs"]
         assert len([job for job in jobs if job["kind"] == "m3_narrative"]) == 1
 
-        for step in ("world-input", "world-review", "character-review", "production"):
+        for step in ("world-input", "world-review", "character-review", "planning-review", "production"):
             current = action(client, project, "go-to", step=step)
             assert current["draft"]["step"] == step
             assert detail(client, project)["draft"]["step"] == step
@@ -65,6 +75,8 @@ def test_legacy_approval_moves_to_production_only_from_its_old_default_step(
     with TestClient(create_app(coordinator=coordinator)) as client:
         project, _ = ready(client)
         approved = action(client, project, "approve")
+        complete_and_approve_plan(client, project)
+        approved = detail(client, project)
         identifier = project["project"]["id"]
         snapshot = approved["draft"]["approval"]
         with coordinator.db.transaction() as connection:
@@ -101,6 +113,8 @@ def test_editing_from_production_returns_to_the_relevant_setup_step(tmp_path, ch
     with TestClient(create_app(tmp_path)) as client:
         project, _ = ready(client)
         approved = action(client, project, "approve")
+        complete_and_approve_plan(client, project)
+        approved = detail(client, project)
         snapshot = approved["draft"]["approval"]
         frozen = client.get(f"/api/artifacts/{snapshot['artifactId']}/content").content
         if change == "character":
@@ -132,6 +146,8 @@ def test_old_unapproved_draft_with_existing_production_retains_access(tmp_path):
     with TestClient(create_app(coordinator=coordinator)) as client:
         project, _ = ready(client)
         approved = action(client, project, "approve")
+        complete_and_approve_plan(client, project)
+        approved = detail(client, project)
         action(client, project, "edit-character", character_id="character-1",
                patch={"settings": "次の版に向けた新しい設定。"})
         identifier = project["project"]["id"]

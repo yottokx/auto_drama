@@ -6,7 +6,7 @@
 .wizard-studio .nav-step { background: transparent; border: 1px solid #d9d9cb; color: #8a8c7a; flex-shrink: 0; }
 .wizard-studio .nav-active .nav-step { background: #e3d2c4; border-color: #e3d2c4; color: #95634c; }
 .wizard-draft-label { font-size: 10px; color: #9ba08f; letter-spacing: .1em; margin-top: 12px; flex-shrink: 0; }
-.wizard-stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--line); padding: 18px 5px; margin-bottom: 18px; gap: 10px; }
+.wizard-stepper { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--line); padding: 18px 5px; margin-bottom: 18px; gap: 10px; }
 .wizard-stepper button { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; padding: 8px; border-radius: 5px; }
 .wizard-stepper button:not(:disabled):hover { background: #eeeee5; }
 .wizard-stepper button > span { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #dfe3d6; border-radius: 50%; color: #919b82; font: 12px Georgia, serif; flex-shrink: 0; }

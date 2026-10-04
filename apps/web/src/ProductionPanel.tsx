@@ -2,32 +2,30 @@ import { useEffect, useRef, useState } from 'react'
 import { errorMessage, request } from './api'
 import { Icon } from './Icons'
 import { PlotReview } from './PlotReview'
-import { PortraitEditor } from './PortraitEditor'
-import { chapterStatusNames, coordinatorNeedsRestart, jobNames, productionView, serverRestartMessage, type CoordinatorHealth, type Production, type ProductionResponse } from './productionState'
+import { GenerationProgress } from './GenerationProgress'
+import { chapterGenerationProgress, chapterStatusNames, coordinatorNeedsRestart, jobNames, productionCurrentProgress, productionView, serverRestartMessage, type CoordinatorHealth, type Production, type ProductionResponse } from './productionState'
 import './production.css'
 
 export type { ProductionResponse } from './productionState'
-const statusNames = { pending: '実行待ち', running: '制作中', failed: '失敗', completed: '完了' }
 
-type ProductionPanelProps = { projectId: string; approved: boolean; chapterCount: number; onPendingChange?: (pending: boolean) => void }
+type ProductionPanelProps = { projectId: string; approved: boolean; chapterCount: number; onPendingChange?: (pending: boolean) => void; onOpenAdjustments: () => void }
 
 export function ProductionPanel(props: ProductionPanelProps) {
   return <ProductionPanelContent key={props.projectId} {...props}/>
 }
 
-function ProductionPanelContent({ projectId, approved, chapterCount, onPendingChange }: ProductionPanelProps) {
+function ProductionPanelContent({ projectId, approved, chapterCount, onPendingChange, onOpenAdjustments }: ProductionPanelProps) {
   const [production, setProduction] = useState<Production | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [needsServerRestart, setNeedsServerRestart] = useState(false)
   const [error, setError] = useState('')
   const [mutating, setMutating] = useState(false)
-  const [portraitPending, setPortraitPending] = useState(false)
   const mutation = useRef(false)
   const sequence = useRef(0)
   const controllers = useRef(new Set<AbortController>())
   const mounted = useRef(false)
   const endpoint = `/api/m3/projects/${encodeURIComponent(projectId)}`
-  useEffect(() => { onPendingChange?.(mutating || portraitPending) }, [mutating, portraitPending, onPendingChange])
+  useEffect(() => { onPendingChange?.(mutating) }, [mutating, onPendingChange])
   useEffect(() => () => onPendingChange?.(false), [onPendingChange])
 
   useEffect(() => {
@@ -85,22 +83,11 @@ function ProductionPanelContent({ projectId, approved, chapterCount, onPendingCh
     }
   }
 
-  function portraitSavingChanged(saving: boolean) {
-    sequence.current += 1
-    mutation.current = saving
-    if (mounted.current) setMutating(saving)
-  }
-
-  function portraitsSaved(response: ProductionResponse) {
-    if (!mounted.current || response.project_id !== projectId || response.production?.id !== production?.id) return
-    sequence.current += 1
-    setProduction(response.production)
-  }
-
   const view = productionView(production, chapterCount, needsServerRestart)
+  const sequentialChapters = Boolean(production?.plan_approval_id)
   const failed = production?.jobs.filter(job => job.status === 'failed') ?? []
-  const active = production?.jobs.find(job => job.status === 'running')
   const queued = production?.jobs.some(job => job.status === 'pending')
+  const currentProgress = productionCurrentProgress(view.chapters)
   const jobChapters = new Map(view.chapters.flatMap(chapter => chapter.jobs.map(job => [job.id, chapter.chapter_number] as const)))
   return <section className={`production-panel ${view.publishedCount ? 'production-ready' : ''}`} aria-labelledby="production-heading">
     <div className="production-heading"><span className="production-symbol"><Icon name={view.publishedCount ? 'play' : 'film'} size={25}/></span><div><p className="eyebrow">YOUR STORY · {view.chapters.length || chapterCount} CHAPTERS</p><h2 id="production-heading">{view.title}</h2></div></div>
@@ -110,36 +97,34 @@ function ProductionPanelContent({ projectId, approved, chapterCount, onPendingCh
     {!loaded && !error && <p role="status">制作状況を読み込み中…</p>}
     {production && !view.complete && <div className="production-progress" role="status">
       <span>鑑賞可能 {view.publishedCount} / 全{view.chapters.length}章</span>
-      <strong>{needsServerRestart ? '制御サーバーの再起動待ち' : view.historyFrozen ? '自動処理は停止しています' : view.paused ? '再開すると、保存済みの成果物から制作を続けます' : view.stopping ? '新しい工程を開始せず、実行中の工程の終了を待っています' : active ? `${jobNames[active.kind] ?? '素材'}を制作中` : failed.length ? '失敗した工程の再試行が必要です' : queued ? 'ワーカーの実行待ち' : '章の検査・組み立て'}</strong>
-      <small>完了した工程 {production.completed_jobs} / 現在登録された工程 {production.total_jobs}</small>
+      <strong>{needsServerRestart ? '制御サーバーの再起動待ち' : view.historyFrozen ? '自動処理は停止しています' : view.paused ? '再開すると、保存済みの成果物から制作を続けます' : view.stopping ? '新しい工程を開始せず、実行中の工程の終了を待っています' : currentProgress ?? (failed.length ? '失敗した工程の再試行が必要です' : queued ? 'ワーカーの実行待ち' : '章の検査・組み立て')}</strong>
       {!needsServerRestart && !view.historyFrozen && !view.paused && !view.stopping && <p>画面を閉じても、制御サーバーとワーカーが起動していれば制作は続きます。</p>}
     </div>}
     <div className="production-actions">
       {view.publishedCount > 0 && production?.chapters_export_url && <a className="button button-light" href={production.chapters_export_url} download>公開済みの章をまとめて書き出す</a>}
-      {loaded && !production && approved && <button className="button button-primary" disabled={needsServerRestart || mutating || portraitPending} onClick={() => void mutate(`${endpoint}/start`)}><Icon name="film" size={17}/>{mutating ? '制作を開始中…' : '承認済みの設定で本編を制作'}</button>}
-      {view.canStop && <button className="button button-light" disabled={mutating || portraitPending} onClick={() => void mutate(`${endpoint}/stop`, { mode: 'graceful' })}><Icon name="pause" size={15}/>工程を保存して停止</button>}
-      {view.canInterrupt && <button className="button button-light" disabled={mutating || portraitPending} onClick={() => void mutate(`${endpoint}/stop`, { mode: 'immediate' })}>今すぐ中断</button>}
-      {view.canResume && <button className="button button-primary" disabled={mutating || portraitPending} onClick={() => void mutate(`${endpoint}/resume`)}><Icon name="play" size={15}/>制作を再開</button>}
-      {view.canRetry && failed.map(job => <button key={job.id} className="button button-light" disabled={mutating || portraitPending} onClick={() => void mutate(`/api/jobs/${encodeURIComponent(job.id)}/retry`)}><Icon name="refresh" size={15}/>{jobChapters.has(job.id) ? `第${jobChapters.get(job.id)}章 ` : ''}{jobNames[job.kind] ?? '失敗した工程'}を再試行</button>)}
-      {view.canRetry && production?.status === 'failed' && !failed.length && <button className="button button-light" disabled={mutating || portraitPending} onClick={() => void mutate(`${endpoint}/start`)}><Icon name="refresh" size={15}/>章の検査と組み立てを再試行</button>}
+      {loaded && !production && approved && <button className="button button-primary" disabled={needsServerRestart || mutating} onClick={() => void mutate(`${endpoint}/start`)}><Icon name="film" size={17}/>{mutating ? '制作を開始中…' : '承認済みの設定で本編を制作'}</button>}
+      {view.canStop && <button className="button button-light" disabled={mutating} onClick={() => void mutate(`${endpoint}/stop`, { mode: 'graceful' })}><Icon name="pause" size={15}/>工程を保存して停止</button>}
+      {view.canInterrupt && <button className="button button-light" disabled={mutating} onClick={() => void mutate(`${endpoint}/stop`, { mode: 'immediate' })}>今すぐ中断</button>}
+      {view.canResume && <button className="button button-primary" disabled={mutating} onClick={() => void mutate(`${endpoint}/resume`)}><Icon name="play" size={15}/>制作を再開</button>}
+      {view.canRetry && failed.map(job => <button key={job.id} className="button button-light" disabled={mutating} onClick={() => void mutate(`/api/jobs/${encodeURIComponent(job.id)}/retry`)}><Icon name="refresh" size={15}/>{jobChapters.has(job.id) ? `第${jobChapters.get(job.id)}章 ` : ''}{jobNames[job.kind] ?? '失敗した工程'}を再試行</button>)}
+      {view.canRetry && production?.status === 'failed' && !failed.length && <button className="button button-light" disabled={mutating} onClick={() => void mutate(`${endpoint}/start`)}><Icon name="refresh" size={15}/>章の検査と組み立てを再試行</button>}
     </div>
     {(view.canStop || view.canInterrupt || view.canResume) && <p className="production-control-help">「工程を保存して停止」は、実行中の工程が終わってから停止します。「今すぐ中断」は、実行中の工程を再開時にやり直します。完成済みの成果物と鑑賞中の章は保持します。</p>}
     {view.chapters.length > 0 && <ol className="production-chapters" aria-label="章ごとの制作状況">{view.chapters.map(chapter => {
       const published = chapter.build?.status === 'published'
-      const completedJobs = chapter.jobs.filter(job => job.status === 'completed').length
       return <li key={chapter.chapter_number} className={`production-chapter ${published ? 'chapter-ready' : ''}`}>
-        <div className="production-chapter-heading"><h3>第{chapter.chapter_number}章</h3><span className={`chapter-status chapter-status-${chapter.status}`}>{published ? '鑑賞できます' : needsServerRestart && chapter.status === 'waiting' ? '制御サーバーの再起動待ち' : chapterStatusNames[chapter.status]}</span></div>
-        <p>{published ? '台本と素材がそろい、鑑賞の準備ができました。' : needsServerRestart && chapter.status === 'waiting' ? '制御サーバーを再起動してから、制作を再開してください。' : chapter.narrative_artifact_id ? '本文は完成しています。背景・立ち絵・音声と、章の組み立てを進めます。' : chapter.status === 'waiting' ? '前の章の台本が完成すると、制作を始めます。' : 'プロットに沿ってシーン・台本・演出を作り、前の章から物語を引き継ぎます。'}</p>
-        {!published && chapter.jobs.length > 0 && <small>完了した工程 {completedJobs} / {chapter.jobs.length}</small>}
+        <div className="production-chapter-heading"><h3>第{chapter.chapter_number}章</h3><span className={`chapter-status chapter-status-${chapter.status}`}>{published ? '鑑賞できます' : needsServerRestart && chapter.status === 'waiting' ? '制御サーバーの再起動待ち' : sequentialChapters && chapter.status === 'waiting' ? '前章の完成を待機' : chapterStatusNames[chapter.status]}</span></div>
+        <p>{published ? '台本と素材がそろい、鑑賞の準備ができました。' : needsServerRestart && chapter.status === 'waiting' ? '制御サーバーを再起動してから、制作を再開してください。' : chapter.narrative_artifact_id ? '本文は完成しています。サブキャラの立ち絵、背景、基準音声、台詞の音声の順に素材をそろえ、章を組み立てます。' : chapter.status === 'waiting' ? sequentialChapters ? '前の章の台本・素材・組み立てが完成し、鑑賞できるようになってから制作を始めます。' : '前の章の台本が完成すると、制作を始めます。' : '承認したプロットに沿ってシーン・台本・演出を作り、前の章から物語を引き継ぎます。'}</p>
+        {!published && chapter.status !== 'waiting' && <GenerationProgress items={chapterGenerationProgress(chapter)} label={`第${chapter.chapter_number}章の制作工程`} paused={view.paused || view.historyFrozen}/>}
         {published && <div className="production-actions">
           {chapter.player_url && <a className="button button-primary" href={chapter.player_url} target="_blank" rel="noreferrer"><Icon name="play" size={17}/>第{chapter.chapter_number}章を鑑賞する</a>}
           {chapter.export_url && <a className="button button-light" href={chapter.export_url} download>第{chapter.chapter_number}章を書き出す</a>}
         </div>}
       </li>
     })}</ol>}
-    {production?.build?.status === 'published' && <PortraitEditor key={`${projectId}:${production.id}`} projectId={projectId} productionId={production.id} buildId={production.build.id} onSavingChange={portraitSavingChanged} onSaved={portraitsSaved} onPendingChange={setPortraitPending}/>}
+    {production && view.complete && <section className="production-adjustment-entry" aria-labelledby="adjustment-entry-heading"><div><h3 id="adjustment-entry-heading">完成後調整</h3><p>専用画面で、人物の表示位置・立ち絵・基準音声を調整できます。</p></div><button className="button button-light" disabled={needsServerRestart || mutating} onClick={onOpenAdjustments}><Icon name="settings" size={16}/>完成後調整を開く<Icon name="arrow" size={16}/></button></section>}
     {production && <PlotReview key={production.id} projectId={projectId} productionId={production.id} narrativeArtifactId={production.narrative_artifact_id}/>}
-    {production && <details className="production-details"><summary>制作の詳細を表示</summary><p>{view.historyFrozen && '復元した時点の記録です。現在は自動処理を停止しています。'}物語の内容に触れるエラーが表示される場合があります。</p>{production.error && <p className="m2-job-error">{production.error}</p>}{view.chapters.map(chapter => <div key={chapter.chapter_number}><h3>第{chapter.chapter_number}章</h3>{chapter.error && <p className="m2-job-error">{chapter.error}</p>}<ul>{chapter.jobs.map(job => <li key={job.id}><span>{jobNames[job.kind] ?? '章の素材'}</span><strong>{statusNames[job.status]}</strong>{job.error && <p className="m2-job-error">{job.error}</p>}</li>)}</ul></div>)}</details>}
+    {production && <details className="production-details"><summary>制作の詳細を表示</summary><p>{view.historyFrozen && '復元した時点の記録です。現在は自動処理を停止しています。'}物語の内容に触れるエラーが表示される場合があります。</p>{production.error && <p className="m2-job-error">{production.error}</p>}{view.chapters.map(chapter => <div key={chapter.chapter_number}><h3>第{chapter.chapter_number}章</h3>{chapter.error && <p className="m2-job-error">{chapter.error}</p>}{chapter.build && <GenerationProgress items={chapterGenerationProgress(chapter)} label={`第${chapter.chapter_number}章の完了した制作工程`}/>}<ul>{chapter.jobs.filter(job => job.status === 'failed').map(job => <li key={job.id}><span>{jobNames[job.kind] ?? '章の素材'}</span><strong>再試行が必要</strong>{job.error && <p className="m2-job-error">{job.error}</p>}</li>)}</ul>{chapter.status === 'waiting' && <p>前の章の制作を待っています。</p>}</div>)}</details>}
     {!needsServerRestart && <p className="production-scope">全{view.chapters.length || chapterCount}章を順に制作・公開します。鑑賞中の章の内容は変わりません。次章が未完成の場合も、プレイヤーで閲覧位置を保存できます。書き出しには各章の中間脚本・素材・manifestを含みます。</p>}
   </section>
 }

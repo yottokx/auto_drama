@@ -18,12 +18,13 @@ from .cancellation import GenerationCancelled
 from .causal_runtime import digest
 from .draft_story import _read
 from .llm import write_json
+from .planning_state import approved_plan_identity, install_plan
 from .script_cast import ScriptOptions
 from .script_continuation import POLICY, ScriptRun
 from .script_examples import example_catalog_identity
 from .workflow_version import generator_protocol
 
-HISTORY_KEYS = ("cast_plan", "plot", "plot_sha256", "outline", "story_chain",
+HISTORY_KEYS = ("cast_plan", "plot", "plot_sha256", "outline", "accepted_plan", "story_chain",
                 "story_chain_sha256", "chapter_allocation", "notes", "locations",
                 "fallbacks", "request_ordinal", "sessions")
 CHAPTER_KEYS = ("number", "text", "sha256", "scene_starts", "narrative_hash")
@@ -58,6 +59,9 @@ class ProductionScriptRun(ScriptRun):
             "generation_config": _generation_identity_config(config, payload),
             "script_options": ScriptOptions.model_validate(payload.get("script_options", {})).model_dump(),
             "script_examples": example_catalog_identity()}
+        accepted = approved_plan_identity(payload)
+        if accepted is not None:
+            identity["approved_plan"] = accepted[1]
         manifest = {**identity, "input_sha256": digest(identity)}
         self.inherited = self._history(payload, manifest, number)
         output.mkdir(parents=True, exist_ok=True)
@@ -66,6 +70,13 @@ class ProductionScriptRun(ScriptRun):
             raise ValueError("Script production input or model configuration changed.")
         write_json(manifest_path, manifest)
         journal = output / "draft-state.json"
+        if not journal.exists() and number == 1 and accepted is not None:
+            if any(p.is_file() and p != manifest_path for p in output.rglob("*")):
+                raise ValueError("Script journal is missing beside generated material.")
+            state = {"input_sha256": manifest["input_sha256"], "steps": {}, "chapters": [],
+                     "notes": [], "fallbacks": [], "sessions": [], "request_ordinal": 0, "partial": None}
+            install_plan(state, output, manifest, *accepted)
+            write_json(journal, state)
         if not journal.exists() and self.inherited is not None:
             # A missing journal beside generated material must never reset usage.
             if any(p.is_file() and p != manifest_path for p in output.rglob("*")):
@@ -124,6 +135,9 @@ class ProductionScriptRun(ScriptRun):
             "storyline_id": payload["storyline_id"], "approval_sha256": digest(payload["approval_snapshot"]),
             "chapter_number": number - 1, "narrative_hash": narrative_hash(previous),
             "generation_identity": manifest["input_sha256"]}
+        if "approved_plan" in manifest:
+            expected.update(plan_approval_id=manifest["approved_plan"]["approval_id"],
+                            plan_sha256=manifest["approved_plan"]["sha256"])
         if (any(checkpoint.get(k) != v for k, v in expected.items())
                 or checkpoint.get("sha256") != digest({k: v for k, v in checkpoint.items() if k != "sha256"})
                 or previous.chapter_number != number - 1 or previous.storyline_id != payload["storyline_id"]
@@ -149,6 +163,13 @@ class ProductionScriptRun(ScriptRun):
         return self.payload["storyline_id"]
 
     def _verify_narratives(self):
+        accepted = approved_plan_identity(self.payload)
+        if accepted is not None:
+            content, identity = accepted
+            if (self.state.get("accepted_plan") != identity
+                    or self.state.get("plot") != content["plot"]
+                    or self.state.get("cast_plan", {}).get("plan") != content["cast_plan"]):
+                raise ValueError("Script execution plan differs from its approved common plan.")
         count = self.target - 1
         if len(self.state["chapters"]) < count:
             raise ValueError("Script journal lost its inherited chapter history.")
@@ -199,6 +220,9 @@ class ProductionScriptRun(ScriptRun):
             "storyline_id": self.storyline_id, "approval_sha256": digest(self.payload["approval_snapshot"]),
             "chapter_number": self.target, "narrative_hash": self.state["chapters"][-1]["narrative_hash"],
             "generation_identity": self.manifest["input_sha256"], "state": state}
+        if "approved_plan" in self.manifest:
+            value.update(plan_approval_id=self.manifest["approved_plan"]["approval_id"],
+                         plan_sha256=self.manifest["approved_plan"]["sha256"])
         return {**value, "sha256": digest(value)}
 
     def execute(self, llm):
@@ -212,12 +236,15 @@ class ProductionScriptRun(ScriptRun):
         status, error = "running", None
         try:
             self.save(status)
+            self.restore_progress()
             self.check_budget(self.target)
             self.write_chapters()
             status = "script_complete" if self.target == self.manifest["approved_chapter_count"] else "chapter_limit_reached"
         except BaseException as exc:
             status = "interrupted" if isinstance(exc, (KeyboardInterrupt, GenerationCancelled)) else "failed"
             error = f"{type(exc).__name__}: {exc}"
+            if not isinstance(exc, (KeyboardInterrupt, GenerationCancelled)):
+                self.fail_progress()
             raise
         finally:
             self.session["status"] = status

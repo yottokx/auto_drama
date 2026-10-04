@@ -44,7 +44,7 @@ def validate_bundle(data: bytes, kind: str) -> tuple[dict, dict[str, bytes]]:
         if set(envelope["result"]) != {"portrait"}:
             raise ValueError("Missing explicit portrait omission")
         PortraitOmission.model_validate(envelope["result"]["portrait"])
-    if envelope["kind"] != kind or (kind != "m3_narrative" and not omission_bundle and envelope["result"]):
+    if envelope["kind"] != kind or (kind not in {"m3_narrative", "m3_plan"} and not omission_bundle and envelope["result"]):
         raise ValueError("result differs from job contract")
     if kind == "m3_background":
         validate_background(files["image.png"])

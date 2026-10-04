@@ -7,6 +7,20 @@ export type Job = {
   status: 'pending' | 'running' | 'completed' | 'failed'
   priority: number; attempt_count: number; max_attempts: number; error: string | null
   created_at: string; updated_at: string; result_artifact_id: string | null
+  progress?: JobProgress | null
+}
+export type JobProgressStep = {
+  id: string
+  stage: 'supporting_characters' | 'relationships' | 'story_core' | 'plot' | 'chapter_plan' | 'scene_plan'
+    | 'script' | 'speech_extraction' | 'staging' | 'validation' | 'memory' | 'revision'
+    | 'cast_plan' | 'plot_plan' | 'chapter_scene_plan'
+  status: 'running' | 'completed' | 'failed'
+  chapter_number?: number; scene_number?: number; completed?: number; total?: number
+}
+export type JobProgress = {
+  schema_version: 1; sequence: number; phase: 'planning' | 'chapter'; current_step: string | null
+  steps: JobProgressStep[]; attempt: number; updated_at: string; active: boolean
+  chapter_plan?: { chapter_number: number; scene_count: number; supporting_character_count: number }
 }
 export type Artifact = {
   id: string; project_id: string; logical_id: string; version: number

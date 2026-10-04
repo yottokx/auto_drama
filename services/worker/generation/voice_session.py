@@ -1,7 +1,7 @@
 """Reuse one voice child during consecutive jobs while retaining the local GPU lease.
 
-Opted into by the worker loop, not by standalone generation calls. The loop closes
-the session on idle/error/exit; other GPU work closes it before taking the lock.
+Opted into by the worker loop, not by standalone generation calls. The loop expires
+the session five minutes after load; other GPU work closes it before taking the lock.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from scripts.m0.llm_smoke import WindowsChildJob
 
 from .cancellation import check_cancelled, register_cancel_callback
 from .processes import kill_owned_process
+from .runtime_lifetime import RuntimeLifetime
 from .tts_runtime import runtime_identity
 
 VOICE_KINDS = frozenset({"m2_voice", "m2_voice_clone", "m3_voice", "m3_voice_clone"})
@@ -32,20 +33,31 @@ class VoiceSession:
         self._child_job = None
         self._stderr = None
         self._key = None
+        self._lifetime = RuntimeLifetime()
 
     @contextmanager
     def gpu_scope(self, lease):
-        # Keep the model loaded throughout consecutive voice jobs. The worker
-        # releases it on idle/error or before another kind of GPU work.
+        self.expire_if_needed()
         if self._lease is None:
             lease.__enter__()
             self._lease = lease
+        self._lifetime.active_scopes += 1
         try:
             check_cancelled()
             yield
         except BaseException:
             self.close()
             raise
+        finally:
+            self._lifetime.active_scopes -= 1
+            self.expire_if_needed()
+
+    def expire_if_needed(self) -> bool:
+        """Release an expired idle model; inference keeps its lease until completion."""
+        if self._lifetime.active_scopes or not self._lifetime.expired():
+            return False
+        self.close()
+        return True
 
     def _stop_process(self):
         process = self._process
@@ -69,6 +81,7 @@ class VoiceSession:
             if self._stderr is not None:
                 self._stderr.close()
             self._process = self._child_job = self._stderr = self._key = None
+            self._lifetime.clear()
 
     def close(self):
         try:
@@ -87,7 +100,8 @@ class VoiceSession:
         key = (tuple(command[:2]), runtime_identity(request))
         try:
             check_cancelled()
-            if key != self._key or self._process is None or self._process.poll() is not None:
+            if (key != self._key or self._process is None or self._process.poll() is not None
+                    or self._lifetime.expired()):
                 self._stop_process()
                 environment = {k: v for k, v in os.environ.items() if not k.startswith("LLAMA_")}
                 environment.update(PYTHONUTF8="1", HF_HUB_OFFLINE="1",
@@ -140,6 +154,8 @@ class VoiceSession:
             raise RuntimeError(f"Voice generation failed: {response.get('error', 'unknown error')}")
         if not (output / "result.json").is_file() or not (output / "voice.wav").is_file():
             raise RuntimeError("Voice process did not write its complete result.")
+        report = json.loads((output / "result.json").read_text(encoding="utf-8"))
+        self._lifetime.record_load(report, fallback=started)
 
 
 @contextmanager

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from .presentation import MESSAGE_WINDOW, STAGE
+
 # Order follows the separately installed V520 entry point. These are references,
 # not copies of the runtime or the sample game's configuration/scenarios.
 ENGINE_SCRIPTS = (
@@ -52,12 +54,13 @@ def player_config(script_bytes: bytes) -> bytes:
     # Saved engine state includes portrait coordinates. A presentation revision
     # must not restore coordinates from an earlier portrait layout.
     fingerprint = hashlib.sha256(b"portrait-layout-v3-player-m4\0" + script_bytes).hexdigest()
+    window, padding = MESSAGE_WINDOW, MESSAGE_WINDOW["padding"]
     values = {
         "global.config_version": "5.00", "System.title": "AIオートドラマ 鑑賞",
         "projectID": f"auto_drama_{fingerprint}", "game_version": "1.0",
         "ScreenRatio": "fix", "ScreenCentering": "true", "patch_apply_auto": "false",
         "useCamera": "false", "use3D": "false", "KeepSpaceInParameterValue": "3",
-        "scWidth": "960", "scHeight": "640", "vchat": "false",
+        "scWidth": str(STAGE["width"]), "scHeight": str(STAGE["height"]), "vchat": "false",
         "vchatMenuVisible": "false", "chSpeed": "20", "defaultChEffect": "none",
         "defaultChEffectSpeed": "0.2s", "skipSpeed": "30", "skipEffectIgnore": "true",
         "autoSpeed": "1200", "autoSpeedWithText": "40", "autoClickStop": "true",
@@ -70,12 +73,13 @@ def player_config(script_bytes: bytes) -> bytes:
         "configSaveOverwrite": "false", "maxBackLogNum": "500", "autoRecordLabel": "false",
         "unReadTextSkip": "false", "alreadyReadTextColor": "0xffffff",
         "numCharacterLayers": "3", "numMessageLayers": "2",
-        "initialMessageLayerVisible": "true", "marginL": "24", "marginT": "18",
-        "marginR": "24", "marginB": "18", "ml": "20", "mt": "440", "mw": "920",
-        "mh": "180", "debugMenu.visible": "false", "frameColor": "0x101923",
-        "frameOpacity": "230", "defaultAutoReturn": "true", "marginRCh": "1",
-        "defaultFontSize": "24", "defaultLineSpacing": "6", "defaultPitch": "0",
-        "userFace": "sans-serif", "defaultChColor": "0xf3f4f6", "defaultBold": "false",
+        "initialMessageLayerVisible": "true", "marginL": str(padding["left"]), "marginT": str(padding["top"]),
+        "marginR": str(padding["right"]), "marginB": str(padding["bottom"]), "ml": str(window["left"]),
+        "mt": str(window["top"]), "mw": str(window["width"]), "mh": str(window["height"]),
+        "debugMenu.visible": "false", "frameColor": "0x" + window["background"][1:],
+        "frameOpacity": str(round(window["opacity"] * 255)), "defaultAutoReturn": "true", "marginRCh": "1",
+        "defaultFontSize": str(window["font_size"]), "defaultLineSpacing": str(window["line_spacing"]), "defaultPitch": "0",
+        "userFace": "sans-serif", "defaultChColor": "0x" + window["color"][1:], "defaultBold": "false",
         "defaultRubySize": "10", "defaultRubyOffset": "-2", "defaultAntialiased": "1",
         "defaultShadow": "false", "defaultShadowColor": "0x000000", "defaultEdge": "false",
         "defaultEdgeColor": "0x000000", "defaultLinkColor": "0x95cabc",

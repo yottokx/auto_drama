@@ -13,6 +13,7 @@ from packages.contracts.m3 import M3_KINDS
 from packages.narrative import story_state_hash
 from services.coordinator.app import create_app
 from services.coordinator.service import Coordinator
+from tests.integration.planning_fixtures import complete_and_approve_plan
 from tests.integration.test_m2 import action, claim, ready, report_voice_inventory
 from tests.integration.test_m3 import complete, narrative, output, pin_legacy_production, production
 from tests.integration.test_m3 import finish as finish_default
@@ -22,6 +23,7 @@ from tests.integration.test_project_history import history, restore
 def approve(client):
     project, _ = ready(client)
     action(client, project, "approve")
+    complete_and_approve_plan(client, project)
     # These fixtures exercise the historical StoryState/semantic-review contract.
     # New script production is covered separately without rewriting old histories.
     pin_legacy_production(client, project["project"]["id"])

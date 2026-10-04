@@ -139,6 +139,7 @@ def test_voice_jobs_freeze_independent_selections_and_only_matching_worker_can_c
 
 
 def test_all_production_assets_and_continuation_retain_initial_tts_profile(tmp_path):
+    from tests.integration.planning_fixtures import complete_and_approve_plan
     from tests.integration.test_m3 import pin_legacy_production, production
     from tests.integration.test_m4 import finish_job
 
@@ -148,6 +149,7 @@ def test_all_production_assets_and_continuation_retain_initial_tts_profile(tmp_p
         assert client.post("/api/settings/tts", json=settings()).status_code == 200
         action(client, project, "approve")
         project_id = project["project"]["id"]
+        complete_and_approve_plan(client, project_id)
         pin_legacy_production(client, project_id)
         runtime = client.post("/api/workers", json={"name": "production fixture",
             "capabilities": [*M3_KINDS, "tts_download"]}).json()["id"]

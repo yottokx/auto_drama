@@ -1,0 +1,30 @@
+[project]
+name = "auto-drama-stable-audio3-test"
+version = "0.1.0"
+description = "Isolated Diffusers runtime for the Stable Audio 3 BGM test GUI"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "accelerate==1.15.0",
+    "diffusers==0.40.0",
+    "torch==2.10.0+cu128",
+    "transformers==5.17.0",
+    "safetensors>=0.8,<1",
+    "soundfile==0.13.1",
+    "sounddevice>=0.5.5,<0.6",
+    "librosa>=0.11,<1.1",
+    "numpy>=2,<3",
+    "sentencepiece>=0.2,<1",
+    "protobuf>=3.20.3",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }

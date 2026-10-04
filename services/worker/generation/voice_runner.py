@@ -55,6 +55,7 @@ class VoiceRuntimeSession:
         self.runtime = None
         self.profile = None
         self.quantization_metadata = None
+        self.loaded_at = None
 
     def _initialize(self, profile: TTSRuntimeProfile) -> None:
         if Path(sys.prefix).resolve() != (RUNTIME_ROOT / ".venv").resolve():
@@ -135,6 +136,7 @@ class VoiceRuntimeSession:
         else:
             initialization_started = time.perf_counter()
             self._initialize(profile)
+            self.loaded_at = time.monotonic()
             initialization_seconds = time.perf_counter() - initialization_started
         runtime = self.runtime
         if reference is not None and not runtime.model_cfg.use_speaker_condition_resolved:
@@ -204,6 +206,7 @@ class VoiceRuntimeSession:
             "versions": self.versions,
             "runtime_pid": os.getpid(),
             "model_reused": model_reused,
+            "model_loaded_at_monotonic": self.loaded_at,
             "timings": {
                 "initialization_seconds": initialization_seconds,
                 "synthesis_seconds": synthesis_seconds,

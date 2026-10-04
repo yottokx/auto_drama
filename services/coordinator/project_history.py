@@ -26,7 +26,7 @@ LABELS = {
     "revise-character": "キャラクターを修正", "edit-character": "キャラクターを編集",
     "toggle-lock": "キャラクターの固定を変更", "retake": "素材をリテイク",
     "save-relationships": "関係性の指示を保存", "generate-relationships": "関係性を生成・修正",
-    "clone-voice": "台詞の音声を試す", "approve": "メインキャラを確定・本編を制作",
+    "clone-voice": "台詞の音声を試す", "approve": "メインキャラを確定・全体構成を生成",
 }
 
 
@@ -57,12 +57,40 @@ class HistoryService:
     def busy(connection, project_id):
         return connection.execute(
             "SELECT 1 FROM job WHERE project_id=? AND (status='running' OR "
-            "(status='pending' AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
+            "(status='pending' AND NOT EXISTS (SELECT 1 FROM planning_job pj "
+            "JOIN planning_draft p ON p.id=pj.planning_id "
+            "LEFT JOIN project_history_state h ON h.project_id=p.project_id "
+            "JOIN m2_draft md ON md.project_id=p.project_id "
+            "WHERE pj.job_id=job.id AND (h.planning_id IS NULL OR h.planning_id!=p.id "
+            "OR p.active_job_id IS NULL OR p.active_job_id!=job.id OR p.revision!=pj.revision "
+            "OR json_extract(md.state,'$.draft.approved')!=1 "
+            "OR json_extract(md.state,'$.draft.approval.id')!=p.main_approval_id)) "
+            # Later media remain queued after a terminal stage failure. They
+            # cannot execute until retry, so they must not keep history busy.
+            "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
+            "JOIN m3_requirement r ON r.production_id=pj.production_id "
+            "JOIN m3_production owner ON owner.id=pj.production_id "
+            "LEFT JOIN job blocker ON blocker.id=r.job_id "
+            "WHERE pj.job_id=job.id AND r.artifact_id IS NULL "
+            "AND (blocker.status='failed' OR EXISTS ("
+            "SELECT 1 FROM m3_requirement prior "
+            "JOIN m3_production prior_chapter ON prior_chapter.id=prior.production_id "
+            "JOIN job shared_blocker ON shared_blocker.id=prior.job_id "
+            "WHERE prior_chapter.storyline_id=owner.storyline_id "
+            "AND prior_chapter.chapter_number<owner.chapter_number "
+            "AND prior.kind=r.kind AND prior.target_id=r.target_id AND prior.descriptor=r.descriptor "
+            "AND prior.artifact_id IS NULL AND shared_blocker.status='failed')) AND ("
+            "(job.kind='m3_background' AND r.kind='m3_image') OR "
+            "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background')) OR "
+            "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_voice')))) "
+            "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
             "JOIN m3_production p ON p.id=pj.production_id "
             "JOIN m3_production root ON root.id=p.storyline_id "
             "LEFT JOIN project_history_state h ON h.project_id=p.project_id "
             "WHERE pj.job_id=job.id AND (root.control_state!='running' "
-            "OR h.production_frozen=1 OR h.production_id!=root.id)))) LIMIT 1",
+            "OR h.production_frozen=1 OR h.production_id!=root.id "
+            "OR (root.plan_approval_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM planning_draft dp "
+            "WHERE dp.id=h.planning_id AND dp.approved_plan_id=root.plan_approval_id)))))) LIMIT 1",
             (project_id,),
         ).fetchone() is not None
 
@@ -81,7 +109,7 @@ class HistoryService:
         result = {
             "narrative_artifact_id": production["narrative_artifact_id"], "error": production["error"],
             "jobs": [dict(row) for row in connection.execute(
-                "SELECT j.id,j.status,j.error,j.attempt_count,j.max_attempts,j.result_artifact_id,j.updated_at FROM job j "
+                "SELECT j.id,j.status,j.error,j.attempt_count,j.max_attempts,j.result_artifact_id,j.updated_at,j.progress FROM job j "
                 "JOIN m3_production_job p ON p.job_id=j.id WHERE p.production_id=? ORDER BY j.created_at,j.id",
                 (production_id,),
             )],
@@ -137,6 +165,8 @@ class HistoryService:
         values = (production_id, build_id, portrait_settings_id, int(frozen))
         current = self.selection(connection, project_id)
         if values != tuple(current[key] for key in ("production_id", "build_id", "portrait_settings_id", "production_frozen")):
+            if production_id != current["production_id"] or build_id != current["build_id"]:
+                connection.execute("UPDATE project_history_state SET edition_id=NULL,adjustment_draft_id=NULL WHERE project_id=?", (project_id,))
             connection.execute(
                 "UPDATE project_history_state SET production_id=?,build_id=?,portrait_settings_id=?,"
                 "production_frozen=?,production_snapshot=NULL,version=version+1 WHERE project_id=?", (*values, project_id),
@@ -154,9 +184,27 @@ class HistoryService:
         production_state = (json.loads(selection["production_snapshot"])
                             if selection["production_frozen"] and selection["production_snapshot"]
                             else self.production_state(connection, selection["production_id"]))
-        return {"schema_version": 1, "state": state, "production_state": production_state, "selection": {
-            key: selection[key] for key in ("production_id", "build_id", "portrait_settings_id")
+        from .planning_service import PlanningService
+
+        result = {"schema_version": 1, "state": state, "production_state": production_state,
+                "planning_state": PlanningService.history_state(connection, project_id),
+                "adjustment_state": required(connection, "adjustment_draft", selection["adjustment_draft_id"])
+                    if selection.get("adjustment_draft_id") else None, "selection": {
+            key: selection.get(key) for key in ("production_id", "build_id", "portrait_settings_id", "planning_id", "edition_id", "adjustment_draft_id")
         }}
+        if selection.get("adjustment_draft_id"):
+            # Candidate-only actions do not change selected character settings.
+            # Retain their audit state so generation/upload/sample operations
+            # still receive an explicit history entry. Restoring a selection
+            # never removes candidates or rewinds completed worker attempts.
+            draft = result["adjustment_state"]
+            result["adjustment_candidates"] = [dict(row) for row in connection.execute(
+                "SELECT id,character_id,kind,artifact_id,original_artifact_id,reference_text,source,prompt,job_id,sample_artifact_id "
+                "FROM adjustment_candidate WHERE production_id=? ORDER BY created_at,id", (draft["production_id"],))]
+            result["adjustment_jobs"] = [dict(row) for row in connection.execute(
+                "SELECT j.id,j.status,j.attempt_count,j.result_artifact_id FROM job j JOIN adjustment_job a ON a.job_id=j.id "
+                "WHERE a.draft_id=? ORDER BY j.created_at,j.id", (draft["id"],))]
+        return result
 
     @staticmethod
     def _content(snapshot):
@@ -164,6 +212,8 @@ class HistoryService:
         draft = result["state"]["draft"]
         draft.pop("revision", None)
         draft.pop("step", None)
+        if result.get("adjustment_state"):
+            result["adjustment_state"].pop("revision", None)
         return result
 
     def _append(self, connection, project_id, label, action, snapshot, restored_from_id=None):
@@ -293,7 +343,64 @@ class HistoryService:
                     collect(child)
 
         collect(snapshot["state"]["draft"])
+        planning_id = snapshot["selection"].get("planning_id")
+        planning_state = snapshot.get("planning_state")
+        if planning_id:
+            planning = required(connection, "planning_draft", planning_id)
+            if planning["project_id"] != project_id or not planning_state or planning_state["id"] != planning_id:
+                raise ValueError("planning belongs to another project")
+            if planning_state["approved_plan_id"]:
+                approved = required(connection, "planning_approval", planning_state["approved_plan_id"])
+                if approved["project_id"] != project_id or approved["planning_id"] != planning_id:
+                    raise ValueError("plan approval belongs to another planning draft")
+                references.add(approved["artifact_id"])
         selected = snapshot["selection"]
+        if selected.get("edition_id"):
+            edition = required(connection, "publication_edition", selected["edition_id"])
+            if edition["project_id"] != project_id or edition["production_id"] != selected["production_id"]:
+                raise ValueError("publication edition belongs to another story")
+            for row in connection.execute("SELECT b.* FROM edition_build e JOIN chapter_build b ON b.id=e.build_id WHERE e.edition_id=?", (edition["id"],)):
+                references.update((row["script_artifact_id"], row["export_artifact_id"]))
+                references.update(item["artifact_id"] for item in json.loads(row["manifest"]))
+            if not connection.execute("SELECT 1 FROM edition_build WHERE edition_id=? AND production_id=? AND build_id=?",
+                (edition["id"], selected["production_id"], selected["build_id"])).fetchone():
+                raise ValueError("selected first chapter differs from its publication edition")
+        adjustment = snapshot.get("adjustment_state")
+        if selected.get("adjustment_draft_id"):
+            from packages.contracts.adjustments import AdjustmentCharacter
+
+            row = required(connection, "adjustment_draft", selected["adjustment_draft_id"])
+            if (row["project_id"] != project_id or not adjustment or adjustment["id"] != row["id"]
+                    or adjustment["production_id"] != selected["production_id"]):
+                raise ValueError("adjustment draft belongs to another story")
+            source = required(connection, "publication_edition", adjustment["base_edition_id"])
+            if source["project_id"] != project_id or source["production_id"] != selected["production_id"]:
+                raise ValueError("adjustment source belongs to another story")
+            adjustment_content = json.loads(adjustment["state"])
+            for value in adjustment_content["characters"]:
+                person = AdjustmentCharacter.model_validate(value)
+                for kind in ("image", "voice"):
+                    identifier = getattr(person, kind + "_candidate_id")
+                    if not identifier:
+                        continue
+                    candidate = required(connection, "adjustment_candidate", identifier)
+                    if (candidate["project_id"] != project_id or candidate["production_id"] != selected["production_id"]
+                            or candidate["character_id"] != person.character_id or candidate["kind"] != kind):
+                        raise ValueError("adjustment candidate belongs to another story or character")
+                    references.add(candidate["artifact_id"])
+            for rows in adjustment_content["requirements"].values():
+                references.update(item["artifact_id"] for item in rows if item["artifact_id"])
+            for candidate in snapshot.get("adjustment_candidates", []):
+                original = required(connection, "adjustment_candidate", candidate["id"])
+                if original["project_id"] != project_id or original["production_id"] != selected["production_id"]:
+                    raise ValueError("candidate audit belongs to another story")
+                references.update(candidate[key] for key in ("artifact_id", "original_artifact_id", "sample_artifact_id") if candidate[key])
+            for job in snapshot.get("adjustment_jobs", []):
+                original = required(connection, "job", job["id"])
+                if original["project_id"] != project_id:
+                    raise ValueError("adjustment job audit belongs to another story")
+                if job["result_artifact_id"]:
+                    references.add(job["result_artifact_id"])
         production_id, build_id = selected["production_id"], selected["build_id"]
         if production_id:
             production = required(connection, "m3_production", production_id)
@@ -366,6 +473,19 @@ class HistoryService:
             restored["queue"], restored["activeJobId"] = [], None
             selected = snapshot["selection"]
             self.set_selection(connection, project_id, selected["production_id"], selected["build_id"], selected["portrait_settings_id"], frozen=True)
+            from .planning_service import PlanningService
+            PlanningService.restore(connection, project_id, snapshot)
+            adjustment = snapshot.get("adjustment_state")
+            if adjustment:
+                current_adjustment = required(connection, "adjustment_draft", adjustment["id"])
+                if current_adjustment["project_id"] != project_id:
+                    raise ServiceError(422, "調整版が別の作品に属しています。")
+                connection.execute("UPDATE adjustment_draft SET revision=?,state=?,status=?,base_edition_id=?,"
+                    "active_apply_id=NULL,error=NULL WHERE id=?", (max(current_adjustment["revision"], adjustment["revision"]) + 1,
+                    adjustment["state"], "draft" if adjustment["status"] != "applied" else "applied",
+                    adjustment["base_edition_id"], adjustment["id"]))
+            connection.execute("UPDATE project_history_state SET edition_id=?,adjustment_draft_id=? WHERE project_id=?",
+                (selected.get("edition_id"), selected.get("adjustment_draft_id"), project_id))
             connection.execute(
                 "UPDATE project_history_state SET operation=NULL,production_snapshot=? WHERE project_id=?",
                 (json.dumps(snapshot.get("production_state"), ensure_ascii=False), project_id),

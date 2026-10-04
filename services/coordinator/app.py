@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from starlette.concurrency import run_in_threadpool
 
 from packages.contracts import Script
+from packages.contracts.job_progress import JobProgress
 from packages.contracts.llm_settings import LLMCapability, LLMSettings
 
 from .service import Coordinator, ServiceError
@@ -69,6 +70,10 @@ class FailureInput(LeaseInput):
     error: str = Field(min_length=1, max_length=2000)
 
 
+class ProgressInput(LeaseInput):
+    progress: JobProgress
+
+
 class JobInput(InputModel):
     script_artifact_id: Label
     depends_on: list[Label] = Field(default_factory=list, max_length=100)
@@ -98,13 +103,19 @@ def create_app(
     def service() -> Coordinator:
         return app.state.coordinator
 
+    from .adjustment_routes import router as adjustment_router
+    from .image_experiment_routes import router as image_experiment_router
     from .m2_routes import router as m2_router
     from .m3_player import install_player_routes
     from .m3_routes import router as m3_router
+    from .planning_routes import router as planning_router
     from .tts_settings import register_routes as register_tts_routes
 
     app.include_router(m2_router(service))
     app.include_router(m3_router(service))
+    app.include_router(planning_router(service))
+    app.include_router(adjustment_router(service))
+    app.include_router(image_experiment_router(service))
     install_player_routes(app, service)
     register_tts_routes(app, service)
 
@@ -226,6 +237,11 @@ def create_app(
     @app.post("/api/jobs/{job_id}/fail")
     def fail(job_id: str, body: FailureInput):
         return service().fail(job_id, body.worker_id, body.lease_id, body.error)
+
+    @app.post("/api/jobs/{job_id}/progress")
+    def progress(job_id: str, body: ProgressInput):
+        return service().progress(job_id, body.worker_id, body.lease_id,
+                                  body.progress.model_dump(mode="json", exclude_none=True))
 
     @app.post("/api/jobs/{job_id}/complete")
     async def complete(

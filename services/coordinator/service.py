@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from packages.contracts import Script
+from packages.contracts.job_progress import JobProgress
 from packages.tyrano_export import demo_content, validate_bundle
 
 from .database import Database
@@ -40,9 +41,13 @@ def required(connection: sqlite3.Connection, table: str, identifier: str) -> dic
 def public(record: dict) -> dict:
     result = dict(record)
     result.pop("storage_key", None)
-    for key in ("payload", "settings_snapshot", "capabilities", "provenance", "policy", "llm_models"):
-        if key in result:
+    for key in ("payload", "settings_snapshot", "capabilities", "provenance", "policy", "llm_models", "progress"):
+        if key in result and isinstance(result[key], str):
             result[key] = json.loads(result[key])
+    progress_active = result.pop("progress_active", True)
+    if result.get("progress") is not None:
+        result["progress"]["active"] = bool(progress_active and result.get("status") == "running"
+            and result["progress"].get("attempt") == result.get("attempt_count"))
     for key in (
         "created_at",
         "updated_at",
@@ -76,6 +81,9 @@ class Coordinator:
         from .m3_service import M3Service
 
         M3Service(self).recover()
+        from .adjustment_service import AdjustmentService
+
+        AdjustmentService(self).recover()
 
     def _recover(self, connection: sqlite3.Connection) -> None:
         now = self.clock()
@@ -347,7 +355,11 @@ class Coordinator:
             job = required(connection, "job", identifier)
             if job["status"] != "failed":
                 raise ServiceError(409, "失敗したジョブだけ再試行できます。")
-            if job["kind"].startswith("m2_"):
+            if json.loads(job["payload"]).get("adjustment"):
+                from .adjustment_service import AdjustmentService
+
+                AdjustmentService(self).validate_retry(connection, job)
+            elif job["kind"].startswith("m2_"):
                 from .m2_service import M2Service
 
                 M2Service(self).validate_retry(connection, job)
@@ -356,6 +368,10 @@ class Coordinator:
                 history = HistoryService(self)
                 if not history.has_operation(connection, job["project_id"], "m2"):
                     history.begin(connection, job["project_id"], "生成を再試行", "m2-retry")
+            elif job["kind"] == "m3_plan":
+                from .planning_service import PlanningService
+
+                PlanningService(self).validate_retry(connection, job)
             elif job["kind"].startswith("m3_"):
                 from .m3_service import M3Service
 
@@ -412,12 +428,31 @@ class Coordinator:
                 "SELECT * FROM job WHERE status='pending' AND NOT EXISTS "
                 "(SELECT 1 FROM job_dependency d JOIN job parent ON parent.id=d.depends_on_id "
                 "WHERE d.job_id=job.id AND parent.status!='completed') "
+                # Keep a chapter's media stages together, including jobs queued
+                # before this policy was introduced. Adoption, rather than job
+                # completion alone, releases the next stage and supports reuse.
+                "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
+                "JOIN m3_requirement r ON r.production_id=pj.production_id "
+                "WHERE pj.job_id=job.id AND r.artifact_id IS NULL AND ("
+                "(job.kind='m3_background' AND r.kind='m3_image') OR "
+                "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background')) OR "
+                "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_voice')))) "
                 "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
                 "JOIN m3_production p ON p.id=pj.production_id "
                 "JOIN m3_production root ON root.id=p.storyline_id "
                 "LEFT JOIN project_history_state h ON h.project_id=p.project_id "
                 "WHERE pj.job_id=job.id AND (root.control_state!='running' "
-                "OR h.production_frozen=1 OR h.production_id!=root.id)) "
+                "OR h.production_frozen=1 OR h.production_id!=root.id "
+                "OR (root.plan_approval_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM planning_draft dp "
+                "WHERE dp.id=h.planning_id AND dp.approved_plan_id=root.plan_approval_id)))) "
+                "AND NOT EXISTS (SELECT 1 FROM planning_job pj "
+                "JOIN planning_draft p ON p.id=pj.planning_id "
+                "LEFT JOIN project_history_state h ON h.project_id=p.project_id "
+                "JOIN m2_draft md ON md.project_id=p.project_id "
+                "WHERE pj.job_id=job.id AND (h.planning_id IS NULL OR h.planning_id!=p.id "
+                "OR p.active_job_id IS NULL OR p.active_job_id!=job.id OR p.revision!=pj.revision "
+                "OR json_extract(md.state,'$.draft.approved')!=1 "
+                "OR json_extract(md.state,'$.draft.approval.id')!=p.main_approval_id)) "
                 "ORDER BY priority DESC, created_at, id"
             )
             from packages.contracts.llm_settings import LLMCapability
@@ -433,7 +468,7 @@ class Coordinator:
                     return False
                 profile = payload.get("profile", {})
                 uses_llm = row["kind"] in {"m2_world", "m2_character", "m2_relationships",
-                                           "m2_image", "m3_narrative", "m3_image"}
+                                            "m2_image", "m3_narrative", "m3_image", "m3_plan"}
                 return (not uses_llm
                         or (not profile.get("common_settings_version") and not models)
                         or any(model.supports(profile) for model in models))
@@ -499,6 +534,26 @@ class Coordinator:
             )
             connection.execute("UPDATE worker SET last_seen_at=? WHERE id=?", (now, worker_id))
             return public({"lease_expires_at": expires})
+
+    def progress(self, job_id: str, worker_id: str, lease_id: str, value: dict) -> dict:
+        progress = JobProgress.model_validate(value).model_dump(mode="json", exclude_none=True)
+        with self.db.transaction() as connection:
+            job, attempt = self._lease(connection, job_id, worker_id, lease_id)
+            old = json.loads(job["progress"]) if job["progress"] else None
+            if old is not None and old["attempt"] == attempt["attempt"]:
+                incoming = progress["sequence"]
+                if incoming < old["sequence"]:
+                    raise ServiceError(409, "進捗が現在の記録より古くなっています。")
+                if incoming == old["sequence"]:
+                    previous = {key: item for key, item in old.items() if key not in {"attempt", "updated_at"}}
+                    if previous != progress:
+                        raise ServiceError(409, "同じ進捗番号の内容を変更できません。")
+                    return public(job)
+            now = self.clock()
+            progress.update(attempt=attempt["attempt"], updated_at=datetime.fromtimestamp(now, UTC).isoformat())
+            connection.execute("UPDATE job SET progress=? WHERE id=?",
+                               (json.dumps(progress, ensure_ascii=False), job_id))
+            return public(required(connection, "job", job_id))
 
     def fail(self, job_id: str, worker_id: str, lease_id: str, error: str) -> dict:
         with self.db.transaction() as connection:

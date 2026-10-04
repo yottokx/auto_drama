@@ -13,7 +13,7 @@ const { code } = await transformWithOxc(
   { target: 'es2022' },
 )
 const {
-  addCharacterDraft, approveDraft, confirmWorldDraft, createInitialWizardDraft, goToWizardStep,
+  addCharacterDraft, approveDraft, approvePlanDraft, confirmWorldDraft, createInitialWizardDraft, goToWizardStep, wizardStepLocked, wizardSetupBusy,
   readWizardDraft, removeCharacterDraft, requestDraftRevision, toggleCharacterLock, updateCharacterDraft, updateWorldDraft,
 } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 
@@ -90,24 +90,31 @@ test('removing a character drops only their relationship instructions and retain
   assert.deepEqual(loaded.relationshipInputs, draft.relationshipInputs)
 })
 
-test('production requires approval and remains reachable after viewing earlier steps', () => {
+test('production requires both main-cast and planning approval and remains reachable after viewing earlier steps', () => {
   const initial = createInitialWizardDraft()
   assert.equal(approveDraft(initial), null)
   assert.equal(goToWizardStep(initial, 'production').step, 'world-review')
   const confirmed = confirmWorldDraft(initial)
   assert.equal(goToWizardStep(confirmed, 'production').step, 'character-review')
   const approved = approveDraft(confirmed)
-  assert.equal(approved.step, 'production')
-  const reviewing = goToWizardStep(approved, 'world-input')
+  assert.equal(approved.step, 'planning-review')
+  assert.equal(goToWizardStep(approved, 'production').step, 'planning-review')
+  assert.equal(approvePlanDraft(initial), null)
+  assert.equal(approvePlanDraft(confirmed), null)
+  const planned = approvePlanDraft(approved)
+  assert.equal(planned.step, 'production')
+  const reviewing = goToWizardStep(planned, 'world-input')
   assert.equal(reviewing.approved, true)
   assert.equal(goToWizardStep(reviewing, 'production').step, 'production')
   assert.equal(reviewing.revision, approved.revision)
 })
 
 test('stored production and unknown steps recover safely without discarding the draft', () => {
-  const draft = approveDraft(confirmWorldDraft(updateWorldDraft(createInitialWizardDraft(), { prompt: '保存した世界の指示' })))
+  const draft = approvePlanDraft(approveDraft(confirmWorldDraft(updateWorldDraft(createInitialWizardDraft(), { prompt: '保存した世界の指示' }))))
   const load = patch => readWizardDraft({ version: 1, draft: { ...draft, ...patch } })
   assert.equal(load({}).step, 'production')
+  assert.equal(load({ planApproved: undefined }).step, 'planning-review')
+  assert.equal(load({ planApproved: undefined }).planApproved, false)
   assert.equal(load({ approved: false }).step, 'character-review')
   assert.equal(load({ worldConfirmed: false }).step, 'world-review')
   assert.equal(load({ worldConfirmed: false }).approved, false)
@@ -118,8 +125,8 @@ test('stored production and unknown steps recover safely without discarding the 
   assert.equal(load({ step: 'character-review' }).step, 'character-review')
 })
 
-test('changes requiring new approval leave production at the relevant review step', () => {
-  const approved = approveDraft(confirmWorldDraft(addCharacterDraft(createInitialWizardDraft(), 'character-2')))
+test('changes requiring new approval invalidate both approvals and leave production at the relevant review step', () => {
+  const approved = approvePlanDraft(approveDraft(confirmWorldDraft(addCharacterDraft(createInitialWizardDraft(), 'character-2'))))
   const cases = [
     [updateWorldDraft(approved, { prompt: '新しい舞台' }), 'world-input'],
     [updateCharacterDraft(approved, 'character-1', { settings: '人物の設定を更新' }), 'character-review'],
@@ -131,9 +138,30 @@ test('changes requiring new approval leave production at the relevant review ste
   ]
   for (const [changed, expectedStep] of cases) {
     assert.equal(changed.approved, false)
+    assert.equal(changed.planApproved, false)
     assert.equal(changed.step, expectedStep)
     assert.notEqual(goToWizardStep(changed, 'production').step, 'production')
   }
   assert.equal(updateCharacterDraft(approved, 'character-1', { settings: '' }), approved)
   assert.equal(updateWorldDraft(approved, { prompt: '' }), approved)
+})
+
+test('live step gates require new approval for a first production and preserve access to existing editions', () => {
+  const draft = { worldConfirmed: true, approved: true, planningRequired: true, planApproved: false, hasProduction: false }
+  assert.equal(wizardStepLocked('planning-review', draft), false)
+  assert.equal(wizardStepLocked('production', draft), true)
+  assert.equal(wizardStepLocked('production', { ...draft, hasProduction: true }), false)
+  assert.equal(wizardStepLocked('production', { ...draft, planApproved: true }), false)
+  assert.equal(wizardStepLocked('production', { ...draft, approved: false, planningRequired: false, hasProduction: true }), false)
+  assert.equal(wizardStepLocked('production', { ...draft, planningRequired: false, hasProduction: false }), false)
+  assert.equal(wizardStepLocked('production', { ...draft, approved: false, planningRequired: false, hasProduction: false }), true)
+  assert.equal(wizardStepLocked('planning-review', { ...draft, approved: false }), true)
+})
+
+test('obsolete planning and frozen production jobs do not block setup editing', () => {
+  const stale = [{ kind: 'm3_plan', status: 'pending' }, { kind: 'm3_narrative', status: 'pending' }, { kind: 'm3_image', status: 'running' }]
+  assert.equal(wizardSetupBusy(stale), false)
+  assert.equal(wizardSetupBusy([...stale, { kind: 'm2_image', status: 'completed' }]), false)
+  assert.equal(wizardSetupBusy([...stale, { kind: 'm2_character', status: 'pending' }]), true)
+  assert.equal(wizardSetupBusy([{ kind: 'm2_voice', status: 'running' }]), true)
 })

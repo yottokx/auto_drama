@@ -41,6 +41,20 @@ def replace_envelope(data, value):
     return changed.getvalue()
 
 
+def publish_first_chapter(client, project, worker):
+    """A new storyline waits for publication before queuing its next writer."""
+    state = production(client, project)
+    assert not state["chapters"][1]["jobs"]
+    while not state["chapters"][1]["jobs"]:
+        job = claim(client, worker)
+        assert job is not None and job["kind"] != "m3_narrative"
+        response = complete(client, worker, job)
+        assert response.status_code == 200, response.text
+        state = production(client, project)
+    assert state["chapters"][0]["status"] == "published"
+    return state
+
+
 def test_single_main_api_approval_reaches_script_setting_without_changing_snapshot(tmp_path):
     with TestClient(create_app(tmp_path / "coordinator")) as client:
         project, worker = approved(client)
@@ -81,6 +95,10 @@ def test_script_chapters_pin_profile_checkpoint_and_publish_with_media_after_res
         state = production(client, project)
         first_artifact = state["chapters"][0]["narrative_artifact_id"]
         first_bytes = client.get(f"/api/artifacts/{first_artifact}/content").content
+        # Reading the approved plot does not start another generation.
+        assert client.get(f"/api/m3/projects/{project}/plot").json()["plot"]
+        assert production(client, project)["total_jobs"] == state["total_jobs"]
+        state = publish_first_chapter(client, project, worker)
         second = state["chapters"][1]["jobs"][0]
         assert second["payload"]["script_checkpoint"] == saved["provenance"]["script_checkpoint"]
         assert second["payload"]["profile"] == payload["profile"]
@@ -88,9 +106,6 @@ def test_script_chapters_pin_profile_checkpoint_and_publish_with_media_after_res
         assert second["payload"]["generator_protocol"] == protocol
         assert second["payload"]["previous_state_hash"] is None
         assert second["payload"]["previous_narrative_artifact_id"] == first_artifact
-        # Reading a completed plot before any media are ready has no generation side effects.
-        assert client.get(f"/api/m3/projects/{project}/plot").json()["plot"]
-        assert production(client, project)["total_jobs"] == state["total_jobs"]
 
     with TestClient(create_app(tmp_path)) as client:
         finish(client, worker)
@@ -158,6 +173,7 @@ def test_script_second_chapter_rejects_wrong_adopted_predecessor(tmp_path, damag
         project, worker = approved(client)
         first = claim(client, worker)
         assert complete(client, worker, first).status_code == 200
+        publish_first_chapter(client, project, worker)
         writer = client.post("/api/workers", json={
             "name": "script writer", "capabilities": ["m3_narrative"],
         }).json()["id"]
@@ -186,7 +202,7 @@ def test_script_workflow_options_and_seed_are_frozen_for_later_chapters(tmp_path
             connection.execute("UPDATE job SET payload=? WHERE id=?", (json.dumps(payload), row["id"]))
         first = claim(client, worker)
         assert complete(client, worker, first).status_code == 200
-        state = production(client, project)
+        state = publish_first_chapter(client, project, worker)
         continued = state["chapters"][1]["jobs"][0]["payload"]
         for key in ("profiles", "workflow_limits", "script_options", "seed"):
             assert continued[key] == first["payload"][key]

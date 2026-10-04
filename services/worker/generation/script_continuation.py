@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 
+from packages.contracts.job_progress import ChapterPlanProgress
 from packages.contracts.m3 import (
     NarrativeResult,
     NarrativeScene,
@@ -31,6 +32,7 @@ from .draft_story import (
 from .llm import ContextBudgetError, write_json
 from .model_routing import RoutedLLM
 from .processes import gpu_lock
+from .progress import report_progress
 from .script_budget import scene_output_budget
 from .script_cast import (
     CAST_INSTRUCTION,
@@ -186,7 +188,11 @@ class ExistingStages:
 
     def validated(self, operation, *args):
         try:
-            return operation(self, *args)
+            result = operation(self, *args)
+            for key in self.run.state["steps"]:
+                if key.startswith(self.scope + "-"):
+                    self.run.progress_step(key, self.purpose, self.number, "completed")
+            return result
         except (ValueError, narrative.StructuredGenerationError) as error:
             if hasattr(self, "last_reply"):
                 self.run.reject_response(*self.last_reply, error)
@@ -195,6 +201,74 @@ class ExistingStages:
 
 class ScriptRun(DraftRun):
     """Reuse only the journal, budget and plain-text rendering mechanics."""
+
+    def progress_step(self, key, purpose, number, status, *, stage=None, chapter_plan=None, **counts):
+        if stage is None:
+            if key == "common-plan-revision":
+                stage = "revision"
+            elif "connections" in key or "relationship" in key:
+                stage = "relationships"
+            elif purpose == "script-cast":
+                stage = "cast_plan"
+            elif key.startswith(("plot-core", "story-chain")):
+                stage = "story_core"
+            elif key.startswith("outline"):
+                stage = "plot_plan"
+            else:
+                stage = {"script-outline": "plot", "script-allocation": "plot",
+                         "script-plan": "chapter_scene_plan", "script-scene": "script",
+                         "script-speech": "speech_extraction", "script-staging": "staging",
+                         "script-handoff": "memory"}.get(purpose)
+        if stage is None:
+            return
+        if purpose in {"script-speech", "script-staging"} and key.rsplit("-", 1)[-1].isalnum():
+            marker = "-speech-" if purpose == "script-speech" else "-staging-"
+            if marker in key:
+                key = key.rsplit("-", 1)[0]
+        phase = "planning" if self.manifest.get("execution_mode") == "planning" else "chapter"
+        row = {"id": key, "stage": stage, "status": status}
+        if phase == "chapter":
+            row["chapter_number"] = number
+        if key.startswith("plot-batch-"):
+            first = int(key.split("-")[2])
+            row.update(completed=min(first + 7, self.manifest["approved_chapter_count"])
+                       if status == "completed" else first - 1,
+                       total=self.manifest["approved_chapter_count"])
+        scene = getattr(self, "_progress_scene", None)
+        if scene and purpose in {"script-scene", "script-speech", "script-staging"}:
+            row.update(scene)
+            if status == "completed":
+                row["completed"] = row["scene_number"]
+        row.update(counts)
+        snapshot = self.state.setdefault("progress", {"schema_version": 1, "phase": phase,
+                                                       "current_step": None, "steps": []})
+        # The progress journal is observational and never enters the immutable
+        # input, semantic checkpoint, request cache or charged usage records.
+        snapshot["phase"] = phase
+        if chapter_plan is not None:
+            snapshot["chapter_plan"] = ChapterPlanProgress.model_validate(chapter_plan).model_dump(mode="json")
+        existing = next((item for item in snapshot["steps"] if item["id"] == key), None)
+        if existing is not None:
+            existing.update(row)
+        else:
+            snapshot["steps"].append(row)
+        snapshot["current_step"] = key if status != "completed" else None
+        self.persist()
+        report_progress(snapshot)
+
+    def restore_progress(self):
+        snapshot = self.state.get("progress")
+        if snapshot:
+            report_progress(snapshot)
+
+    def fail_progress(self):
+        snapshot = self.state.get("progress")
+        if snapshot and snapshot.get("current_step"):
+            key = snapshot["current_step"]
+            row = next(item for item in snapshot["steps"] if item["id"] == key)
+            row["status"] = "failed"
+            self.persist()
+            report_progress(snapshot)
 
     def _verify_chapters(self):
         super()._verify_chapters()
@@ -301,7 +375,9 @@ class ScriptRun(DraftRun):
         return ScriptOptions.model_validate(self.payload.get("script_options", {}))
 
     def cast_plan(self):
-        if self.manifest["approved_chapter_count"] != 3:
+        if (self.manifest["approved_chapter_count"] != 3
+                and "planning_protocol" not in self.manifest
+                and "approved_plan" not in self.manifest):
             return CastPlan(supporting_characters=[], everyday_context=[], connections=[])
         main = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
         record = self.state.get("cast_plan")
@@ -342,7 +418,10 @@ class ScriptRun(DraftRun):
                 value = candidate
             break
         if value is None:
-            value = self.structured("cast-plan", "script-cast", 1, CAST_INSTRUCTION, context,
+            instruction = CAST_INSTRUCTION
+            if "planning_protocol" in self.manifest:
+                instruction = instruction.replace("全3章では", f"全{self.manifest['approved_chapter_count']}章では")
+            value = self.structured("cast-plan", "script-cast", 1, instruction, context,
                                     CastPlan, prepare)
         data = value.model_dump(mode="json")
         record = {"plan": data, "sha256": digest(data), "input_sha256": self.manifest["input_sha256"],
@@ -350,6 +429,7 @@ class ScriptRun(DraftRun):
         write_json(self.output / "cast-plan.json", record)
         self.state["cast_plan"] = record
         self.persist()
+        self.progress_step("cast-plan", "script-cast", 1, "completed")
         return value
 
     def repair_cast_connections(self, value, main_ids, source_row=None):
@@ -449,10 +529,14 @@ class ScriptRun(DraftRun):
                 raise DraftExecutionError(f"{key}: " + row["validation_error"])
             if (row.get("material_hash") == material and row["status"] == "completed"
                     and not row.get("validation_error")):
+                self.progress_step(key, purpose, number, "running")
+                if "response_format" not in extra:
+                    self.progress_step(key, purpose, number, "completed")
                 return row["reply"]
         while len(self._current_attempts(step)) < 2:
             check_cancelled()
             self.check_budget(number)
+            self.progress_step(key, purpose, number, "running")
             self.llm.select_purpose(purpose)
             row = {"attempt": len(step["attempts"]) + 1, "chapter": number, "purpose": purpose,
                    "status": "pending", "profile": copy.deepcopy(self.llm.profile),
@@ -506,6 +590,8 @@ class ScriptRun(DraftRun):
                 self.llm.requests = self.state["request_ordinal"]
                 self.save("running")
             if row["status"] == "completed":
+                if "response_format" not in extra:
+                    self.progress_step(key, purpose, number, "completed")
                 return row["reply"]
             self.check_budget(number)
         raise DraftExecutionError(f"{key}: technical retry exhausted. "
@@ -523,6 +609,7 @@ class ScriptRun(DraftRun):
                    {"request": row["request"], "request_sha256": row["request_sha256"],
                     "response": reply, "error": description})
         self.persist()
+        self.progress_step(key, row["purpose"], row["chapter"], "failed")
 
     def structured(self, key, purpose, number, prompt, context, model, validate=None, schema=None):
         schema = schema or model.model_json_schema()
@@ -552,6 +639,10 @@ class ScriptRun(DraftRun):
                 step["accepted_request"] = row["request"]
                 step.pop("validation_error", None)
                 self.persist()
+                if purpose != "script-plan":
+                    # Chapter layout also needs the deterministic projection;
+                    # publish completion and its counts together after that.
+                    self.progress_step(key, purpose, number, "completed")
                 return value
             except ValueError as exc:
                 if rejected is not None:
@@ -596,6 +687,7 @@ class ScriptRun(DraftRun):
                 else:
                     step["core_cast_legacy_reused_request"] = row["request"]
                     self.persist()
+                    self.progress_step(key, purpose, number, "completed")
                     return value
             if cast_failure:
                 step["core_cast_replacement"] = replacement
@@ -699,7 +791,11 @@ class ScriptRun(DraftRun):
             row = committed[scope]
             if row["input_hash"] != identity or digest(row["scene"]) != row["sha256"]:
                 raise ValueError("Saved scene belongs to changed source material.")
-            return NarrativeScene.model_validate(row["scene"])
+            scene = NarrativeScene.model_validate(row["scene"])
+            for key, step in self.state["steps"].items():
+                if key.startswith(scope + "-") and step["attempts"]:
+                    self.progress_step(key, step["attempts"][-1]["purpose"], number, "completed")
+            return scene
         scene_context = scene_material(number, plan, context, following_plans)
         # The opening action is already in the first ScenePlan's first event.
         # Repeating a chapter-wide opening instruction would restart later scenes.
@@ -760,12 +856,16 @@ class ScriptRun(DraftRun):
                 self.reject_response(key, response, error)
             raise
         context_text = json.dumps(scene_context["setting"], ensure_ascii=False)
+        self.progress_step(scope + "-speech", "script-speech", number, "running")
         speech_llm = ExistingStages(self, scope + "-speech", "script-speech", number)
         separation, hints = speech_llm.validated(narrative.separate_speech, context_text, plan, raw, names)
         utterances = parse_scene_text(separation.raw_text, plan.id, set(plan.character_ids))
+        self.progress_step(scope + "-speech", "script-speech", number, "completed")
+        self.progress_step(scope + "-staging", "script-staging", number, "running")
         staging_llm = ExistingStages(self, scope + "-staging", "script-staging", number)
         staging = staging_llm.validated(narrative._staging, context_text + "\n読み上げない声の指示: "
                                      + json.dumps(hints, ensure_ascii=False), plan, utterances)
+        self.progress_step(scope + "-staging", "script-staging", number, "completed")
         utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
             "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None})
             for u, a in zip(utterances, staging.emotions, strict=True)]
@@ -805,7 +905,7 @@ class ScriptRun(DraftRun):
         if "plot" in self.state:
             plot = DetailedPlot.model_validate(self.state["plot"])
             check(plot)
-            if count == 3:
+            if count == 3 and not self.state.get("accepted_plan"):
                 chain = StoryChain.model_validate(self.state["story_chain"])
                 allocation = ChapterAllocation.model_validate(self.state["chapter_allocation"])
                 check_chain(chain, characters, available)
@@ -974,7 +1074,13 @@ class ScriptRun(DraftRun):
             ("最終章では、積み重ねた選択の結果として外的な課題と人物・関係の着地を描きます。"
              if number == self.manifest["approved_chapter_count"] else ""),
             planning_context, model, check, model.model_json_schema())
-        return project_plan(draft, self.options)
+        plan = project_plan(draft, self.options)
+        used_ids = {cid for scene in plan.scenes for cid in scene.character_ids}
+        main_ids = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
+        self.progress_step(f"plan-{number:03d}", "script-plan", number, "completed", chapter_plan={
+            "chapter_number": number, "scene_count": len(plan.scenes),
+            "supporting_character_count": len(used_ids - main_ids - {"NARRATOR"})})
+        return plan
 
     @property
     def storyline_id(self):
@@ -1041,9 +1147,12 @@ class ScriptRun(DraftRun):
             write_json(self.output / "chapters" / f"chapter-{number:03d}.plan.json", plan.model_dump(mode="json"))
             scenes = []
             for index, scene_plan in enumerate(plan.scenes):
+                self._progress_scene = {"scene_number": index + 1, "total": len(plan.scenes), "completed": index}
                 scenes.append(self.write_scene(number, scene_plan, context, scenes, names,
                                                plan.scenes[index + 1:], plan.scene_sizes[scene_plan.id]))
                 self.check_budget(number)
+            self._progress_scene = None
+            self.progress_step(f"validate-{number:03d}", "", number, "running", stage="validation")
             result = NarrativeResult(schema_version=1, workflow_version=2, workflow_policy=POLICY,
                 chapter_number=number, title=outline.chapters[number - 1].title, outline=outline,
                 supporting_characters=supporting, locations=plan.locations, scenes=scenes,
@@ -1067,6 +1176,7 @@ class ScriptRun(DraftRun):
             _text(self.output / "chapters" / f"chapter-{number:03d}.md", text)
             (self.output / "chapters" / f"chapter-{number:03d}.partial.md").unlink(missing_ok=True)
             self.save("running")
+            self.progress_step(f"validate-{number:03d}", "", number, "completed", stage="validation")
             self.check_budget(number)
 
     def run(self):

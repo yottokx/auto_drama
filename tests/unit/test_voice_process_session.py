@@ -41,6 +41,8 @@ for line in sys.stdin:
         while True:
             time.sleep(0.02)
     report = {"pid": os.getpid(), "request": request}
+    if "model_loaded_at_monotonic" in request:
+        report["model_loaded_at_monotonic"] = request["model_loaded_at_monotonic"]
     (output / "result.json").write_text(json.dumps(report), encoding="utf-8")
     if behavior != "incomplete":
         (output / "voice.wav").write_bytes(request.get("text", "音声").encode("utf-8"))
@@ -129,6 +131,86 @@ def test_precision_change_restarts_child_under_same_lease(runtime):
         assert previous.poll() is not None
         assert len(runtime.processes) == len(runtime.starts()) == 2
         assert runtime.events == [("acquire", "voice")]
+
+
+def test_idle_voice_reuse_does_not_extend_five_minutes_from_load(runtime, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
+    with voice_session.reuse_voice_runtime() as session:
+        first = runtime.run(session, runtime.output("first"))
+        elapsed[0] = 200
+        assert not session.expire_if_needed()
+        second = runtime.run(session, runtime.output("retake"))
+        assert first["pid"] == second["pid"]
+        elapsed[0] = 299.9
+        assert not session.expire_if_needed()
+        assert runtime.held
+        elapsed[0] = 300
+        assert session.expire_if_needed()
+        assert not session.expire_if_needed()
+        assert not runtime.held
+        assert runtime.processes[0].poll() is not None
+        runtime.run(session, runtime.output("after-timeout"))
+        assert len(runtime.starts()) == 2
+
+
+def test_voice_deadline_uses_completed_model_load_time(runtime, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
+    with voice_session.reuse_voice_runtime() as session:
+        request = session._request
+
+        def loaded_then_generated(*args):
+            request(*args)
+            elapsed[0] = 350
+
+        with monkeypatch.context() as initialization:
+            initialization.setattr(session, "_request", loaded_then_generated)
+            runtime.run(session, runtime.output("slow-load", model_loaded_at_monotonic=120))
+        assert not session.expire_if_needed()
+        elapsed[0] = 400
+        runtime.run(session, runtime.output("retake", model_loaded_at_monotonic=300))
+        elapsed[0] = 420
+        assert session.expire_if_needed()
+        assert len(runtime.starts()) == 1
+        assert not runtime.held
+
+
+def test_voice_expiring_during_inference_releases_at_scope_exit(runtime, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
+    with voice_session.reuse_voice_runtime() as session:
+        runtime.run(session, runtime.output("first"))
+        previous = session._process
+        request = session._request
+
+        def crossing_deadline(*args):
+            elapsed[0] = 301
+            assert not session.expire_if_needed()
+            assert previous.poll() is None
+            request(*args)
+            assert previous.poll() is None
+
+        monkeypatch.setattr(session, "_request", crossing_deadline)
+        elapsed[0] = 299
+        runtime.run(session, runtime.output("long-retake"))
+        assert previous.poll() is not None
+        assert not runtime.held
+        assert session._process is session._lease is None
+
+
+def test_new_voice_model_gets_its_own_load_deadline(runtime, monkeypatch):
+    elapsed = [0.0]
+    monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
+    with voice_session.reuse_voice_runtime() as session:
+        runtime.run(session, runtime.output("first"))
+        elapsed[0] = 250
+        runtime.run(session, runtime.output("new-model", model_precision="bf16"))
+        elapsed[0] = 300
+        assert not session.expire_if_needed()
+        elapsed[0] = 550
+        assert session.expire_if_needed()
+        assert len(runtime.starts()) == 2
 
 
 def test_design_small_to_clone_large_restarts_and_exits_previous_child(runtime):
@@ -223,7 +305,7 @@ def test_timeout_does_not_kill_unrelated_process(runtime):
         unrelated.wait(timeout=10)
 
 
-def test_long_large_voice_sequence_keeps_child_and_gpu_lease(runtime, monkeypatch):
+def test_long_large_voice_sequence_reloads_after_hard_deadline(runtime, monkeypatch):
     elapsed = [0.0]
     monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
     choice = {"provider_id": "irodori", "model_id": "irodori-v4-large", "precision": "bf16"}
@@ -233,11 +315,13 @@ def test_long_large_voice_sequence_keeps_child_and_gpu_lease(runtime, monkeypatc
             elapsed[0] = seconds
             runtime.run(session, runtime.output(f"line-{index}", mode="clone", num_steps=40,
                                                tts_profile=profile))
-        assert len(runtime.starts()) == 1
-        assert runtime.processes[0].poll() is None
-        assert runtime.events == [("acquire", "voice")]
-    assert runtime.processes[0].poll() is not None
-    assert runtime.events == [("acquire", "voice"), ("release", "voice")]
+        assert len(runtime.starts()) == 2
+        assert runtime.processes[0].poll() is not None
+        assert runtime.processes[1].poll() is None
+        assert runtime.events == [("acquire", "voice"), ("release", "voice"), ("acquire", "voice")]
+    assert all(process.poll() is not None for process in runtime.processes)
+    assert runtime.events == [("acquire", "voice"), ("release", "voice"),
+                              ("acquire", "voice"), ("release", "voice")]
 
 
 def test_disabled_or_absent_session_preserves_original_lease(runtime):

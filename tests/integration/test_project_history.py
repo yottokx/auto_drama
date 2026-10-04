@@ -269,6 +269,9 @@ def test_restore_rejects_pending_and_running_generation(tmp_path, stage):
             action(client, project, "retake", character_id="character-1", scope="image-retake")
         else:
             action(client, project, "approve")
+            from tests.integration.planning_fixtures import complete_and_approve_plan
+
+            complete_and_approve_plan(client, project_id(project))
             worker_id = client.post(
                 "/api/workers", json={"name": "history fixture", "capabilities": ["m3_narrative"]},
             ).json()["id"]
@@ -378,6 +381,9 @@ def test_restore_preproduction_revision_keeps_future_chapter_unselected(tmp_path
         baseline = history(client, project)
         identifier = project_id(project)
         action(client, project, "approve")
+        from tests.integration.planning_fixtures import complete_and_approve_plan
+
+        complete_and_approve_plan(client, identifier)
         worker_id = client.post(
             "/api/workers", json={"name": "history fixture", "capabilities": [
                 "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone",
@@ -413,6 +419,9 @@ def test_restored_project_rejects_retry_of_unselected_failed_production(tmp_path
         project, _ = ready(client)
         baseline = history(client, project)
         action(client, project, "approve")
+        from tests.integration.planning_fixtures import complete_and_approve_plan
+
+        complete_and_approve_plan(client, project_id(project))
         worker_id = client.post(
             "/api/workers", json={"name": "history fixture", "capabilities": ["m3_narrative"]},
         ).json()["id"]

@@ -153,6 +153,15 @@ def portrait_layouts(sources: Mapping[str, PortraitSource]) -> dict[str, Portrai
     heights = {
         key: sources[key].height_cm or DEFAULT_HUMANOID_HEIGHT_CM for key in humanoids
     }
+    pixels_per_cm, baseline = height_group_geometry(humanoids, heights)
+    for key, subject in humanoids.items():
+        scale = heights[key] * pixels_per_cm / subject.visible_height
+        layouts[key] = subject.layout(scale, baseline - subject.bottom * scale)
+    return layouts
+
+
+def height_group_geometry(subjects, heights):
+    """One shared physical-height scale and ground line, frozen by editions."""
     tallest, shortest = max(heights.values()), min(heights.values())
     # One group-wide scale preserves physical height ratios even when a broad
     # pose or the shortest character's shoulders constrain the composition.
@@ -160,10 +169,7 @@ def portrait_layouts(sources: Mapping[str, PortraitSource]) -> dict[str, Portrai
         768 / tallest,
         (420 - 56) / (tallest - 0.7 * shortest),
         *(380 * subject.visible_height / (subject.visible_width * heights[key])
-          for key, subject in humanoids.items()),
+          for key, subject in subjects.items()),
     )
     baseline = 56 + tallest * pixels_per_cm
-    for key, subject in humanoids.items():
-        scale = heights[key] * pixels_per_cm / subject.visible_height
-        layouts[key] = subject.layout(scale, baseline - subject.bottom * scale)
-    return layouts
+    return pixels_per_cm, baseline

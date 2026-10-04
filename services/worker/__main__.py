@@ -17,9 +17,26 @@ if __package__ in {None, ""}:
 import httpx
 
 from services.worker.client import WorkerClient
+from services.worker.generation import image_session, llm_session
 from services.worker.generation.voice_session import prepare_job, reuse_voice_runtime
 
 logger = logging.getLogger(__name__)
+
+
+def prepare_media_job(kind: str):
+    prepare_job(kind)
+    image_session.prepare_job(kind)
+    llm_session.prepare_job(kind)
+
+
+def maintain_runtimes(result: str, *sessions):
+    """Keep healthy resident models while idle; release unsafe attempts."""
+    for session in sessions:
+        if session is not None:
+            if result in {"failed", "stale"}:
+                session.close()
+            else:
+                session.expire_if_needed()
 
 
 def positive_seconds(value: str) -> float:
@@ -40,6 +57,7 @@ def main() -> int:
     parser.add_argument(
         "--no-voice-reuse", action="store_true", help="Reload Irodori for every voice job"
     )
+    parser.add_argument("--no-image-reuse", action="store_true", help="Reload Anima for every image job")
     parser.add_argument(
         "--export-only", action="store_true", help="Run M1 export without loading M2 configuration"
     )
@@ -79,6 +97,8 @@ def main() -> int:
     try:
         with (
             reuse_voice_runtime(enabled=not args.no_voice_reuse and not args.export_only) as voices,
+            image_session.reuse_image_runtime(enabled=not args.no_image_reuse and not args.export_only) as images,
+            llm_session.reuse_llm_runtime(enabled=not args.export_only) as llms,
             httpx.Client(base_url=args.coordinator, timeout=30.0, trust_env=False) as client,
             ExitStack() as download_stack,
         ):
@@ -88,13 +108,14 @@ def main() -> int:
                 generation_runner=generation_runner,
                 generation_kinds=generation_kinds,
                 work_dir=args.work_dir,
-                before_job=prepare_job,
+                before_job=prepare_media_job,
                 llm_models=llm_models,
                 refresh_capabilities=refresh_capabilities,
                 extra_capabilities=["tts_download"] if not args.export_only and not args.once else [],
             )
             downloads_started = False
             while True:
+                maintain_runtimes("idle", voices, images, llms)
                 try:
                     if not args.export_only and not args.once and not downloads_started:
                         from services.worker.tts_download_client import TTSDownloadAgent
@@ -112,12 +133,17 @@ def main() -> int:
                 except httpx.HTTPError as error:
                     logger.warning("Coordinator unavailable: %s", error)
                     result = "deferred"
-                if result != "completed" and voices is not None:
-                    voices.close()
+                maintain_runtimes(result, voices, images, llms)
                 if args.once:
                     return 0 if result in {"idle", "completed"} else 1
                 if result != "completed":
-                    time.sleep(args.poll_interval)
+                    # Service resident-model deadlines even with a long poll interval.
+                    remaining = args.poll_interval
+                    while remaining > 0:
+                        interval = min(remaining, 1.0)
+                        time.sleep(interval)
+                        remaining -= interval
+                        maintain_runtimes("idle", voices, images, llms)
     except KeyboardInterrupt:
         logger.info("Worker stopped; unfinished leases will recover on the coordinator")
         return 0

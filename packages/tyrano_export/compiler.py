@@ -11,7 +11,7 @@ import zipfile
 from packages.contracts import Script
 
 from .player import player_files
-from .portrait import PortraitSource, portrait_layouts
+from .presentation import BACKGROUND, MESSAGE_WINDOW, PORTRAIT_Z_INDEX, script_portrait_layouts
 
 ASSET_FOLDERS = {"background": "bgimage", "character": "fgimage", "audio": "sound"}
 
@@ -56,23 +56,20 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
     script = Script.model_validate(script.model_dump(mode="json"))
     characters = {value.id: value for value in script.characters}
     assets = {value.id: value for value in script.assets}
-    portraits = portrait_layouts({
-        character.id: PortraitSource(
-            images[character.image_asset_id], character.framing, character.height_cm,
-            character.body_bounds.model_dump() if character.body_bounds is not None else None,
-        )
-        for character in script.characters if character.image_asset_id
-    })
+    portraits = script_portrait_layouts(script, images)
+    window, padding = MESSAGE_WINDOW, MESSAGE_WINDOW["padding"]
     lines = [
         "; Auto Drama M1: source-only deterministic export.",
         '[loadjs storage="auto_drama_backlog.js"]',
         '[chara_config pos_mode="false" talk_focus="brightness"]',
         (
-            '[position layer="message0" left="20" top="440" width="920" height="180" '
-            'marginl="24" margint="18" marginr="24" marginb="18"]'
+            f'[position layer="message0" left="{window["left"]}" top="{window["top"]}" '
+            f'width="{window["width"]}" height="{window["height"]}" '
+            f'marginl="{padding["left"]}" margint="{padding["top"]}" '
+            f'marginr="{padding["right"]}" marginb="{padding["bottom"]}"]'
         ),
         '[layopt layer="message0" visible="true"]',
-        '[deffont size="24"]',
+        f'[deffont size="{window["font_size"]}"]',
     ]
     for character in sorted(script.characters, key=lambda value: value.id):
         if character.image_asset_id:
@@ -91,14 +88,16 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
             match direction.kind:
                 case "background":
                     filename = assets[direction.asset_id].filename
-                    result.append(f'[bg storage="{filename}" time="{direction.duration_ms}"]')
+                    position = f' position="{BACKGROUND["position"]}"' if script.portrait_baseline is not None else ""
+                    result.append(f'[bg storage="{filename}" time="{direction.duration_ms}"{position}]')
                 case "enter":
                     portrait = portraits[direction.character_id]
+                    z_index = f' zindex="{PORTRAIT_Z_INDEX}"' if script.portrait_baseline is not None else ""
                     result.append(
                         f'[chara_show name="ad_{direction.character_id}" '
                         f'left="{portrait.left(direction.position)}" top="{portrait.top}" '
                         f'width="{portrait.width}" height="{portrait.height}" '
-                        f'time="{direction.duration_ms}"]'
+                        f'time="{direction.duration_ms}"' + z_index + ']'
                     )
                 case "exit":
                     result.append(

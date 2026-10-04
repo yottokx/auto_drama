@@ -11,8 +11,9 @@ from pathlib import Path
 
 from packages.contracts.m3 import EMOTION_TAGS, M3_KINDS, GenerationEnvelope, Location
 
-from . import pipeline
+from . import image_session, pipeline
 from .cancellation import check_cancelled
+from .causal_runtime import digest
 from .llm import LocalLLM, write_json
 from .model_routing import RoutedLLM, model_configuration_identity
 from .narrative import (
@@ -28,7 +29,7 @@ from .workflow_version import generator_protocol
 def generation_kinds(available: list[str]) -> list[str]:
     kinds = []
     if "m2_world" in available:
-        kinds.append("m3_narrative")
+        kinds.extend(("m3_plan", "m3_narrative"))
     if "m2_image" in available:
         kinds.extend(("m3_background", "m3_image"))
     if "m2_voice" in available:
@@ -54,8 +55,8 @@ def generate_background(payload: dict, work: Path, config: dict) -> tuple[bytes,
         "--output-dir", str(output), "--width", "1280", "--height", "720",
         "--steps", str(settings["steps"]), "--guidance-scale", str(settings["guidance_scale"]),
         "--seed", str(payload["seed"])]
-    run_process(command, output / "runtime.log", cwd=pipeline.ROOT,
-                timeout=settings["timeout_seconds"])
+    runner = run_process if image_session.current_session() is None else image_session.run_image_process
+    runner(command, output / "runtime.log", cwd=pipeline.ROOT, timeout=settings["timeout_seconds"])
     report = json.loads((output / "result.json").read_text(encoding="utf-8"))
     if (report.get("mode") != "background" or report.get("prompt") != prompt
             or report.get("negative_prompt") != negative
@@ -65,6 +66,9 @@ def generate_background(payload: dict, work: Path, config: dict) -> tuple[bytes,
         "model": "Anima", "location_id": location.id, "source_description": location.description,
         **{key: report[key] for key in ("official_diffusers_revision", "runtime_commit", "versions",
             "prompt", "negative_prompt", "seed", "width", "height", "steps", "guidance_scale")},
+        "model_reused": report.get("model_reused", False),
+        **({"initialization_seconds": report["initialization_seconds"]}
+           if "initialization_seconds" in report else {}),
     }
 
 
@@ -84,13 +88,21 @@ def _media_job(job: dict, work: Path) -> bytes:
         payload["tts_emotion"] = emotion
     content = pipeline.generate_job(
         {**job, "kind": job["kind"].replace("m3_", "m2_", 1), "payload": payload}, work,
-        **({"supporting_portrait": True} if job["kind"] == "m3_image" else {}))
+        **({"supporting_portrait": True}
+           if job["kind"] == "m3_image" and not payload.get("adjustment") else {}))
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         envelope = json.loads(archive.read("result.json"))
         assets = {name: archive.read(name) for name in archive.namelist() if name != "result.json"}
     envelope["kind"] = job["kind"]
     purpose = {"m3_image": "supporting_image", "m3_voice": "supporting_reference_voice",
                "m3_voice_clone": "dialogue_voice"}[job["kind"]]
+    if payload.get("adjustment"):
+        purpose = "adjustment_" + {
+            "m3_image": "portrait", "m3_voice": "reference_voice",
+            "m3_voice_clone": "sample_voice" if payload["adjustment"].get("purpose") == "sample"
+            else "dialogue_voice",
+        }[job["kind"]]
+        envelope["provenance"]["adjustment"] = payload["adjustment"]
     envelope["provenance"]["purpose"] = purpose
     if job["kind"] == "m3_voice_clone":
         envelope["provenance"]["voice"].update({
@@ -106,11 +118,22 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     check_cancelled()
     kind, payload = job.get("kind"), job.get("payload")
     pipeline.voice_session.prepare_job(kind)
+    image_session.prepare_job(kind)
+    pipeline.llm_session.prepare_job(kind)
     if kind not in M3_KINDS or not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported M3 job or payload schema.")
     if type(payload.get("seed")) is not int or not 0 <= payload["seed"] < 2**63:
         raise ValueError("Invalid M3 generation seed.")
     script = kind == "m3_narrative" and payload.get("workflow_policy") == "script_continuation_v1"
+    plan = kind == "m3_plan"
+    if plan:
+        from packages.contracts.planning import planning_protocol
+
+        if (payload.get("planning_protocol") != planning_protocol()
+                or payload.get("workflow_policy") != "script_continuation_v1"
+                or payload.get("story_workflow_version") != 2
+                or payload.get("generator_protocol") != generator_protocol("causal", "script_continuation_v1")):
+            raise ValueError("Common planning requires its versioned planning and generator protocol.")
     if kind == "m3_narrative" and payload.get("workflow_policy") not in (None, "chapter_editor_v1", "script_continuation_v1"):
         raise ValueError("Unknown narrative workflow policy.")
     if script and (payload.get("story_workflow_version") != 2 or "generator_protocol" not in payload):
@@ -131,9 +154,9 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         return _media_job(job, work)
     from ..model_config import select_config
     config = pipeline.load_config()
-    if kind == "m3_narrative":
+    if kind in {"m3_plan", "m3_narrative"}:
         config = select_config(config, payload, pipeline.ROOT)
-    causal = kind == "m3_narrative" and payload.get("story_workflow_version") == 2
+    causal = kind in {"m3_plan", "m3_narrative"} and payload.get("story_workflow_version") == 2
     if causal:
         config = {**config, "model_configuration_identity": model_configuration_identity(pipeline.ROOT, config)}
     fingerprint = hashlib.sha256(json.dumps({"kind": kind, "payload": payload},
@@ -160,11 +183,16 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     provenance = {"provider": "local", "seed": payload["seed"],
                   "prompt_version": narrative_version if kind == "m3_narrative" else 1,
                   "input_sha256": fingerprint, "profile": payload.get("profile", {}),
-                  "purpose": "story_narrative" if kind == "m3_narrative" else "background_image"}
-    if kind == "m3_narrative":
+                  "purpose": "story_planning" if plan else "story_narrative" if kind == "m3_narrative" else "background_image"}
+    if kind in {"m3_plan", "m3_narrative"}:
         provenance["generator_protocol"] = {
             **generator_protocol("causal" if causal else "legacy", payload.get("workflow_policy")),
             "prompt": narrative_version}
+    if plan:
+        provenance["generator_protocol"] = planning_protocol()
+        provenance["planning_protocol"] = planning_protocol()
+        provenance["planning_id"] = payload.get("planning_id")
+        provenance["planning_revision"] = payload.get("planning_revision", 0)
     assets, trace, result = {}, [], {}
     script_run = None
     if script:
@@ -172,17 +200,25 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
 
         script_run = ProductionScriptRun(work / "script", config, payload)
         script_run.retry_failed_steps(job.get("retry_generation", 0))
-    with gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock",
-                  config["gpu_lock_timeout_seconds"]):
-        if kind == "m3_narrative":
+    elif plan:
+        from .planning_run import CommonPlanRun
+
+        script_run = CommonPlanRun(work / "script", config, payload)
+        script_run.retry_failed_steps(job.get("retry_generation", 0))
+    with image_session.gpu_scope(kind, gpu_lock(
+            pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"])):
+        if kind in {"m3_plan", "m3_narrative"}:
             # Existing M3 jobs replay their exact v4 request cache; state-aware
             # prompts have an independent namespace and never overwrite it.
-            llm_work = work / "script" / "llm" if script else work / (f"llm-v{narrative_version}" if continuous or causal else "llm")
+            llm_work = work / "script" / "llm" if script or plan else work / (f"llm-v{narrative_version}" if continuous or causal else "llm")
             replay = (work / "llm-v5",) if continuous and narrative_version == 6 else ()
             llm_type = RoutedLLM if causal else LocalLLM
             with llm_type(pipeline.ROOT, config, payload, llm_work, replay_outputs=replay) as llm:
                 try:
-                    if script_run is not None:
+                    if plan:
+                        result = script_run.execute(llm)
+                        provenance["plan_sha256"] = digest(result)
+                    elif script_run is not None:
                         result, provenance["script_checkpoint"] = script_run.execute(llm)
                     else:
                         result = generate_narrative(payload, llm)

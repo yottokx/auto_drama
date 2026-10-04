@@ -17,7 +17,8 @@ export type Relationships = { result: { pairs: RelationshipPair[] } | null; arti
 export type M2Draft = {
   revision: number; step: WizardStep; worldInput: WorldBrief; worldResult: WorldBrief | null
   worldConfirmed: boolean; worldPendingChanges?: boolean; characters: M2Character[]
-  approved: boolean; hasProduction?: boolean; approval: Record<string, unknown> | null; requests: RevisionRequest[]
+  approved: boolean; hasProduction?: boolean; planningRequired?: boolean; planApproved?: boolean
+  approval: Record<string, unknown> | null; requests: RevisionRequest[]
   activeJobId?: string | null; remainingJobCount?: number
   relationshipInputs?: RelationshipInput[]; relationships?: Relationships
 }
@@ -45,6 +46,7 @@ export function useM2Api() {
     if (selectedRef.current !== next.project.id) return
     // A server upgraded from the four-step flow can still return a saved old step.
     if ((next.draft.step as string) === 'character-input') next = { ...next, draft: { ...next.draft, step: 'world-input' } }
+    if (next.draft.step === 'production' && next.draft.planningRequired && !next.draft.planApproved && !next.draft.hasProduction) next = { ...next, draft: { ...next.draft, step: 'planning-review' } }
     // A poll sent before a mutation may return late. Never replace a newer revision.
     if (detailRef.current?.project.id === next.project.id && detailRef.current.draft.revision > next.draft.revision) return
     detailRef.current = next; setDetail(next)

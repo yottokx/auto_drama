@@ -2,13 +2,14 @@
 
 M1・M2・M3の軽量テストはGPUや実モデルを起動しません。リポジトリルートから実行します。
 
-フロントエンドの3段階の状態遷移・旧保存値の移行・未確定への戻しは `npm --prefix apps/web test` で検査します。既存のViteを使ってTypeScriptをメモリ内で変換するため、新たなテストランタイムは不要です。`integration/test_m2_combined_brief.py` は世界観・人物・関係性の一括保存、世界観確定後の自動生成、重複防止、変更時の再確認と既存承認版の保持を検査します。
+フロントエンドの5段階の状態遷移・旧保存値の移行・未確定への戻しは `npm --prefix apps/web test` で検査します。既存のViteを使ってTypeScriptをメモリ内で変換するため、新たなテストランタイムは不要です。`integration/test_m2_combined_brief.py` は世界観・人物・関係性の一括保存、世界観確定後の自動生成、重複防止、変更時の再確認と既存承認版の保持を検査します。
 
 ```powershell
-& .\.venv\Scripts\python.exe -m pytest -q --basetemp (Join-Path 'tmp' ('pytest-' + [guid]::NewGuid().ToString('N')))
+& .\.venv\Scripts\python.exe -m pytest -q tests/unit --basetemp (Join-Path 'tmp' ('pytest-' + [guid]::NewGuid().ToString('N')))
+& .\.venv\Scripts\python.exe -m pytest -q tests/integration --basetemp (Join-Path 'tmp' ('pytest-' + [guid]::NewGuid().ToString('N')))
 ```
 
-一時ディレクトリをリポジトリ内に限定し、実行ごとに新しい名前を付けます。これによりWindowsで既存のOS一時ディレクトリのACLに影響されません。テスト結果は `tmp/` に残り、Git対象外です。
+同名のテストモジュールがあるため、unitとintegrationは別々に実行します。一時ディレクトリをリポジトリ内に限定し、実行ごとに新しい名前を付けます。これによりWindowsで既存のOS一時ディレクトリのACLに影響されません。テスト結果は `tmp/` に残り、Git対象外です。
 
 - `unit/test_contracts_export.py`: schema・参照・パス・本文のエスケープ・ZIP再現性。Node.jsとローカルティラノがある場合はネイティブのパーサー・タグ処理も検証し、ない環境ではその検査だけskipします。
 - `unit/test_worker.py`: HTTPワーカーの取得・ハッシュ検査・heartbeat・通信失敗・古いリース・完了の再送。

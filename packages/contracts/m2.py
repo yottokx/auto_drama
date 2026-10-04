@@ -11,7 +11,7 @@ from .script import Contract, HeightCm
 Text = Annotated[str, StringConstraints(max_length=30_000)]
 ResultText = Annotated[str, StringConstraints(min_length=1, max_length=30_000)]
 CharacterId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")]
-Step = Literal["world-input", "world-review", "character-input", "character-review", "production"]
+Step = Literal["world-input", "world-review", "character-input", "character-review", "planning-review", "production"]
 Scope = Literal["settings", "appearance", "voice"]
 Kind = Literal[
     "m2_world", "m2_character", "m2_image", "m2_voice", "m2_relationships", "m2_voice_clone"

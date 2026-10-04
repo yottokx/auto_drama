@@ -149,6 +149,8 @@ def test_reuses_verified_weights_but_not_speaker_caption_or_seed(tmp_path, fake_
     assert all(request.num_steps == 30 for request in fake_irodori.sampling)
     reports = [json.loads((output / "result.json").read_text()) for output in outputs]
     assert [report["model_reused"] for report in reports] == [False, True, True]
+    assert len({report["model_loaded_at_monotonic"] for report in reports}) == 1
+    assert reports[0]["model_loaded_at_monotonic"] == session.loaded_at
     assert all(report["runtime_pid"] == os.getpid() for report in reports)
     assert reports[0]["timings"]["initialization_seconds"] >= 0
     assert all(report["timings"]["initialization_seconds"] == 0 for report in reports[1:])

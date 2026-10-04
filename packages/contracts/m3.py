@@ -21,7 +21,7 @@ from .story_workflow import (
 
 Text = Annotated[str, StringConstraints(min_length=1, max_length=30_000)]
 Emotion = Literal["neutral", "happy", "sad", "angry", "surprised", "afraid", "calm"]
-M3_KINDS = ("m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone")
+M3_KINDS = ("m3_plan", "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone")
 EMOTION_TAGS = {
     "neutral": "", "happy": "😊", "sad": "😢", "angry": "😠",
     "surprised": "😮", "afraid": "😟", "calm": "",
@@ -261,7 +261,7 @@ class NarrativeResult(Contract):
 
 class GenerationEnvelope(Contract):
     schema_version: Literal[1]
-    kind: Literal["m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone"]
+    kind: Literal["m3_plan", "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone"]
     result: dict
     provenance: dict
     trace: list = Field(max_length=10_000)

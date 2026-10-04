@@ -1,0 +1,14 @@
+.generation-progress-list { display: grid; gap: 7px; margin: 16px 0 0; padding: 0; list-style: none; }
+.generation-progress-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e5e1d7; border-radius: 8px; background: #fffefa; color: #716c61; font-size: 13px; line-height: 1.6; }
+.generation-progress-marker { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #efede7; font-size: 14px; font-weight: 600; }
+.generation-progress-label { overflow-wrap: anywhere; }
+.generation-progress-status { font-size: 11px; white-space: nowrap; }
+.generation-progress-running { border-color: #c6bd9c; background: #f7f2e4; color: #655530; }
+.generation-progress-running .generation-progress-marker { color: #fff; background: #9c8652; }
+.generation-progress-completed { color: #506647; }
+.generation-progress-completed .generation-progress-marker { background: #e4eddd; }
+.generation-progress-failed { border-color: #e2bbb2; background: #fff4f0; color: #954d3e; }
+.generation-progress-failed .generation-progress-marker { background: #f5dfd7; }
+.generation-progress-skipped { color: #898378; }
+.generation-progress-paused { color: #77736a; background: #f1efea; }
+@media (max-width: 600px) { .generation-progress-item { gap: 8px; padding: 9px; font-size: 12px; } .generation-progress-status { font-size: 10px; } }

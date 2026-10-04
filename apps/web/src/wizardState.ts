@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RelationshipInput } from './m2Api'
 
-export type WizardStep = 'world-input' | 'world-review' | 'character-review' | 'production'
+export type WizardStep = 'world-input' | 'world-review' | 'character-review' | 'planning-review' | 'production'
 export type RevisionScope = 'world' | 'all' | 'settings' | 'appearance' | 'voice' | 'image-retake' | 'voice-retake'
 export type CharacterScope = 'settings' | 'appearance' | 'voice'
 
@@ -47,6 +47,7 @@ export interface WizardDraft {
   relationshipInputs?: RelationshipInput[]
   worldConfirmed: boolean
   approved: boolean
+  planApproved?: boolean
   step: WizardStep
   requests: RevisionRequest[]
   revision: number
@@ -56,7 +57,7 @@ export const WIZARD_STORAGE_KEY = 'auto-drama:m2-wizard:v1'
 const LEGACY_STORAGE_KEY = 'auto-drama:m2-ui-preview:v1'
 const STORAGE_VERSION = 1
 const characterScopes: CharacterScope[] = ['settings', 'appearance', 'voice']
-const steps: WizardStep[] = ['world-input', 'world-review', 'character-review', 'production']
+const steps: WizardStep[] = ['world-input', 'world-review', 'character-review', 'planning-review', 'production']
 const revisionScopes: RevisionScope[] = ['world', 'all', 'settings', 'appearance', 'voice', 'image-retake', 'voice-retake']
 const worldTextFields = ['title', 'prompt', 'genre', 'mood', 'notes', 'setting'] as const
 const characterTextFields = ['name', 'age', 'gender', 'role', 'freeform', 'settings', 'appearance', 'voice'] as const
@@ -83,10 +84,27 @@ function isStep(value: unknown): value is WizardStep {
   return typeof value === 'string' && steps.includes(value as WizardStep)
 }
 
-function accessibleStep(step: unknown, worldConfirmed: boolean, approved: boolean): WizardStep {
-  if (step === 'production') return !worldConfirmed ? 'world-review' : approved ? 'production' : 'character-review'
+function accessibleStep(step: unknown, worldConfirmed: boolean, approved: boolean, planApproved = false): WizardStep {
+  if (step === 'planning-review' || step === 'production') {
+    if (!worldConfirmed) return 'world-review'
+    if (!approved) return 'character-review'
+    return step === 'production' && planApproved ? 'production' : 'planning-review'
+  }
   if (step === 'character-review' && !worldConfirmed) return 'world-review'
   return isStep(step) ? step : 'world-input'
+}
+
+export function wizardStepLocked(step: WizardStep, draft: {
+  worldConfirmed: boolean; approved: boolean; planApproved?: boolean; planningRequired?: boolean; hasProduction?: boolean
+}): boolean {
+  if (step === 'character-review') return !draft.worldConfirmed
+  if (step === 'planning-review') return !draft.approved
+  if (step === 'production') return !draft.hasProduction && (!draft.approved || (draft.planningRequired !== false && !draft.planApproved))
+  return false
+}
+
+export function wizardSetupBusy(jobs: { kind: string; status: string }[]): boolean {
+  return jobs.some(job => job.kind.startsWith('m2_') && (job.status === 'pending' || job.status === 'running'))
 }
 
 function isScope(value: unknown): value is RevisionScope {
@@ -107,6 +125,7 @@ export function createInitialWizardDraft(): WizardDraft {
     relationshipInputs: [],
     worldConfirmed: false,
     approved: false,
+    planApproved: false,
     step: 'world-input',
     requests: [],
     revision: 1,
@@ -188,7 +207,8 @@ export function readWizardDraft(value: unknown): WizardDraft | null {
     relationshipInputs,
     worldConfirmed: draft.worldConfirmed,
     approved: draft.worldConfirmed && draft.approved,
-    step: accessibleStep(draft.step, draft.worldConfirmed, draft.approved),
+    planApproved: draft.worldConfirmed && draft.approved && draft.planApproved === true,
+    step: accessibleStep(draft.step, draft.worldConfirmed, draft.approved, draft.planApproved === true),
     requests,
     revision: draft.revision,
   }
@@ -231,8 +251,8 @@ export function updateWorldDraft(draft: WizardDraft, patch: Partial<WorldBrief>)
   if (positiveInteger(patch.chapterCount)) world.chapterCount = patch.chapterCount
   if (worldTextFields.every(key => world[key] === draft.world[key]) && world.chapterCount === draft.world.chapterCount) return draft
   return {
-    ...draft, world, worldConfirmed: false, approved: false, revision: draft.revision + 1,
-    step: draft.step === 'character-review' || draft.step === 'production' ? 'world-input' : draft.step,
+    ...draft, world, worldConfirmed: false, approved: false, planApproved: false, revision: draft.revision + 1,
+    step: draft.step === 'character-review' || draft.step === 'planning-review' || draft.step === 'production' ? 'world-input' : draft.step,
   }
 }
 
@@ -241,13 +261,13 @@ export function confirmWorldDraft(draft: WizardDraft): WizardDraft {
 }
 
 export function goToWizardStep(draft: WizardDraft, step: WizardStep): WizardDraft {
-  const nextStep = accessibleStep(step, draft.worldConfirmed, draft.approved)
+  const nextStep = accessibleStep(step, draft.worldConfirmed, draft.approved, draft.planApproved)
   return draft.step === nextStep ? draft : { ...draft, step: nextStep }
 }
 
 export function addCharacterDraft(draft: WizardDraft, id: string): WizardDraft {
   if (!id.trim() || draft.characters.length >= 3 || draft.characters.some(character => character.id === id)) return draft
-  return { ...draft, characters: [...draft.characters, createCharacterBrief(id)], worldConfirmed: false, approved: false, step: accessibleStep(draft.step, false, false), revision: draft.revision + 1 }
+  return { ...draft, characters: [...draft.characters, createCharacterBrief(id)], worldConfirmed: false, approved: false, planApproved: false, step: accessibleStep(draft.step, false, false), revision: draft.revision + 1 }
 }
 
 export function updateCharacterDraft(draft: WizardDraft, id: string, patch: CharacterPatch): WizardDraft {
@@ -264,7 +284,7 @@ export function updateCharacterDraft(draft: WizardDraft, id: string, patch: Char
   const characters = [...draft.characters]
   characters[index] = next
   const worldConfirmed = draft.step === 'world-input' ? false : draft.worldConfirmed
-  return { ...draft, characters, worldConfirmed, approved: false, step: accessibleStep(draft.step, worldConfirmed, false), revision: draft.revision + 1 }
+  return { ...draft, characters, worldConfirmed, approved: false, planApproved: false, step: accessibleStep(draft.step, worldConfirmed, false), revision: draft.revision + 1 }
 }
 
 export function removeCharacterDraft(draft: WizardDraft, id: string): WizardDraft {
@@ -276,6 +296,7 @@ export function removeCharacterDraft(draft: WizardDraft, id: string): WizardDraf
     requests: draft.requests.filter(request => request.characterId !== id),
     worldConfirmed: false,
     approved: false,
+    planApproved: false,
     step: accessibleStep(draft.step, false, false),
     revision: draft.revision + 1,
   }
@@ -289,6 +310,7 @@ export function toggleCharacterLock(draft: WizardDraft, id: string, scope: Chara
       ? { ...character, locked: { ...character.locked, [scope]: !character.locked[scope] } }
       : character),
     approved: false,
+    planApproved: false,
     step: accessibleStep(draft.step, draft.worldConfirmed, false),
     revision: draft.revision + 1,
   }
@@ -320,13 +342,18 @@ export function requestDraftRevision(
       ...(scope !== 'world' ? { characterId } : {}),
     }],
     approved: false,
+    planApproved: false,
     revision: draft.revision + 1,
     ...(scope === 'world' ? { worldConfirmed: false, step: 'world-review' as const } : { step: accessibleStep(draft.step, draft.worldConfirmed, false) }),
   }
 }
 
 export function approveDraft(draft: WizardDraft): WizardDraft | null {
-  return draft.worldConfirmed && draft.characters.length > 0 ? { ...draft, approved: true, step: 'production' } : null
+  return draft.worldConfirmed && draft.characters.length > 0 ? { ...draft, approved: true, planApproved: false, step: 'planning-review' } : null
+}
+
+export function approvePlanDraft(draft: WizardDraft): WizardDraft | null {
+  return draft.worldConfirmed && draft.approved ? { ...draft, planApproved: true, step: 'production' } : null
 }
 
 function loadDraft(sample?: WizardDraft): { draft: WizardDraft; storageAvailable: boolean } {
@@ -378,7 +405,7 @@ export function useWizardState(sample?: WizardDraft) {
   const updateRelationships = useCallback((relationshipInputs: RelationshipInput[]) => {
     const current = currentDraft.current
     if (JSON.stringify(current.relationshipInputs ?? []) === JSON.stringify(relationshipInputs)) return
-    commit({ ...current, relationshipInputs, worldConfirmed: false, approved: false, step: accessibleStep(current.step, false, false), revision: current.revision + 1 })
+    commit({ ...current, relationshipInputs, worldConfirmed: false, approved: false, planApproved: false, step: accessibleStep(current.step, false, false), revision: current.revision + 1 })
   }, [commit])
   const confirmWorld = useCallback(() => commit(confirmWorldDraft(currentDraft.current)), [commit])
   const goTo = useCallback((step: WizardStep) => commit(goToWizardStep(currentDraft.current, step)), [commit])
@@ -403,5 +430,12 @@ export function useWizardState(sample?: WizardDraft) {
     return true
   }, [commit])
 
-  return { draft, storageAvailable, updateWorld, updateRelationships, confirmWorld, goTo, addCharacter, updateCharacter, removeCharacter, toggleLock, requestRevision, approve }
+  const approvePlan = useCallback((): boolean => {
+    const next = approvePlanDraft(currentDraft.current)
+    if (!next) return false
+    commit(next)
+    return true
+  }, [commit])
+
+  return { draft, storageAvailable, updateWorld, updateRelationships, confirmWorld, goTo, addCharacter, updateCharacter, removeCharacter, toggleLock, requestRevision, approve, approvePlan }
 }

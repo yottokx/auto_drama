@@ -1,6 +1,7 @@
 """Player upgrades reuse adopted content and retain every published build."""
 
 import io
+import json
 import sqlite3
 from zipfile import ZipFile
 
@@ -12,7 +13,7 @@ from services.coordinator import database
 from services.coordinator.app import create_app
 from services.coordinator.m3_service import M3Service
 from services.coordinator.service import Coordinator
-from tests.integration.test_m3 import approved, finish, production
+from tests.integration.test_m3 import approved, finish, pin_legacy_production, production
 
 
 def revise_player(monkeypatch):
@@ -119,6 +120,7 @@ def test_migration_preserves_existing_published_build(tmp_path, monkeypatch):
         patch.setattr(M3Service, "_next_chapter", lambda *args: None)
         with TestClient(create_app(coordinator=coordinator)) as client:
             project, worker = approved(client)
+            pin_legacy_production(client, project)
             finish(client, worker)
             old = production(client, project)
             bundle = client.get(old["export_url"]).content
@@ -140,10 +142,19 @@ def test_migration_preserves_existing_published_build(tmp_path, monkeypatch):
             connection.execute(f"ALTER TABLE {table}_legacy RENAME TO {table}")
         # Remove all tables introduced after this historical schema, including
         # current TTS management state populated by the fixture runtime.
-        for table in ("tts_worker_inventory", "tts_download", "tts_settings", "llm_settings"):
+        for table in ("tts_worker_inventory", "tts_download", "tts_settings", "llm_settings",
+                      "planning_job", "planning_approval", "planning_draft", "edition_build",
+                      "publication_edition", "adjustment_job", "adjustment_candidate",
+                      "adjustment_apply", "adjustment_draft"):
             connection.execute(f"DROP TABLE {table}")
+        state = json.loads(connection.execute("SELECT state FROM m2_draft WHERE project_id=?", (project,)).fetchone()[0])
+        state["draft"].pop("planningRequired", None)
+        state["draft"].pop("planApproved", None)
+        state["wizardStepVersion"] = 2
+        connection.execute("UPDATE m2_draft SET state=? WHERE project_id=?", (json.dumps(state), project))
         connection.execute("ALTER TABLE worker DROP COLUMN llm_models")
         connection.execute("ALTER TABLE job DROP COLUMN retry_generation")
+        connection.execute("ALTER TABLE job DROP COLUMN progress")
         connection.execute("DELETE FROM schema_migration WHERE version>=4")
     with TestClient(create_app(data_dir)) as client:
         migrated = production(client, project)

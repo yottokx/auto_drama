@@ -1,4 +1,4 @@
-"""Ephemeral pinned Gemma server, structured output and persisted request cache."""
+"""Pinned local LLM, structured output and job-specific persisted request cache."""
 from __future__ import annotations
 
 import hashlib
@@ -10,9 +10,14 @@ import urllib.request
 from pathlib import Path
 
 from ..model_config import model_base, runtime_paths
-from .cancellation import check_cancelled
-from .context_budget import ContextPolicy, OutputTokenPolicy, positive_integer, server_context_from_properties
-from .processes import owned_process
+from .cancellation import check_cancelled, register_cancel_callback
+from .context_budget import (
+    ContextPolicy,
+    OutputTokenPolicy,
+    positive_integer,
+    server_context_from_properties,
+)
+from .processes import kill_owned_process, owned_process
 from .random_tools import TOOL_DEFINITIONS, RandomTools
 from .schemas import validate_schema
 
@@ -37,6 +42,8 @@ class LocalLLM:
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.base_url = ""
         self._owner = None
+        self._resident_session = None
+        self._cancel_scope = None
         self.process = None
         self.server_context_size: int | None = None
         self._launch_context_size: int | None = None
@@ -146,6 +153,57 @@ class LocalLLM:
     def __enter__(self):
         check_cancelled()
         self.output.mkdir(parents=True, exist_ok=True)
+        self.deadline = time.monotonic() + self.config["llm"]["total_timeout_seconds"]
+        from .llm_session import current_session
+
+        session = current_session()
+        if session is not None and session.enabled:
+            self._resident_session = session
+            try:
+                session.attach(self)
+                self._register_runtime_cancel()
+                return self
+            except BaseException:
+                self._remove_runtime_cancel()
+                session.close()
+                raise
+        return self._start_runtime()
+
+    def _runtime_key(self) -> str:
+        """Only launch settings identify weights; sampling and job state stay local."""
+        model, server = runtime_paths(self.root, self.config, self.base)
+        files = {str(path): {"size": path.stat().st_size, "modified": path.stat().st_mtime_ns}
+                 for path in (model, server)}
+        identity = {"files": files, "base": self.base,
+                    "context_size": self._startup_context_size(),
+                    "reasoning_budget_tokens": self.profile.get("reasoning_budget_tokens")}
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+    def _register_runtime_cancel(self):
+        if self._cancel_scope is not None:
+            return
+        process = self.process
+
+        def interrupt():
+            child_job = getattr(process, "_owned_child_job", None)
+            if child_job is not None:
+                kill_owned_process(process, child_job)
+            elif process.poll() is None:
+                process.kill()
+
+        self._cancel_scope = register_cancel_callback(interrupt)
+        try:
+            self._cancel_scope.__enter__()
+        except BaseException:
+            self._cancel_scope = None
+            raise
+
+    def _remove_runtime_cancel(self):
+        scope, self._cancel_scope = self._cancel_scope, None
+        if scope is not None:
+            scope.__exit__(None, None, None)
+
+    def _start_runtime(self, *, persistent: bool = False):
         model, server = runtime_paths(self.root, self.config, self.base)
         if model.stat().st_size != self.base["model"]["size_bytes"]:
             raise ValueError("Pinned local model size mismatch.")
@@ -164,12 +222,16 @@ class LocalLLM:
         reasoning_budget = self.profile.get("reasoning_budget_tokens")
         if reasoning_budget is not None:
             command.extend(("--reasoning-budget", str(reasoning_budget)))
-        self.deadline = time.monotonic() + self.config["llm"]["total_timeout_seconds"]
+        options = {"timeout": self.config["llm"]["total_timeout_seconds"]}
+        if persistent:
+            options.update(timeout=None, cancellable=False)
         self._owner = owned_process(command, self.output / "llama-server.log", cwd=server.parent,
-                                    timeout=self.config["llm"]["total_timeout_seconds"])
+                                    **options)
         load_started = time.monotonic()
         try:
             self.process = self._owner.__enter__()
+            if persistent:
+                self._register_runtime_cancel()
             health_deadline = time.monotonic() + self.config["llm"]["startup_timeout_seconds"]
             while time.monotonic() < health_deadline:
                 check_cancelled()
@@ -193,15 +255,35 @@ class LocalLLM:
         except BaseException:
             self.trace.append({"type": "model_startup_failed", "elapsed_seconds":
                                time.monotonic() - load_started})
+            self._remove_runtime_cancel()
             if self.process is not None:
-                self._owner.__exit__(*__import__("sys").exc_info())
+                self._stop_runtime(*__import__("sys").exc_info())
             write_json(self.output / "llm-metrics.json", self.trace)
             raise
 
     def __exit__(self, *args):
+        session = self._resident_session
+        if session is None:
+            return self._stop_runtime(*args)
+        try:
+            if args[0] is None:
+                check_cancelled()
+        except BaseException:
+            args = __import__("sys").exc_info()
+            raise
+        finally:
+            self._remove_runtime_cancel()
+            session.detach(self, args)
+            self.trace.append({"type": "model_retained", "retained": session._backend is not None})
+            write_json(self.output / "llm-metrics.json", self.trace)
+
+    def _stop_runtime(self, *args):
+        owner, self._owner = self._owner, None
+        if owner is None:
+            return
         started = time.monotonic()
         try:
-            return self._owner.__exit__(*args)
+            return owner.__exit__(*args)
         finally:
             self.trace.append({"type": "model_release", "elapsed_seconds":
                                time.monotonic() - started})

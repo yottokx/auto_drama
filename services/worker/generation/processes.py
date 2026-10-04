@@ -6,7 +6,7 @@ import signal
 import subprocess
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from scripts.m0.llm_smoke import WindowsChildJob
@@ -80,7 +80,8 @@ def kill_owned_process(process, child_job):
 
 
 @contextmanager
-def owned_process(command: list[str], log: Path, *, cwd: Path, timeout: float):
+def owned_process(command: list[str], log: Path, *, cwd: Path, timeout: float | None,
+                  cancellable: bool = True):
     """Kill-on-close Windows job object protects against supervisor termination."""
     check_cancelled()
     child_job = WindowsChildJob()
@@ -98,19 +99,26 @@ def owned_process(command: list[str], log: Path, *, cwd: Path, timeout: float):
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 start_new_session=os.name != "nt")
             child_job.assign(process)
+            # Resident runtimes register cancellation only while a job uses
+            # them, rather than retaining the token of their first job.
+            process._owned_child_job = child_job
 
             def terminate_after_limit():
                 if process.poll() is None:
                     timed_out.set()
                     process.kill()
 
-            timer = threading.Timer(timeout, terminate_after_limit)
-            timer.daemon = True
-            timer.start()
-            with register_cancel_callback(lambda: kill_owned_process(process, child_job)):
+            if timeout is not None:
+                timer = threading.Timer(timeout, terminate_after_limit)
+                timer.daemon = True
+                timer.start()
+            scope = (register_cancel_callback(lambda: kill_owned_process(process, child_job))
+                     if cancellable else nullcontext())
+            with scope:
                 check_cancelled()
                 yield process
-                check_cancelled()
+                if cancellable:
+                    check_cancelled()
                 if timed_out.is_set():
                     raise TimeoutError(f"Generation subprocess exceeded {timeout}s; see {log.name}.")
     finally:

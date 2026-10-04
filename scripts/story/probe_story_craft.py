@@ -129,6 +129,9 @@ def prepare_conditions(source, manifest, state, payload, config):
         return saved_plan
 
     reader.structured = capture
+    # This reader captures request material without running a production job or
+    # owning its progress journal. Keep the diagnostic's baseline read-only.
+    reader.progress_step = lambda *args, **kwargs: None
     reader.chapter_plan(1, reader.material(setting, None, 1), [])
     saved_request = read(source / "requests/plan-001-1.json")["request"]
     old_system = saved_request["messages"][0]["content"]

@@ -1,0 +1,29 @@
+[project]
+name = "auto-drama-qwen-image-edit-runtime"
+version = "0.1.0"
+description = "Isolated Qwen Image 2.1 editing experiment runtime"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "accelerate==1.15.0",
+    "diffusers",
+    "huggingface-hub==1.32.0",
+    "pillow==12.3.0",
+    "safetensors==0.8.0",
+    "torch==2.10.0+cu128",
+    "torchvision==0.25.0+cu128",
+    "transformers==5.17.0",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/huggingface/diffusers.git", rev = "7263f3317f6b392d62f41e9d75ed9d7e21fc5a5c" }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }

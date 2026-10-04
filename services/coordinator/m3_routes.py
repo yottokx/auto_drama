@@ -82,8 +82,20 @@ def router(coordinator: Callable[[], Coordinator]) -> APIRouter:
             content.extend(chunk)
             if len(content) > MAX_BUNDLE_BYTES:
                 raise ServiceError(413, "各生成結果は32MiB以内にしてください。")
-        return await run_in_threadpool(
-            M3Service(coordinator()).complete, job_id, worker_id, lease_id, bytes(content)
-        )
+        service = coordinator()
+        with service.db.transaction() as connection:
+            from .service import required
+            job = required(connection, "job", job_id)
+            kind = job["kind"]
+            adjustment = json.loads(job["payload"]).get("adjustment")
+        if adjustment:
+            from .adjustment_service import AdjustmentService
+            complete_job = AdjustmentService(service).complete
+        elif kind == "m3_plan":
+            from .planning_service import PlanningService
+            complete_job = PlanningService(service).complete
+        else:
+            complete_job = M3Service(service).complete
+        return await run_in_threadpool(complete_job, job_id, worker_id, lease_id, bytes(content))
 
     return routes

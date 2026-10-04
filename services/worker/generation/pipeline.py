@@ -12,9 +12,10 @@ from pathlib import Path
 
 from packages.contracts.tts_profile import select_tts_profile
 
-from ..model_config import catalog, select_config
-from . import voice_session
+from ..model_config import catalog, model_base, select_config
+from . import image_session, llm_session, voice_session
 from .brief_requirements import _original_inputs, applied_instructions, ensure_brief_requirements
+from .cancellation import check_cancelled
 from .context_budget import OutputTokenPolicy
 from .llm import LocalLLM, write_json
 from .processes import gpu_lock, run_process
@@ -624,6 +625,23 @@ PORTRAIT_COMPOSITION = (
 )
 
 
+def _adjustment_prompt_input(payload: dict, source: str) -> str:
+    """Use a candidate's edited description without changing its frozen character."""
+    edited = payload.get("source_prompt") if payload.get("adjustment") else None
+    if edited is None:
+        return source
+    if not isinstance(edited, str) or not edited.strip():
+        raise ValueError("An edited adjustment prompt must be nonempty text.")
+    return edited
+
+
+def _voice_caption(payload: dict) -> str:
+    caption = _adjustment_prompt_input(payload, payload["character_result"]["voice"])
+    if payload.get("instruction", "").strip():
+        caption += "\n今回の演技・声の調整: " + payload["instruction"].strip()
+    return caption
+
+
 def _image_prompt_parts(result: dict) -> dict[str, str]:
     validate_schema(result, IMAGE_PROMPT_SCHEMA)
     parts = {key: value.strip() for key, value in result.items()}
@@ -663,6 +681,7 @@ def image_prompt(payload: dict, llm: LocalLLM) -> str:
         },
         "retake_instruction": payload.get("instruction", ""),
     }
+    target["target_character"]["appearance"] = _adjustment_prompt_input(payload, character["appearance"])
     messages = [
         {
             "role": "system",
@@ -675,8 +694,9 @@ def image_prompt(payload: dict, llm: LocalLLM) -> str:
         {
             "role": "user",
             "content": json.dumps(target, ensure_ascii=False)
-            + "\ntarget_characterが描く対象の唯一の人物です。確定済みのappearanceを最優先し、"
-            "この一人の、入力に根拠がある見た目だけを次の部位別JSONへ整理してください。"
+            + "\ntarget_characterが描く対象の唯一の人物です。"
+            "確定済みのappearanceを最優先し、この一人の、入力に根拠がある見た目だけを"
+            "次の部位別JSONへ整理してください。"
             "全項目は英語の文字列です。未指定・該当しない項目は空文字にし、"
             "衣装・小物に書かれた文字や引用文も、意味を保って英訳してください。"
             "例：『安全第一と書かれた腕章』は an armband with a safety-first inscription。"
@@ -722,7 +742,8 @@ def image_prompt(payload: dict, llm: LocalLLM) -> str:
             messages.append({
                 "role": "user",
                 "content": "画像プロンプトの変換結果が検査に失敗しました: " + str(exc)
-                + "\n元のtarget_characterの外見を保ち、指摘箇所を直した完全なJSONを返してください。"
+                + "\n元のtarget_characterの外見を保ち、"
+                + "指摘箇所を直した完全なJSONを返してください。"
                 "全項目・引用文を英語にし、日本語を残さず、未指定項目は空文字にします。"
                 "特徴や小物を削って検査を通すのではなく、意味を保って英訳・簡潔化してください。"
                 "各項目1200文字以内、合計5000文字以内。JSON以外は出力しません。",
@@ -738,10 +759,187 @@ def image_prompt(payload: dict, llm: LocalLLM) -> str:
     llm.trace.append({
         "type": "image_prompt", "prompt": prompt, "prompt_version": IMAGE_PROMPT_VERSION,
         "character_id": character["id"], "source_appearance": character["appearance"],
+        **({"input_appearance": target["target_character"]["appearance"]}
+           if payload.get("adjustment") else {}),
         "visual_features": features, "rendering_instruction": parts["rendering"],
         "composition_prompt": PORTRAIT_COMPOSITION,
     })
     return prompt
+
+
+def _llm_provenance(llm, config, payload):
+    return {
+        "model_id": config["llm"]["model_id"],
+        "revision": llm.base["model"].get("revision"),
+        "sha256": llm.base["model"].get("publisher_sha256", llm.base["model"].get("local_sha256")),
+        "seed": payload["seed"], "requests": llm.requests,
+        "temperature": llm.profile["temperature"],
+        "max_tokens": OutputTokenPolicy.resolve(config["llm"], llm.profile).tokens(llm.profile["max_tokens"]),
+        "reasoning_level": llm.profile.get("reasoning_level", "none"),
+        "top_p": llm.profile.get("top_p", 0.95),
+    }
+
+
+def _portrait_prompt_cache(payload: dict, work: Path, config: dict):
+    character = payload["character_result"]
+    identity = {
+        "character": {key: character.get(key, "") for key in
+                      ("id", "name", "age", "gender", "appearance")},
+        "instruction": payload.get("instruction", ""),
+        "profile": payload.get("profile", {}), "llm": config["llm"],
+        "model": model_base(ROOT, config), "converter": IMAGE_PROMPT_VERSION,
+        # Revision 2 shares STEP3's conversion rules; old adjustment conversions
+        # must not survive the change in instruction priority.
+        **({"one_time_adjustment": 2,
+            "source_prompt": _adjustment_prompt_input(payload, character["appearance"])}
+           if payload.get("adjustment") else {}),
+    }
+    fingerprint = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return work.parent / "portrait-prompts" / "individual" / fingerprint / "prompt.json", identity
+
+
+def _cache_portrait_prompt(payload: dict, work: Path, config: dict, prepared: dict):
+    path, identity = _portrait_prompt_cache(payload, work, config)
+    if path.is_file():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Cache hits can populate this entry outside the GPU lease. Unique temporary
+    # files keep workers sharing a cache from replacing each other's writes.
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                     suffix=".tmp", delete=False) as stream:
+        temporary = Path(stream.name)
+        json.dump({"identity": identity, "prepared": prepared}, stream, ensure_ascii=False)
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _cached_portrait_prompt(payload: dict, work: Path, config: dict):
+    path, identity = _portrait_prompt_cache(payload, work, config)
+    if not path.is_file():
+        return None
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if value.get("identity") != identity:
+        raise ValueError("Portrait prompt cache differs from its source.")
+    return value["prepared"]
+
+
+def _portrait_conversion_scope(config: dict):
+    images = image_session.current_session()
+    if images is not None:
+        images.close()
+    return llm_session.gpu_scope("m2_character", gpu_lock(
+        ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"]))
+
+
+def prepare_portrait_prompt(payload: dict, work: Path, config: dict):
+    """Reuse a verified conversion across fresh image seeds and repeated retakes."""
+    prepared = prepare_portrait_prompt_batch(payload, work, config)
+    if prepared is not None:
+        return prepared
+    cached = _cached_portrait_prompt(payload, work, config)
+    if cached is not None:
+        return cached
+    with _portrait_conversion_scope(config):
+        cached = _cached_portrait_prompt(payload, work, config)
+        if cached is not None:
+            return cached
+        with LocalLLM(ROOT, config, payload, work / "llm") as llm:
+            conversion_start = llm.requests + 1
+            try:
+                prompt = image_prompt(payload, llm)
+            except ValueError:
+                if llm.requests >= conversion_start:
+                    llm.retry_failed_from(conversion_start)
+                raise
+            prepared = {"prompt": prompt, "trace": list(llm.trace),
+                        "llm": _llm_provenance(llm, config, payload)}
+        _cache_portrait_prompt(payload, work, config, prepared)
+        return prepared
+
+
+def prepare_portrait_prompt_batch(payload: dict, work: Path, config: dict):
+    """Translate every cast portrait before loading Anima, then reuse the cache.
+
+    The content-addressed worker cache binds the source, model configuration,
+    instruction and converter version. It never imports prompts from user text.
+    Each conversion also populates the cache used by later image retakes.
+    """
+    if payload.get("adjustment"):
+        return None
+    batch = payload.get("portrait_prompt_batch")
+    if not batch:
+        return None
+    if not isinstance(batch, list) or len(batch) > 50:
+        raise ValueError("Invalid portrait prompt batch.")
+    sources = {}
+    for row in batch:
+        if not isinstance(row, dict) or not isinstance(row.get("character_result"), dict):
+            raise TypeError("Portrait prompt batch needs complete character sources.")
+        identifier = row.get("character_id")
+        if (not isinstance(identifier, str) or not identifier or identifier in sources
+                or row["character_result"].get("id") != identifier):
+            raise ValueError("Portrait prompt batch IDs must be unique and match their sources.")
+        sources[identifier] = row
+    target = sources.get(payload["character_id"])
+    if target is None or target["character_result"] != payload["character_result"]:
+        raise ValueError("Portrait prompt batch differs from the target character.")
+    identity = {
+        "storyline_id": payload.get("storyline_id"), "batch": batch,
+        "profile": payload.get("profile", {}), "llm": config["llm"], "model": model_base(ROOT, config),
+        "instruction": payload.get("instruction", ""), "converter": IMAGE_PROMPT_VERSION,
+    }
+    fingerprint = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    directory = work.parent / "portrait-prompts" / fingerprint
+    result_path = directory / "prompts.json"
+
+    def cached():
+        value = json.loads(result_path.read_text(encoding="utf-8"))
+        if value.get("identity") != identity or set(value.get("characters", {})) != set(sources):
+            raise ValueError("Portrait prompt cache does not match its frozen sources.")
+        prepared = value["characters"][payload["character_id"]]
+        _cache_portrait_prompt(payload, work, config, prepared)
+        return prepared
+
+    if result_path.is_file():
+        return cached()
+    # Retakes have a smaller batch than the original cast. Reuse each unchanged
+    # source while still translating every missing source before rendering.
+    characters = {}
+    for identifier, source in sources.items():
+        prepared = _cached_portrait_prompt({**payload, **source}, work, config)
+        if prepared is not None:
+            characters[identifier] = prepared
+    if len(characters) == len(sources):
+        return characters[payload["character_id"]]
+    with _portrait_conversion_scope(config):
+        # Another local worker may have completed the same batch while waiting.
+        if result_path.is_file():
+            return cached()
+        directory.mkdir(parents=True, exist_ok=True)
+        batch_payload = {**payload, "seed": int(fingerprint[:15], 16)}
+        with LocalLLM(ROOT, config, batch_payload, directory / "llm") as llm:
+            for identifier, source in sources.items():
+                if identifier in characters:
+                    continue
+                check_cancelled()
+                start = llm.requests + 1
+                trace_start = len(llm.trace)
+                try:
+                    prompt = image_prompt({**batch_payload, **source}, llm)
+                except ValueError:
+                    if llm.requests >= start:
+                        llm.retry_failed_from(start)
+                    raise
+                characters[identifier] = {
+                    "prompt": prompt, "trace": list(llm.trace[trace_start:]),
+                    "llm": _llm_provenance(llm, config, batch_payload),
+                }
+        write_json(result_path, {"identity": identity, "characters": characters})
+        for identifier, source in sources.items():
+            _cache_portrait_prompt({**payload, **source}, work, config, characters[identifier])
+        return cached()
 
 
 def generate_image(payload: dict, prompt: str, work: Path, config: dict) -> tuple[bytes, dict]:
@@ -786,7 +984,10 @@ def generate_image(payload: dict, prompt: str, work: Path, config: dict) -> tupl
         str(payload["seed"]),
     ]
     try:
-        run_process(command, output / "runtime.log", cwd=ROOT, timeout=settings["timeout_seconds"])
+        from .image_session import current_session, run_image_process
+
+        runner = run_process if current_session() is None else run_image_process
+        runner(command, output / "runtime.log", cwd=ROOT, timeout=settings["timeout_seconds"])
     except RuntimeError as error:
         from .portrait_recovery import PortraitRenderError
 
@@ -825,6 +1026,9 @@ def generate_image(payload: dict, prompt: str, work: Path, config: dict) -> tupl
         "foreground_bbox": report["foreground_bbox"],
         "anchor_bottom_center": report["anchor_bottom_center"],
         "background_model_sha256": report["background_model_sha256"],
+        "model_reused": report.get("model_reused", False),
+        **({"initialization_seconds": report["initialization_seconds"]}
+           if "initialization_seconds" in report else {}),
     }
 
 
@@ -843,10 +1047,9 @@ def generate_voice(payload: dict, work: Path, config: dict) -> tuple[bytes, dict
     if not isinstance(character, dict) or not character.get("voice", "").strip():
         raise ValueError("Voice generation requires a complete voice description.")
     output = Path(tempfile.mkdtemp(prefix="voice-", dir=work))
-    caption = character["voice"]
-    if payload.get("instruction", "").strip():
-        caption += "\n今回の演技・声の調整: " + payload["instruction"].strip()
-    text = character.get("selfIntroduction", "")
+    caption = _voice_caption(payload)
+    text = (payload.get("reference_text", character.get("selfIntroduction", ""))
+            if payload.get("adjustment") else character.get("selfIntroduction", ""))
     if not isinstance(text, str):
         raise TypeError("The character self-introduction must be text.")
     if not text.strip():
@@ -969,6 +1172,8 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
     """Return a complete deterministic result ZIP; failed output is never adopted."""
     kind = job.get("kind")
     voice_session.prepare_job(kind)
+    image_session.prepare_job(kind)
+    llm_session.prepare_job("m3_image" if supporting_portrait else kind)
     payload = job.get("payload")
     if kind not in KINDS or not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported M2 job or payload schema.")
@@ -1018,50 +1223,36 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
         "prompt_version": 4,
         "input_sha256": fingerprint,
         "profile": payload.get("profile", {}),
-        "gpu_execution": "serialized; voice session retains exclusive GPU lease until released"
+        "gpu_execution": "serialized; image session retains exclusive GPU lease until released"
+        if image_session.current_session() is not None and kind in image_session.IMAGE_KINDS
+        else "serialized; voice session retains exclusive GPU lease until released"
         if voice_session.current_session() is not None and kind in voice_session.VOICE_KINDS
         else "serialized; owned subprocess exits release contexts",
     }
-    with voice_session.gpu_scope(kind, gpu_lock(
+    prepared = prepare_portrait_prompt(payload, work, config) if kind == "m2_image" else None
+    if prepared is not None:
+        prompt, trace, provenance["llm"] = prepared["prompt"], prepared["trace"], prepared["llm"]
+    if kind in image_session.IMAGE_KINDS or kind in voice_session.VOICE_KINDS:
+        session = llm_session.current_session()
+        if session is not None:
+            session.close()
+    with llm_session.gpu_scope(kind, image_session.gpu_scope(kind, voice_session.gpu_scope(kind, gpu_lock(
         ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"]
-    )):
+    )))):
         result = {}
-        if kind in ("m2_world", "m2_character", "m2_relationships", "m2_image"):
+        if kind in ("m2_world", "m2_character", "m2_relationships"):
             with LocalLLM(ROOT, config, payload, work / "llm") as llm:
-                if kind == "m2_image":
-                    conversion_start = llm.requests + 1
-                    try:
-                        prompt = image_prompt(payload, llm)
-                    except ValueError:
-                        # Resample definitively rejected conversions on a job retry.
-                        # Keep valid conversions after image/transport failures cached.
-                        if llm.requests >= conversion_start:
-                            llm.retry_failed_from(conversion_start)
-                        raise
-                else:
-                    generation_start = llm.requests + 1
-                    try:
-                        result = (generate_relationships(payload, llm)
-                                  if kind == "m2_relationships"
-                                  else generate_text(kind, payload, llm))
-                    except ValueError:
-                        if llm.requests >= generation_start:
-                            llm.retry_failed_from(generation_start)
-                        raise
+                generation_start = llm.requests + 1
+                try:
+                    result = (generate_relationships(payload, llm)
+                              if kind == "m2_relationships"
+                              else generate_text(kind, payload, llm))
+                except ValueError:
+                    if llm.requests >= generation_start:
+                        llm.retry_failed_from(generation_start)
+                    raise
                 trace = list(llm.trace)
-                provenance["llm"] = {
-                    "model_id": config["llm"]["model_id"],
-                    "revision": llm.base["model"].get("revision"),
-                    "sha256": llm.base["model"].get("publisher_sha256", llm.base["model"].get("local_sha256")),
-                    "seed": payload["seed"],
-                    "requests": llm.requests,
-                    "temperature": llm.profile["temperature"],
-                    "max_tokens": OutputTokenPolicy.resolve(config["llm"], llm.profile).tokens(
-                        llm.profile["max_tokens"]),
-                    "reasoning_level": llm.profile.get("reasoning_level", "none"),
-                    "top_p": llm.profile.get("top_p", 0.95),
-                }
-            # Gemma is fully stopped before any image/voice runtime is loaded.
+                provenance["llm"] = _llm_provenance(llm, config, payload)
         if kind == "m2_image":
             if supporting_portrait:
                 from .portrait_recovery import generate_with_recovery
@@ -1084,6 +1275,15 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
             assets["voice.wav"], provenance["voice"] = generate_voice(payload, work, config)
         elif kind == "m2_voice_clone":
             assets["voice.wav"], provenance["voice"] = generate_voice_clone(payload, work, config)
+        if payload.get("adjustment") and kind in {"m2_image", "m2_voice"}:
+            source = payload["character_result"]["appearance" if kind == "m2_image" else "voice"]
+            provenance["prompt_details"] = {
+                "source": source,
+                "input": _adjustment_prompt_input(payload, source),
+                "instruction": payload.get("instruction", ""),
+                "effective": provenance["image"].get("prompt", prompt) if kind == "m2_image"
+                else provenance["voice"].get("caption", _voice_caption(payload)),
+            }
         envelope = {
             "schema_version": 1,
             "kind": kind,

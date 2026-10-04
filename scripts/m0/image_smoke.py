@@ -12,6 +12,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -64,6 +65,7 @@ def digest(path: Path, algorithm: str = "sha256") -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--serve", action="store_true", help="Reuse local weights for JSONL requests.")
     parser.add_argument("--mode", choices=("character", "background"), default="character")
     parser.add_argument("--prompt", help="Override the mode's default generation prompt.")
     parser.add_argument(
@@ -79,6 +81,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260922)
     parser.add_argument("--check-only", action="store_true", help="Check local files without importing inference libraries.")
     args = parser.parse_args()
+    if args.serve:
+        sys.path.insert(0, str(ROOT))
+        from scripts.m0.image_runner import serve
+
+        raise SystemExit(serve(sys.stdin, sys.stdout))
     args.width = args.width if args.width is not None else (768 if args.mode == "character" else 1280)
     args.height = args.height if args.height is not None else (1024 if args.mode == "character" else 720)
     try:

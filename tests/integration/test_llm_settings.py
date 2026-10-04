@@ -57,6 +57,7 @@ def test_invalid_or_unsupported_settings_do_not_replace_saved_value(tmp_path, pa
 
 
 def test_script_production_preserves_common_settings_and_owns_output_budget(tmp_path):
+    from tests.integration.planning_fixtures import complete_and_approve_plan
     from tests.integration.test_m2 import ready
     with TestClient(create_app(tmp_path)) as client:
         # Finish setup using the legacy fixture worker, then select new common settings.
@@ -64,6 +65,10 @@ def test_script_production_preserves_common_settings_and_owns_output_budget(tmp_
         worker(client)
         assert client.post("/api/settings/llm", json=SETTINGS).status_code == 200
         action(client, project, "approve")
+        complete_and_approve_plan(client, project, llm_models=[{
+            "model": SETTINGS["model"], "max_context_size": SETTINGS["ctx_size"],
+            "reasoning_efforts": [SETTINGS["reasoning_effort"]],
+        }])
         connection = client.app.state.coordinator.db.connect()
         try:
             row = connection.execute("SELECT payload FROM job WHERE kind='m3_narrative'").fetchone()

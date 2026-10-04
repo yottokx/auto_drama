@@ -61,6 +61,20 @@ def _validate_script_checkpoint(payload, narrative, provenance):
     }
     if any(checkpoint.get(key) != value for key, value in expected.items()):
         raise ValueError("Script checkpoint identity differs from its adopted chapter.")
+    if payload.get("approved_plan"):
+        from packages.contracts.planning import validate_plan_content
+
+        plan = payload["approved_plan"]
+        if (checkpoint.get("plan_approval_id") != plan["approval_id"]
+                or checkpoint.get("plan_sha256") != plan["sha256"]):
+            raise ValueError("Script checkpoint differs from the approved common plan.")
+        approved = validate_plan_content(plan["content"], payload["approval_snapshot"])
+        if narrative.outline != approved.plot.as_outline():
+            raise ValueError("Narrative outline differs from the approved common plan.")
+        planned_cast = {row.id: row for row in approved.cast_plan.supporting_characters}
+        if any(row.id in planned_cast and row != planned_cast[row.id]
+               for row in narrative.supporting_characters):
+            raise ValueError("Previously planned character settings cannot be replaced by chapter writing.")
     if (not isinstance(checkpoint.get("generation_identity"), str)
             or len(checkpoint["generation_identity"]) != 64
             or checkpoint.get("sha256") != _checkpoint_digest(
@@ -95,6 +109,16 @@ class M3Service(ChapterProduction):
 
     def _selected_build(self, connection, production):
         selection = self.history.selection(connection, production["project_id"])
+        if selection and selection.get("edition_id"):
+            build = connection.execute(
+                "SELECT b.* FROM edition_build eb JOIN chapter_build b ON b.id=eb.build_id "
+                "JOIN publication_edition e ON e.id=eb.edition_id "
+                "WHERE eb.edition_id=? AND eb.production_id=? AND e.project_id=?",
+                (selection["edition_id"], production["id"], production["project_id"]),
+            ).fetchone()
+            if build is not None:
+                return build
+            raise ServiceError(422, "調整版の章が見つかりません。")
         if production["chapter_number"] > 1:
             if selection and selection["production_frozen"]:
                 frozen = json.loads(selection["production_snapshot"] or "{}")
@@ -117,6 +141,20 @@ class M3Service(ChapterProduction):
         selected = self._selected_production(connection, production["project_id"])
         return selected is not None and selected["id"] == production["storyline_id"]
 
+    def _has_current_plan(self, connection, production):
+        root = self._root(connection, production)
+        if not root["plan_approval_id"]:
+            return True
+        return connection.execute(
+            "SELECT 1 FROM project_history_state h JOIN planning_draft p ON p.id=h.planning_id "
+            "WHERE h.project_id=? AND p.approved_plan_id=? AND p.main_approval_id=?",
+            (root["project_id"], root["plan_approval_id"], root["approval_id"]),
+        ).fetchone() is not None
+
+    def _assert_current_plan(self, connection, production):
+        if not self._has_current_plan(connection, production):
+            raise ServiceError(409, "構成を変更しています。STEP4の新しい構成を承認してから制作してください。")
+
     def _assert_resumable(self, connection, production):
         production = self._root(connection, production)
         selection = self.history.selection(connection, production["project_id"])
@@ -137,6 +175,20 @@ class M3Service(ChapterProduction):
         if record["project_id"] != production["project_id"] or record["kind"] != "m2_approval":
             raise ServiceError(422, "承認版が作品と一致しません。")
         return json.loads(self.store.read(record))
+
+    def _approved_plan(self, connection, production):
+        identifier = production["plan_approval_id"]
+        if not identifier:
+            return None
+        approval = required(connection, "planning_approval", identifier)
+        artifact = required(connection, "artifact", approval["artifact_id"])
+        value = json.loads(self.store.read(artifact))
+        if (approval["project_id"] != production["project_id"] or artifact["kind"] != "planning_approval"
+                or value["main_approval_id"] != production["approval_id"]
+                or value["approval_id"] != identifier or value["sha256"] != approval["sha256"]
+                or _checkpoint_digest(value["content"]) != approval["sha256"]):
+            raise ServiceError(422, "承認した構成版が制作系列と一致しません。")
+        return value
 
     def _artifact(
         self,
@@ -198,10 +250,12 @@ class M3Service(ChapterProduction):
             "WHERE p.production_id=? AND job.kind='m3_narrative'",
             (production["storyline_id"],),
         ).fetchone()
+        approved_plan = self._approved_plan(connection, production)
+        plan_generation = approved_plan.get("generation", {}) if approved_plan else {}
         profile = (
             json.loads(profile_job["settings_snapshot"])["profile"]
             if profile_job
-            else M2Service(self.coordinator)._profile()
+            else plan_generation.get("profile", M2Service(self.coordinator)._profile())
         )
         from .tts_settings import TTSService
 
@@ -210,8 +264,11 @@ class M3Service(ChapterProduction):
         if profile_job:
             tts_profile = json.loads(profile_job["settings_snapshot"]).get("tts_profile")
         else:
-            tts_profile = TTSService(self.coordinator).profile(connection)
-        workflow = {}
+            tts_profile = plan_generation.get("tts_profile", TTSService(self.coordinator).profile(connection))
+        workflow = {key: plan_generation[key] for key in (
+            "story_workflow_version", "workflow_policy", "generator_protocol", "script_options",
+            "profiles", "workflow_limits", "seed",
+        ) if key in plan_generation} if kind == "m3_narrative" else {}
         if kind == "m3_narrative" and profile_job:
             pinned = json.loads(profile_job["payload"])
             workflow = {key: pinned[key] for key in (
@@ -242,6 +299,22 @@ class M3Service(ChapterProduction):
             **workflow,
             **descriptor,
         }
+        if approved_plan:
+            payload["approved_plan"] = {key: approved_plan[key] for key in ("content", "approval_id", "sha256")}
+            payload["approved_plan"]["planning_protocol"] = plan_generation["planning_protocol"]
+        if kind == "m3_image":
+            # Translate all required portraits before loading the image model.
+            # Approved main images have no character_result and are reused.
+            batch = []
+            for row in connection.execute(
+                "SELECT target_id,descriptor FROM m3_requirement "
+                "WHERE production_id=? AND kind='m3_image' ORDER BY target_id", (production["id"],)
+            ):
+                source = json.loads(row["descriptor"])
+                if source.get("character_result"):
+                    batch.append({"character_id": row["target_id"], "character_result": source["character_result"]})
+            if batch:
+                payload["portrait_prompt_batch"] = batch
         connection.execute(
             "INSERT INTO generation_run (id,project_id,settings_version,story_revision_id,"
             "policy,status,created_at) VALUES (?,?,?,?,?,'pending',?)",
@@ -295,32 +368,41 @@ class M3Service(ChapterProduction):
             connection.execute("INSERT INTO job_dependency VALUES (?,?)", (identifier, dependency))
         return identifier
 
-    def start_approved(self, connection, project_id: str, approval_id: str) -> dict:
-        """Called inside the M2 approval transaction: approval and start are indivisible."""
+    def start_approved(self, connection, project_id: str, approval_id: str, plan_approval_id=None) -> dict:
+        """Start a pinned series atomically; saved legacy series omit the plan."""
         self.history.ensure(connection, project_id)
         approval = required(connection, "m2_approval", approval_id)
         if approval["project_id"] != project_id:
             raise ServiceError(409, "承認版が作品と一致しません。")
         existing = connection.execute(
-            "SELECT * FROM m3_production WHERE approval_id=? AND chapter_number=1", (approval_id,)
+            "SELECT * FROM m3_production WHERE approval_id=? AND chapter_number=1 "
+            "AND plan_approval_id IS ?", (approval_id, plan_approval_id)
         ).fetchone()
         if existing:
             if not self._is_selected(connection, existing):
                 raise ServiceError(409, "以前の制作版は再開できません。キャストを再承認してください。")
             return dict(existing)
         identifier = uuid4().hex
+        if plan_approval_id:
+            plan = required(connection, "planning_approval", plan_approval_id)
+            draft = required(connection, "planning_draft", plan["planning_id"])
+            if (plan["project_id"] != project_id or draft["main_approval_id"] != approval_id
+                    or draft["approved_plan_id"] != plan_approval_id):
+                raise ServiceError(409, "承認した構成とメイン設定が一致しません。")
         connection.execute(
             "INSERT INTO m3_production (id,project_id,approval_id,approval_artifact_id,created_at,"
-            "storyline_id,m4_enabled) VALUES (?,?,?,?,?,?,1)",
-            (identifier, project_id, approval_id, approval["artifact_id"], self.clock(), identifier),
+            "storyline_id,m4_enabled,plan_approval_id,sequential_publication) VALUES (?,?,?,?,?,?,1,?,?)",
+            (identifier, project_id, approval_id, approval["artifact_id"], self.clock(), identifier,
+             plan_approval_id, int(bool(plan_approval_id))),
         )
         production = required(connection, "m3_production", identifier)
         self.history.set_selection(connection, project_id, identifier, None, None)
-        self._enqueue(connection, production, "m3_narrative", {
+        descriptor = {} if plan_approval_id else {
             "story_workflow_version": 2,
             "workflow_policy": "script_continuation_v1",
             "generator_protocol": generator_protocol("causal", "script_continuation_v1"),
-        })
+        }
+        self._enqueue(connection, production, "m3_narrative", descriptor)
         return production
 
     def start(self, project_id: str) -> dict:
@@ -330,6 +412,14 @@ class M3Service(ChapterProduction):
                 raise ServiceError(
                     409, "世界観・キャスト・素材の最終承認後に本編制作を開始できます。"
                 )
+            plan_approval_id = None
+            if state["draft"].get("planningRequired"):
+                from .planning_service import PlanningService
+                plan = PlanningService.selected(connection, project_id)
+                if (not plan or not plan["approved_plan_id"] or not state["draft"].get("planApproved")
+                        or plan["main_approval_id"] != state["draft"]["approval"]["id"]):
+                    raise ServiceError(409, "先にSTEP4の全体構成を承認してください。")
+                plan_approval_id = plan["approved_plan_id"]
             selected = self._selected_production(connection, project_id)
             selection = self.history.selection(connection, project_id)
             needs_start = (selected is None or selected["error"]
@@ -339,7 +429,7 @@ class M3Service(ChapterProduction):
                     self._assert_resumable(connection, selected)
                 self.history.begin(connection, project_id, "本編制作を再開", "m3-start")
             production = self.start_approved(
-                connection, project_id, state["draft"]["approval"]["id"]
+                connection, project_id, state["draft"]["approval"]["id"], plan_approval_id
             )
             if needs_start:
                 selection = self.history.selection(connection, project_id)
@@ -371,6 +461,8 @@ class M3Service(ChapterProduction):
                            json.loads(selected["production_snapshot"])["jobs"]}
         return [
             public({**dict(row), **(frozen_jobs[row["id"]] if frozen_jobs is not None else {}),
+                    **({"progress": frozen_jobs[row["id"]].get("progress"), "progress_active": False}
+                       if frozen_jobs is not None else {}),
                     **({"result_artifact_id": None} if frozen_jobs is not None
                        and frozen_jobs[row["id"]]["status"] != "completed" else {})})
             for row in connection.execute(
@@ -392,6 +484,9 @@ class M3Service(ChapterProduction):
         """Recompile adopted inputs atomically; never enqueue or regenerate anything."""
         with self.db.transaction() as connection:
             required(connection, "project", project_id)
+            selection = self.history.selection(connection, project_id)
+            if selection and selection.get("edition_id"):
+                raise ServiceError(409, "調整版は「表示と素材を調整」から全章へ反映してください。")
             production = self._selected_production(connection, project_id)
             if not production or not self._selected_build(connection, production):
                 raise ServiceError(409, "公開済みの章だけを組み立て直せます。")
@@ -499,6 +594,9 @@ class M3Service(ChapterProduction):
         """Save presentation separately from approval and publish it atomically."""
         with self.db.transaction() as connection:
             required(connection, "project", project_id)
+            selection = self.history.selection(connection, project_id)
+            if selection and selection.get("edition_id"):
+                raise ServiceError(409, "調整版は「表示と素材を調整」から全章へ反映してください。")
             production = self._selected_production(connection, project_id)
             latest = self._selected_build(connection, production) if production else None
             if latest is None or latest["id"] != request.expected_build_id:
@@ -779,14 +877,19 @@ class M3Service(ChapterProduction):
                     selection is not None and selection["production_frozen"]
                 ):
                     return
+                if not self._has_current_plan(connection, production):
+                    return
                 if (
                     production["error"]
                     or not production["narrative_artifact_id"]
                 ):
                     return
                 root = self._root(connection, production)
-                self._next_chapter(connection, production)
+                if not root["sequential_publication"]:
+                    self._next_chapter(connection, production)
                 if self._selected_build(connection, production):
+                    if root["sequential_publication"]:
+                        self._next_chapter(connection, production)
                     return
                 requirements = [
                     dict(row)
@@ -844,6 +947,8 @@ class M3Service(ChapterProduction):
                     previous = self._previous(connection, production)
                     if previous is None or self._selected_build(connection, previous):
                         self._publish(connection, production, requirements)
+                        if root["sequential_publication"]:
+                            self._next_chapter(connection, production)
         except (OSError, ValueError, ServiceError, wave.Error, zlib.error) as exc:
             # Adopted media remain ready; a build retry only rechecks/assembles those files.
             with self.db.transaction() as connection:
@@ -865,6 +970,7 @@ class M3Service(ChapterProduction):
         )
         if not self._is_selected(connection, production):
             raise ServiceError(409, "以前の制作版のジョブは再試行できません。")
+        self._assert_current_plan(connection, production)
         self._assert_resumable(connection, production)
         self.history.ensure(connection, job["project_id"])
         selection = self.history.selection(connection, job["project_id"])
@@ -888,7 +994,7 @@ class M3Service(ChapterProduction):
         for identifier in identifiers:
             self.advance(identifier)
 
-    def _publish(self, connection, production, requirements):
+    def _publish(self, connection, production, requirements, *, presentation=None):
         snapshot = self._snapshot(connection, production)
         narrative = self._load_narrative(connection, production)
         references, content = {}, {}
@@ -937,6 +1043,19 @@ class M3Service(ChapterProduction):
             portrait_settings=portrait_settings,
             omitted_portraits=omitted_portraits,
         )
+        if presentation is not None:
+            from packages.narrative.validation import script_character_id
+            from packages.tyrano_export.presentation import apply_portrait_presentation
+
+            baseline = {**presentation["baseline"], "layouts": {
+                script_character_id(cid): layout for cid, layout in presentation["baseline"]["layouts"].items()
+            }}
+            adjustments = {
+                script_character_id(value["character_id"]): {
+                    "offset_y": value.get("offset_y", 0), "scale": value.get("scale", 1),
+                } for value in presentation.get("characters", [])
+            }
+            script = apply_portrait_presentation(script, baseline, adjustments)
         self.coordinator._script_assets(connection, production["project_id"], script)
         public_approval = {
             "schema_version": 1,
@@ -1134,6 +1253,7 @@ class M3Service(ChapterProduction):
                 selection is not None and selection["production_frozen"]
             ):
                 raise ServiceError(409, "以前の制作版の生成結果は採用できません。")
+            self._assert_current_plan(connection, production)
             artifact = self.coordinator._register_artifact(
                 connection,
                 job["project_id"],

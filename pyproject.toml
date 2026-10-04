@@ -11,6 +11,8 @@ dependencies = [
     "alembic>=1.15,<2",
     "httpx>=0.28,<1",
     "pillow>=11,<13",
+    "python-multipart>=0.0.20,<1",
+    "pydantic>=2.13,<3",
 ]
 
 [dependency-groups]

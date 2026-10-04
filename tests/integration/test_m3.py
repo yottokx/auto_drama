@@ -176,6 +176,13 @@ def output(job, result=None, voice_patch=None):
                       predecessor_state_inferred=bool(previous and not previous.get("end_state")),
                       continuity_review={"passed": True, "issues": [], "checked_character_ids": cast,
                           "checked_foreshadowing_indices": list(range(len(result["outline"]["foreshadowing"])))})
+    if script_policy and payload.get("approved_plan"):
+        from packages.contracts.planning import validate_plan_content
+
+        result = copy.deepcopy(result)
+        result["outline"] = validate_plan_content(
+            payload["approved_plan"]["content"], payload["approval_snapshot"],
+        ).plot.as_outline().model_dump(mode="json")
     provenance = {"producer": "fixture", "private_runtime_path": "C:/private/runtime"}
     if script_policy:
         from packages.narrative.continuity import narrative_hash
@@ -188,6 +195,9 @@ def output(job, result=None, voice_patch=None):
             "approval_sha256": _checkpoint_digest(payload["approval_snapshot"]),
             "generation_identity": _checkpoint_digest({"fixture": True}), "state": {"fixture": True},
         }
+        if payload.get("approved_plan"):
+            checkpoint.update(plan_approval_id=payload["approved_plan"]["approval_id"],
+                              plan_sha256=payload["approved_plan"]["sha256"])
         checkpoint["sha256"] = _checkpoint_digest(checkpoint)
         provenance.update(generator_protocol=payload["generator_protocol"], script_checkpoint=checkpoint)
     if kind == "m3_voice":
@@ -241,10 +251,12 @@ def production(client, project_id):
 
 
 def approved(client):
+    from tests.integration.planning_fixtures import complete_and_approve_plan
     from tests.integration.test_m2 import report_voice_inventory
 
     project, _ = ready(client)
     action(client, project, "approve")
+    complete_and_approve_plan(client, project)
     worker = client.post(
         "/api/workers", json={"name": "M3 fixture", "capabilities": [*M3_KINDS, "tts_download"]}
     ).json()["id"]
@@ -255,13 +267,18 @@ def approved(client):
 def pin_legacy_production(client, project_id):
     """Model a production queued before the script engine became the default."""
     with client.app.state.coordinator.db.transaction() as connection:
+        connection.execute(
+            "UPDATE m3_production SET plan_approval_id=NULL,sequential_publication=0 "
+            "WHERE project_id=?", (project_id,),
+        )
         rows = connection.execute(
             "SELECT id,payload,settings_snapshot FROM job WHERE project_id=? AND kind='m3_narrative'",
             (project_id,),
         ).fetchall()
         for row in rows:
             payload = json.loads(row["payload"])
-            for key in ("story_workflow_version", "workflow_policy", "generator_protocol", "script_options"):
+            for key in ("story_workflow_version", "workflow_policy", "generator_protocol", "script_options",
+                        "approved_plan"):
                 payload.pop(key, None)
             connection.execute("UPDATE job SET payload=? WHERE id=?",
                                (json.dumps(payload, ensure_ascii=False), row["id"]))
@@ -435,8 +452,10 @@ def test_missing_ready_asset_blocks_publication_without_regenerating_completed_m
         target.write_bytes(original)
         if later:
             assert complete(client, worker, later).status_code == 200
-        finish(client, worker)
         restored = client.post(f"/api/m3/projects/{project}/start").json()["production"]
+        assert restored["chapters"][0]["status"] == "published"
+        finish(client, worker)
+        restored = production(client, project)
         assert restored["status"] == "published", restored["error"]
         assert len(restored["chapters"][0]["jobs"]) == len(jobs) + 1
         assert claim(client, worker) is None
@@ -480,6 +499,9 @@ def test_restart_recovers_adopted_result_before_next_jobs_and_before_publication
         state = production(client, project)
         assert state["completed_jobs"] == state["total_jobs"] and state["build"] is None
     with TestClient(create_app(tmp_path)) as client:
+        state = production(client, project)
+        assert state["chapters"][0]["status"] == "published", state["error"]
+        finish(client, worker)
         state = production(client, project)
         assert state["status"] == "published", state["error"]
         assert claim(client, worker) is None

@@ -24,7 +24,11 @@ from services.worker.generation.cancellation import (
     CancellationToken,
     GenerationCancelled,
     cancellation_scope,
+    check_cancelled,
 )
+from services.worker.generation.image_session import current_session as current_image_session
+from services.worker.generation.llm_session import current_session as current_llm_session
+from services.worker.generation.progress import progress_scope
 from services.worker.generation.voice_session import current_session
 
 logger = logging.getLogger(__name__)
@@ -225,7 +229,26 @@ class WorkerClient:
                 heartbeat.check()
             # Job identity, rather than attempt identity, preserves the request
             # and tool cache across lease recovery and transport retries.
-            result = self.generation_runner(job, directory)
+            def publish_progress(progress):
+                check_cancelled()
+                heartbeat.check()
+                for attempt in range(2):
+                    try:
+                        response = self.client.post(f"/api/jobs/{job['id']}/progress",
+                            json={**self._lease_fields(job), "progress": progress})
+                        self._check_response(response)
+                        return
+                    except LeaseLost:
+                        heartbeat.cancellation.cancel()
+                        raise
+                    except httpx.HTTPError:
+                        if attempt == 1:
+                            # Progress is observational. A transport outage must
+                            # not discard accepted inference or rerun it.
+                            logger.warning("Could not report progress for job %s", job["id"])
+
+            with progress_scope(publish_progress):
+                result = self.generation_runner(job, directory)
             heartbeat.check()
             return result
         if job["kind"] != "tyrano_export":
@@ -338,6 +361,12 @@ class WorkerClient:
             voices = current_session()
             if voices is not None:
                 voices.close()
+            images = current_image_session()
+            if images is not None:
+                images.close()
+            llms = current_llm_session()
+            if llms is not None:
+                llms.close()
             logger.info("Job %s no longer belongs to this worker", job["id"])
             return "stale"
         except httpx.HTTPError:

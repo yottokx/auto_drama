@@ -246,7 +246,9 @@ def test_full_wizard_empty_optional_input_atomic_pipeline_and_immutable_approval
         snapshot = approved["draft"]["approval"]
         assert approved["project"]["status"] == "ready"
         assert len(approved["jobs"]) == 5
-        assert approved["jobs"][-1]["kind"] == "m3_narrative"
+        assert approved["jobs"][-1]["kind"] == "m3_plan"
+        assert approved["draft"]["step"] == "planning-review"
+        assert not approved["draft"]["hasProduction"]
         assert snapshot["world"]["version"] == 1
         assert snapshot["characters"][0]["image"]["version"] == 1
         saved = client.get(f"/api/artifacts/{snapshot['artifactId']}/content").content

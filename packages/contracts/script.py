@@ -20,6 +20,9 @@ Position = Literal["left", "center", "right"]
 Duration = Annotated[int, Field(strict=True, ge=0, le=10_000)]
 HeightCm = Annotated[float, Field(strict=True, ge=1, le=10_000, allow_inf_nan=False)]
 NormalizedCoordinate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+DisplayOffset = Annotated[float, Field(strict=True, ge=-640, le=640, allow_inf_nan=False)]
+DisplayScale = Annotated[float, Field(strict=True, ge=0.1, le=3, allow_inf_nan=False)]
+StageCoordinate = Annotated[float, Field(strict=True, ge=-1_000_000, le=1_000_000, allow_inf_nan=False)]
 
 
 class Contract(BaseModel):
@@ -83,6 +86,37 @@ class Character(Contract):
     framing: Literal["auto", "upper_body", "full_body"] = "auto"
     height_cm: HeightCm | None = None
     body_bounds: PortraitBounds | None = None
+    # Default presentation adds no fields to the established Script bytes.
+    offset_y: DisplayOffset = Field(default=0, exclude_if=lambda value: value == 0)
+    scale: DisplayScale = Field(default=1, exclude_if=lambda value: value == 1)
+
+
+class PortraitTransform(Contract):
+    offset_y: DisplayOffset = 0
+    scale: DisplayScale = 1
+
+
+class PortraitGeometry(Contract):
+    width: Annotated[int, Field(strict=True, ge=1, le=1_000_000)]
+    height: Annotated[int, Field(strict=True, ge=1, le=1_000_000)]
+    top: Annotated[int, Field(strict=True, ge=-1_000_000, le=1_000_000)]
+    center_offset: StageCoordinate
+    anchor_y: StageCoordinate
+    mode: Literal["upper_body", "full_body"]
+    source_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+
+class PortraitBaseline(Contract):
+    schema_version: Literal[1] = 1
+    pixels_per_cm: Annotated[float, Field(strict=True, gt=0, le=1_000, allow_inf_nan=False)] | None = None
+    ground_y: StageCoordinate | None = None
+    layouts: dict[Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")], PortraitGeometry] = Field(default_factory=dict, max_length=100)
+
+    @model_validator(mode="after")
+    def paired_height_geometry(self) -> Self:
+        if (self.pixels_per_cm is None) != (self.ground_y is None):
+            raise ValueError("physical portrait baseline requires both scale and ground line")
+        return self
 
 
 class Utterance(Contract):
@@ -164,6 +198,7 @@ class Script(Contract):
     utterances: list[Utterance] = Field(min_length=1, max_length=10_000)
     directions: list[Direction] = Field(default_factory=list, max_length=50_000)
     assets: list[AssetReference] = Field(default_factory=list, max_length=20_000)
+    portrait_baseline: PortraitBaseline | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -193,6 +228,9 @@ class Script(Contract):
 
         for character in self.characters:
             asset(character.image_asset_id, "character")
+            if (self.portrait_baseline is not None and character.image_asset_id is not None
+                    and character.id not in self.portrait_baseline.layouts):
+                raise ValueError("fixed portrait baseline is missing a displayed character")
         for utterance in self.utterances:
             if utterance.speaker_id is not None and utterance.speaker_id not in characters:
                 raise ValueError(f"unknown speaker: {utterance.speaker_id}")

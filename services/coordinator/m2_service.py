@@ -147,6 +147,9 @@ class M2Service:
                 draft["step"] = "production"
             state["wizardStepVersion"] = 2
         draft.setdefault("relationshipInputs", [])
+        # Missing flags identify saved pre-split projects, whose start rules stay intact.
+        draft.setdefault("planningRequired", False)
+        draft.setdefault("planApproved", False)
         draft.setdefault("relationships", relationship_state(draft["characters"]))
         for character in draft["characters"]:
             character.setdefault("voiceTests", [])
@@ -248,7 +251,7 @@ class M2Service:
                 connection, world["title"] or "新しい物語", world["prompt"], world["chapterCount"]
             )
             state = {
-                "wizardStepVersion": 2,
+                "wizardStepVersion": 3,
                 "appliedInstructions": [],
                 "draft": {
                     "revision": 1,
@@ -268,6 +271,8 @@ class M2Service:
                     "relationships": relationship_state(characters),
                     "approved": False,
                     "approval": None,
+                    "planningRequired": True,
+                    "planApproved": False,
                     "requests": [],
                 },
                 "activeJobId": None,
@@ -364,13 +369,15 @@ class M2Service:
         draft = state["draft"]
         draft["approved"] = False
         draft["approval"] = None
-        if draft["step"] == "production":
+        draft["planApproved"] = False
+        if draft["step"] in {"production", "planning-review"}:
             draft["step"] = (
                 "character-review" if draft["worldConfirmed"] and not draft["worldPendingChanges"]
                 else "world-review" if draft["worldResult"] else "world-input"
             )
         state["activeJobId"] = None
         state["queue"] = []
+        state.pop("portraitPromptBatch", None)
 
     @staticmethod
     def _invalidate_world(draft: dict) -> None:
@@ -529,7 +536,12 @@ class M2Service:
     def _queue_next(self, connection: sqlite3.Connection, project_id: str, state: dict) -> None:
         if not state["queue"]:
             state["activeJobId"] = None
+            state.pop("portraitPromptBatch", None)
             return
+        # Keep all text generation ahead of media, including pending queues saved
+        # by older versions. Stable ordering preserves cast order within a stage.
+        stages = {"m2_character": 0, "m2_relationships": 1, "m2_image": 2, "m2_voice": 3}
+        state["queue"].sort(key=lambda item: stages.get(item["kind"], 0))
         descriptor = state["queue"].pop(0)
         draft = state["draft"]
         character = (
@@ -571,6 +583,24 @@ class M2Service:
             "relationship_inputs": draft["relationshipInputs"],
             "relationships_result": draft["relationships"]["result"],
         }
+        if descriptor["kind"] == "m2_image":
+            # Freeze the whole portrait stage on its first job. Every following
+            # image (and retries/restarts) shares the same converter cache, so
+            # translation finishes before the image model is loaded.
+            if "portraitPromptBatch" not in state:
+                state["portraitPromptBatch"] = [
+                    {
+                        "character_id": item["character_id"],
+                        "character_result": copy.deepcopy(
+                            self._character(draft, item["character_id"])["result"]
+                        ),
+                    }
+                    for item in [descriptor, *state["queue"]]
+                    if item["kind"] == "m2_image"
+                ]
+            payload["portrait_prompt_batch"] = copy.deepcopy(state["portraitPromptBatch"])
+        else:
+            state.pop("portraitPromptBatch", None)
         for key in ("reference_voice", "dialogue_text"):
             if key in descriptor:
                 payload[key] = descriptor[key]
@@ -629,6 +659,11 @@ class M2Service:
                     draft["approved"] or self._has_production(connection, project_id)
                 ):
                     raise ServiceError(409, "キャラクターと素材を確認・承認してから制作へ進んでください。")
+                if step == "planning-review" and not draft["approved"]:
+                    raise ServiceError(409, "メインキャラの承認後に構成を確認できます。")
+                if (step == "production" and draft.get("planningRequired")
+                        and not draft.get("planApproved") and not self._has_production(connection, project_id)):
+                    raise ServiceError(409, "先に全体構成を確認して承認してください。")
                 draft["step"] = step
                 # Navigation does not change generation inputs or invalidate approvals/retries.
                 self._save(connection, project_id, state)
@@ -1072,9 +1107,11 @@ class M2Service:
                 validate_relationship_coverage(relationships["result"], draft["characters"])
             except (ValidationError, ValueError) as exc:
                 raise ServiceError(409, "関係性が現在のキャラクター構成と一致しません。") from exc
-        draft["step"] = "production"
         if draft["approved"]:
+            draft["step"] = ("planning-review" if draft.get("planningRequired")
+                             and not draft.get("planApproved") else "production")
             return
+        draft.update(step="planning-review", planningRequired=True, planApproved=False)
         draft["revision"] += 1
         identifier, now = uuid4().hex, self.clock()
 
@@ -1136,9 +1173,9 @@ class M2Service:
         )
         draft["approval"] = {**snapshot, "artifactId": record["id"], "version": record["version"]}
         draft["approved"] = True
-        from .m3_service import M3Service
+        from .planning_service import PlanningService
 
-        M3Service(self.coordinator).start_approved(connection, project_id, identifier)
+        PlanningService(self.coordinator).start_approved(connection, project_id, identifier)
 
     def validate_retry(self, connection, job: dict) -> None:
         state = self._load(connection, job["project_id"])
@@ -1196,7 +1233,7 @@ class M2Service:
                 job=job,
                 attempt=attempt,
             )
-            state["queue"] = self._missing_media(character) + state["queue"]
+            state["queue"].extend(self._missing_media(character))
         elif job["kind"] == "m2_relationships":
             result = validate_relationship_coverage(envelope["result"], draft["characters"])
             record = self._artifact(

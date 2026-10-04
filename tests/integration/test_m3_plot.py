@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from packages.contracts.planning import validate_plan_content
 from services.coordinator.app import create_app
 from services.coordinator.m3_service import M3Service
 from services.coordinator.service import Coordinator, encode_json
@@ -18,6 +19,9 @@ def adopted(client):
         {"setup_chapter": 1, "payoff_chapter": 3, "detail": "余白に残された文字。"},
     ]
     result["outline"]["character_arcs"].append({"character_id": "support-1", "change": "扉を開く。"})
+    result["outline"] = validate_plan_content(
+        job["payload"]["approved_plan"]["content"], job["payload"]["approval_snapshot"],
+    ).plot.as_outline().model_dump(mode="json")
     response = complete(client, worker, job, output(job, result))
     assert response.status_code == 200, response.text
     return project, worker, result, job["payload"]["approval_snapshot"]
@@ -111,6 +115,9 @@ def test_selected_production_has_no_plot_fallback_even_when_timestamps_tie(tmp_p
                patch={"name": "次の承認の名前"})
         finish(client, worker)
         action(client, project, "approve")
+        from tests.integration.planning_fixtures import complete_and_approve_plan
+
+        complete_and_approve_plan(client, project)
         with coordinator.db.transaction() as connection:
             rows = list(connection.execute(
                 "SELECT * FROM m3_production WHERE project_id=? AND chapter_number=1 ORDER BY created_at DESC,id DESC",

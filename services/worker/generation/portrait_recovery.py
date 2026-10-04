@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 
 from packages.contracts.portrait_recovery import PortraitDiagnosis, PortraitOmission
 
+from . import image_session
 from .cancellation import check_cancelled
 from .llm import LocalLLM, write_json
+from .processes import gpu_lock
 
 
 class PortraitRenderError(RuntimeError):
@@ -78,9 +81,17 @@ def generate_with_recovery(payload, prompt, work, config, *, root, generate):
             "negative_prompt": config.get("image", {}).get("negative_prompt", ""),
             "failed_stage": state["stage"], "error": state["failure"],
         }, ensure_ascii=False)}]
-        with LocalLLM(root, config, payload, directory / "llm") as llm:
+        session = image_session.current_session()
+        if session is not None:
+            session.release_model()
+        # An image runtime failure already released its lease; reacquire before
+        # diagnosis. Standalone calls still own their enclosing generation lease.
+        scope = (session.gpu_scope(gpu_lock(root / "services/worker/cache/m2/gpu.lock",
+                                           config["gpu_lock_timeout_seconds"]))
+                 if session is not None else nullcontext())
+        with scope, LocalLLM(root, config, payload, directory / "llm") as llm:
             answer = llm.structured("portrait-failure-diagnosis", messages,
-                                    PortraitDiagnosis.model_json_schema())
+                                   PortraitDiagnosis.model_json_schema())
             state["diagnosis"] = PortraitDiagnosis.model_validate(answer).model_dump()
             state["trace"] = list(llm.trace)
         save()

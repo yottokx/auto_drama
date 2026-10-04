@@ -133,6 +133,9 @@ def test_full_mesh_generated_without_instructions_and_approval_tracks_immutable_
         assert len(jobs) == 1
         assert len(jobs[0]["payload"]["cast_results"]) == 3
         approved = action(client, project, "approve")["draft"]["approval"]
+        from tests.integration.planning_fixtures import complete_and_approve_plan
+
+        complete_and_approve_plan(client, project["project"]["id"])
         reference = approved["relationships"]
         assert reference["artifactId"] == relationship["artifactId"]
         original = client.get(f"/api/artifacts/{approved['artifactId']}/content").content

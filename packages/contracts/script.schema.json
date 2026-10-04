@@ -200,6 +200,20 @@
             }
           ],
           "default": null
+        },
+        "offset_y": {
+          "default": 0,
+          "maximum": 640,
+          "minimum": -640,
+          "title": "Offset Y",
+          "type": "number"
+        },
+        "scale": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0.1,
+          "title": "Scale",
+          "type": "number"
         }
       },
       "required": [
@@ -406,6 +420,57 @@
       "title": "PauseDirection",
       "type": "object"
     },
+    "PortraitBaseline": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "pixels_per_cm": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 1000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pixels Per Cm"
+        },
+        "ground_y": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ground Y"
+        },
+        "layouts": {
+          "maxProperties": 100,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$": {
+              "$ref": "#/$defs/PortraitGeometry"
+            }
+          },
+          "title": "Layouts",
+          "type": "object"
+        }
+      },
+      "title": "PortraitBaseline",
+      "type": "object"
+    },
     "PortraitBounds": {
       "additionalProperties": false,
       "properties": {
@@ -441,6 +506,65 @@
         "bottom"
       ],
       "title": "PortraitBounds",
+      "type": "object"
+    },
+    "PortraitGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Height",
+          "type": "integer"
+        },
+        "top": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "Top",
+          "type": "integer"
+        },
+        "center_offset": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "Center Offset",
+          "type": "number"
+        },
+        "anchor_y": {
+          "maximum": 1000000,
+          "minimum": -1000000,
+          "title": "Anchor Y",
+          "type": "number"
+        },
+        "mode": {
+          "enum": [
+            "upper_body",
+            "full_body"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "source_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "top",
+        "center_offset",
+        "anchor_y",
+        "mode",
+        "source_sha256"
+      ],
+      "title": "PortraitGeometry",
       "type": "object"
     },
     "PositionDirection": {
@@ -665,6 +789,17 @@
       "maxItems": 20000,
       "title": "Assets",
       "type": "array"
+    },
+    "portrait_baseline": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PortraitBaseline"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

@@ -40,9 +40,13 @@ class ChapterProduction:
         root = self._root(connection, production)
         if not root["m4_enabled"] or root["control_state"] != "running":
             return
+        if not self._has_current_plan(connection, root):
+            return
         count = self._snapshot(connection, root)["world"]["result"]["chapterCount"]
         number = production["chapter_number"] + 1
         if not production["narrative_artifact_id"] or number > count:
+            return
+        if root["sequential_publication"] and not self._selected_build(connection, production):
             return
         if connection.execute(
             "SELECT 1 FROM m3_production WHERE storyline_id=? AND chapter_number=?",
@@ -61,10 +65,11 @@ class ChapterProduction:
         identifier = uuid4().hex
         connection.execute(
             "INSERT INTO m3_production (id,project_id,approval_id,approval_artifact_id,created_at,"
-            "storyline_id,chapter_number,previous_narrative_artifact_id,previous_state_hash,m4_enabled) "
-            "VALUES (?,?,?,?,?,?,?,?,?,1)",
+            "storyline_id,chapter_number,previous_narrative_artifact_id,previous_state_hash,m4_enabled,"
+            "plan_approval_id,sequential_publication) VALUES (?,?,?,?,?,?,?,?,?,1,?,?)",
             (identifier, root["project_id"], root["approval_id"], root["approval_artifact_id"],
-             self.clock(), root["id"], number, production["narrative_artifact_id"], state_hash),
+             self.clock(), root["id"], number, production["narrative_artifact_id"], state_hash,
+             root["plan_approval_id"], root["sequential_publication"]),
         )
         child = required(connection, "m3_production", identifier)
         self._enqueue(connection, child, "m3_narrative", {
@@ -119,6 +124,7 @@ class ChapterProduction:
             root = self._selected_production(connection, project_id)
             if root is None:
                 raise ServiceError(409, "制作が開始されていません。")
+            self._assert_current_plan(connection, root)
             self._assert_resumable(connection, root)
             if not self.history.has_operation(connection, project_id, "m3"):
                 self.history.begin(connection, project_id, "本編制作を再開", "m3-resume")
@@ -199,11 +205,17 @@ class ChapterProduction:
         raise ServiceError(422, "公開版の本文の参照を確認できません。")
 
     def _next_build(self, connection, build):
+        edition = connection.execute("SELECT edition_id FROM edition_build WHERE build_id=?", (build["id"],)).fetchone()
+        if edition:
+            return connection.execute("SELECT b.* FROM edition_build e JOIN chapter_build b ON b.id=e.build_id "
+                "WHERE e.edition_id=? AND b.chapter_number=?", (edition["edition_id"], build["chapter_number"] + 1)).fetchone()
         production = required(connection, "m3_production", build["production_id"])
         lineage = self._build_lineage(connection, build)
         for candidate in connection.execute(
             "SELECT b.* FROM chapter_build b JOIN m3_production p ON p.id=b.production_id "
-            "WHERE p.storyline_id=? AND b.chapter_number=? ORDER BY b.revision DESC",
+            "WHERE p.storyline_id=? AND b.chapter_number=? AND NOT EXISTS (SELECT 1 FROM edition_build eb "
+            "JOIN publication_edition e ON e.id=eb.edition_id WHERE eb.build_id=b.id AND e.source_edition_id IS NOT NULL) "
+            "ORDER BY b.revision DESC",
             (production["storyline_id"], build["chapter_number"] + 1),
         ):
             child = json.loads(candidate["validation"])

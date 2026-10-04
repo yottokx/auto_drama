@@ -161,7 +161,7 @@ type Drag = {
   moving: BodyBounds | null
 }
 
-function PortraitCanvas({ character, bounds, disabled, onChange }: {
+export function PortraitCanvas({ character, bounds, disabled, onChange }: {
   character: PortraitCharacter; bounds: BodyBounds | null; disabled: boolean; onChange: (bounds: BodyBounds | null) => void
 }) {
   const drag = useRef<Drag | null>(null)

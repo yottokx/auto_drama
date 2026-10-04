@@ -79,14 +79,98 @@ def test_combined_brief_world_confirmation_automatically_generates_complete_cast
                 )
             assert complete(client, job, worker_id).status_code == 200
         kinds = [job["kind"] for job in jobs]
-        assert kinds == [
-            kind for _ in range(count) for kind in ("m2_character", "m2_image", "m2_voice")
-        ] + (["m2_relationships"] if count > 1 else [])
+        assert kinds == (
+            ["m2_character"] * count
+            + (["m2_relationships"] if count > 1 else [])
+            + ["m2_image"] * count
+            + ["m2_voice"] * count
+        )
+        expected_ids = [person["id"] for person in original_brief["characters"]]
+        for kind in ("m2_character", "m2_image", "m2_voice"):
+            assert [job["payload"]["character_id"] for job in jobs if job["kind"] == kind] == expected_ids
+        portraits = [job for job in jobs if job["kind"] == "m2_image"]
+        expected_batch = [
+            {"character_id": identifier, "character_result": result}
+            for identifier, result in zip(expected_ids, portraits[0]["payload"]["cast_results"])
+        ]
+        assert all(job["payload"]["portrait_prompt_batch"] == expected_batch for job in portraits)
+        if count > 1:
+            relationships = next(job for job in jobs if job["kind"] == "m2_relationships")
+            assert [person["id"] for person in relationships["payload"]["cast_results"]] == expected_ids
+            assert all(
+                person["appearance"] and person["voice"] and person["selfIntroduction"]
+                and len(person["sampleLines"]) == 3
+                for person in relationships["payload"]["cast_results"]
+            )
+            assert all(job["payload"]["relationships_result"] for job in portraits)
         ready = detail(client, project)
         assert all(not character["pendingChanges"] for character in ready["draft"]["characters"])
         approved = action(client, project, "approve")
         assert approved["draft"]["approved"]
         assert client.get(f"/api/artifacts/{confirmation}/content").content == confirmation_bytes
+
+
+def test_relationship_failure_blocks_all_media_and_retry_keeps_portrait_batch_after_restart(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker_id = generate_combined(client, count=3)
+        project_id = project["project"]["id"]
+        for _ in range(3):
+            run_one(client, worker_id, "m2_character")
+        for _ in range(3):
+            failed = claim(client, worker_id)
+            assert failed["kind"] == "m2_relationships"
+            response = client.post(f"/api/jobs/{failed['id']}/fail", json={
+                "worker_id": worker_id, "lease_id": failed["lease_id"], "error": "fixture",
+            })
+            assert response.status_code == 200, response.text
+        assert claim(client, worker_id) is None
+        draft = detail(client, project)["draft"]
+        assert draft["remainingJobCount"] == 7
+        assert all(
+            not person["imageArtifactId"] and not person["voiceArtifactId"]
+            for person in draft["characters"]
+        )
+        assert client.post(f"/api/jobs/{failed['id']}/retry").status_code == 200
+        retried, _ = run_one(client, worker_id, "m2_relationships")
+        assert retried["id"] == failed["id"]
+        assert retried["payload"] == failed["payload"]
+        first_image, _ = run_one(client, worker_id, "m2_image")
+        batch = first_image["payload"]["portrait_prompt_batch"]
+        assert [person["character_id"] for person in batch] == ["person-1", "person-2", "person-3"]
+
+    with TestClient(create_app(tmp_path)) as client:
+        for identifier in ("person-2", "person-3"):
+            image, _ = run_one(client, worker_id, "m2_image")
+            assert image["payload"]["character_id"] == identifier
+            assert image["payload"]["portrait_prompt_batch"] == batch
+        for identifier in ("person-1", "person-2", "person-3"):
+            voice, _ = run_one(client, worker_id, "m2_voice")
+            assert voice["payload"]["character_id"] == identifier
+        assert claim(client, worker_id) is None
+        assert action(client, project_id, "approve")["draft"]["approved"]
+
+
+def test_saved_interleaved_cast_queue_finishes_text_before_images_and_voices(tmp_path):
+    coordinator = Coordinator(tmp_path)
+    with TestClient(create_app(coordinator=coordinator)) as client:
+        project, worker_id = generate_combined(client, count=3)
+        run_one(client, worker_id, "m2_character")
+        with coordinator.db.transaction() as connection:
+            state = json.loads(connection.execute("SELECT state FROM m2_draft").fetchone()[0])
+            # Saved queues used to place the completed person's image and voice
+            # ahead of the remaining character settings and relationships.
+            order = {"m2_voice": 0, "m2_image": 1, "m2_relationships": 2, "m2_character": 3}
+            state["queue"].sort(key=lambda item: order[item["kind"]])
+            connection.execute("UPDATE m2_draft SET state=?", (json.dumps(state),))
+        jobs = []
+        while job := claim(client, worker_id):
+            jobs.append(job)
+            response = complete(client, job, worker_id)
+            assert response.status_code == 200, response.text
+        assert [job["kind"] for job in jobs] == (
+            ["m2_character"] * 2 + ["m2_relationships"] + ["m2_image"] * 3 + ["m2_voice"] * 3
+        )
+        assert action(client, project, "approve")["draft"]["approved"]
 
 
 @pytest.mark.parametrize("changed", ["world", "character", "relationship", "cast"])
