@@ -26,6 +26,79 @@ const production = extra => ({
   ...extra,
 })
 
+test('CG progress separates plan, base and variants and reports omissions as processed work', () => {
+  const current = chapter(1, 'generating_assets', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, chapter_budget: 1, plan_completed: true, planned: 3, generated: 1, omitted: 2,
+      planning_omitted: 1, omissions: [{ cg_id: 'cg1', variant_id: 'v1', reason: '失敗1' }, { cg_id: 'cg1', variant_id: 'v2', reason: '失敗2' },
+        { cg_id: 'cg2', variant_id: null, reason: '指示作成を省略' }] },
+    requirements: [
+      { kind: 'm3_event_cg_plan', artifact_id: 'plan' },
+      { kind: 'm3_event_cg', artifact_id: 'base', descriptor: { cg_id: 'cg1', variant_id: null } },
+      { kind: 'm3_event_cg', artifact_id: 'omitted-1', descriptor: { cg_id: 'cg1', variant_id: 'v1' } },
+      { kind: 'm3_event_cg', artifact_id: 'omitted-2', descriptor: JSON.stringify({ cg_id: 'cg1', variant_id: 'v2' }) },
+    ],
+  })
+  const rows = chapterGenerationProgress(current)
+  assert.ok(rows.findIndex(row => row.id === 'm3_event_cg_plan') < rows.findIndex(row => row.id === 'm3_event_cg_base'))
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').total, 1)
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').statusText, undefined)
+  const variants = rows.find(row => row.id === 'm3_event_cg_variant')
+  assert.equal(variants.total, 2)
+  assert.equal(variants.status, 'skipped')
+  assert.equal(variants.statusText, '処理済み・2枚省略')
+  assert.equal(rows.find(row => row.id === 'build').status, 'running')
+})
+
+test('CG counts are unknown before planning and zero-budget chapters add no pending CG work', () => {
+  const waiting = chapter(1, 'generating_assets', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, chapter_budget: 1, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    requirements: [],
+  })
+  let rows = chapterGenerationProgress(waiting)
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_plan').status, 'pending')
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').total, null)
+  assert.equal(rows.find(row => row.id === 'build').status, 'pending')
+  rows = chapterGenerationProgress({ ...waiting, event_cg: { ...waiting.event_cg, chapter_budget: 0, plan_completed: true } })
+  assert.equal(rows.filter(row => row.id.startsWith('m3_event_cg')).every(row => row.status === 'completed' || row.status === 'skipped'), true)
+  assert.equal(rows.find(row => row.id === 'build').status, 'running')
+})
+
+test('enabled CG work is visible before requirements exist, with the whole-work allocation before chapter writing', () => {
+  const current = chapter(1, 'writing', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, budget_completed: false, chapter_budget: null, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    requirements: [],
+  })
+  const rows = chapterGenerationProgress(current)
+  const ids = rows.map(row => row.id)
+  assert.equal(ids[0], 'm3_event_cg_budget')
+  assert.equal(rows[0].status, 'pending')
+  assert.ok(ids.indexOf('m3_event_cg_plan') > ids.indexOf('chapter-validation'))
+  assert.ok(ids.indexOf('m3_event_cg_base') > ids.indexOf('m3_background'))
+  assert.ok(ids.indexOf('m3_event_cg_variant') > ids.indexOf('m3_event_cg_base'))
+  assert.ok(ids.indexOf('m3_event_cg_variant') < ids.indexOf('m3_voice_clone'))
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').total, null)
+  assert.equal(productionCurrentProgress([current]), '作品全体のCG配分の実行待ち')
+  assert.equal(chapterGenerationProgress({ ...current, chapter_number: 2 }).some(row => row.id === 'm3_event_cg_budget'), false)
+  assert.equal(chapterGenerationProgress({ ...current, event_cg: undefined }).some(row => row.id.startsWith('m3_event_cg')), false)
+})
+
+test('allocation work does not prematurely fix background counts or mark unselected CGs as complete', () => {
+  const current = chapter(1, 'writing', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 0, budget_completed: false, chapter_budget: null, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    requirements: [{ kind: 'm3_event_cg_budget', artifact_id: null, job_id: 'budget' }],
+    jobs: [{ id: 'budget', kind: 'm3_event_cg_budget', status: 'running', attempt_count: 1 }],
+  })
+  const rows = chapterGenerationProgress(current)
+  assert.equal(rows[0].status, 'running')
+  assert.equal(rows.find(row => row.id === 'm3_background').total, null)
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_plan').status, 'pending')
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_variant').status, 'skipped')
+  assert.equal(productionCurrentProgress([current]), '作品全体のCG配分を制作中')
+  const completed = chapterGenerationProgress({ ...current, jobs: [], requirements: [], event_cg: { ...current.event_cg, budget_completed: true, chapter_budget: 1 } })
+  assert.equal(completed[0].status, 'completed')
+  assert.equal(completed.find(row => row.id === 'm3_event_cg_plan').status, 'pending')
+})
+
 test('a published first chapter is viewable while later chapters generate', () => {
   const view = productionView(production(), 3)
   assert.equal(view.complete, false)
@@ -147,6 +220,103 @@ test('an unstarted project does not display chapters or stop controls', () => {
 const job = (id, kind, status, extra = {}) => ({ id, kind, status, attempt_count: 1, ...extra })
 const requirement = (kind, target_id, artifact_id = null, job_id = null, descriptor = {}) => ({ kind, target_id, artifact_id, job_id, descriptor: JSON.stringify(descriptor) })
 const supporting = { character_result: { name: '案内役' } }
+
+test('music planning and scene tracks participate in progress and block building until all music is ready', () => {
+  const current = chapter(1, 'generating_assets', {
+    jobs: [job('music-plan', 'm3_music_plan', 'completed'), job('music-two', 'm3_music', 'running')],
+    requirements: [
+      requirement('m3_music_plan', 'chapter-1', 'music-prompts', 'music-plan'),
+      requirement('m3_music', 'scene-1', 'music-one'),
+      requirement('m3_music', 'scene-2', null, 'music-two'),
+    ],
+  })
+  const groups = chapterAssetProgress(current)
+  assert.deepEqual(groups.map(item => item.id), ['m3_image', 'm3_background', 'm3_voice', 'm3_voice_clone', 'm3_music_plan', 'm3_music'])
+  assert.deepEqual(groups.slice(-2).map(item => [item.current, item.total, item.status]), [[1, 1, 'completed'], [1, 2, 'running']])
+  assert.equal(chapterGenerationProgress(current).at(-1).status, 'pending')
+  assert.match(productionCurrentProgress([current]), /場面のBGM（1\/2）/)
+  current.requirements[2].artifact_id = 'music-two'
+  current.jobs[1].status = 'completed'
+  assert.equal(chapterGenerationProgress(current).at(-1).status, 'running')
+})
+
+test('enabled music stages are present from chapter start and design directly follows validation without a job counter', () => {
+  const current = chapter(1, 'writing', { music_enabled: true, jobs: [job('narrative', 'm3_narrative', 'running')] })
+  const saved = structuredClone(current)
+  const rows = chapterGenerationProgress(current)
+  assert.deepEqual(rows.map(item => item.id), ['narrative', 'scene-creation', 'chapter-validation', 'm3_music_plan', 'm3_background', 'm3_voice_clone', 'm3_music', 'build'])
+  const design = rows.find(item => item.id === 'm3_music_plan'), tracks = rows.find(item => item.id === 'm3_music')
+  assert.equal(design.status, 'pending')
+  assert.equal(design.total, 1, 'the internal fixed total still prevents premature building')
+  assert.equal(progressItemLabel(design), 'BGM・場面転換の設計')
+  assert.equal(tracks.status, 'pending')
+  assert.equal(tracks.total, null)
+  assert.equal(progressItemLabel(tracks), '場面のBGM')
+  assert.equal(rows.at(-1).status, 'pending')
+  assert.deepEqual(current, saved)
+})
+
+test('track count stays unknown while the music plan is queued, running, failed or completed without adoption', () => {
+  for (const status of ['pending', 'running', 'failed', 'completed']) {
+    const current = chapter(1, 'generating_assets', { music_enabled: true,
+      jobs: [job('music-plan', 'm3_music_plan', status, { attempt_count: status === 'pending' ? 0 : 1 })],
+      requirements: [requirement('m3_music_plan', 'chapter-music', null, 'music-plan'), requirement('m3_background', 'port', 'background')],
+    })
+    const rows = chapterGenerationProgress(current)
+    const tracks = rows.find(item => item.id === 'm3_music'), design = rows.find(item => item.id === 'm3_music_plan')
+    assert.equal(tracks.total, null)
+    assert.equal(tracks.status, 'pending')
+    assert.equal(progressItemLabel(tracks), '場面のBGM')
+    assert.equal(progressItemLabel(design), 'BGM・場面転換の設計')
+    assert.notEqual(design.status, 'completed', 'job completion cannot replace plan artifact adoption')
+    assert.equal(rows.at(-1).status, 'pending')
+  }
+})
+
+test('an adopted silence-only plan fixes zero tracks and lets building proceed without artificial generation', () => {
+  const current = chapter(1, 'generating_assets', { music_enabled: true,
+    jobs: [job('music-plan', 'm3_music_plan', 'completed')],
+    requirements: [requirement('m3_music_plan', 'chapter-music', 'music-plan', 'music-plan')],
+  })
+  const rows = chapterGenerationProgress(current)
+  const design = rows.find(item => item.id === 'm3_music_plan'), tracks = rows.find(item => item.id === 'm3_music')
+  assert.equal(design.status, 'completed')
+  assert.equal(progressItemLabel(design), 'BGM・場面転換の設計')
+  assert.deepEqual([tracks.status, tracks.total, tracks.completed], ['skipped', 0, 0])
+  assert.equal(progressItemLabel(tracks), '場面のBGM（0曲）')
+  assert.equal(rows.at(-1).status, 'running')
+})
+
+test('music design precedes later narrative memory steps and media while active counts appear only for accepted tracks', () => {
+  const current = chapter(2, 'generating_assets', { music_enabled: true, jobs: [
+    job('narrative', 'm3_narrative', 'completed', { progress: llmProgress({ active: false, steps: [
+      { id: 'scene-plan', stage: 'chapter_scene_plan', status: 'completed', chapter_number: 2 },
+      ...['script', 'speech_extraction', 'staging'].map(stage => ({ id: stage, stage, status: 'completed', chapter_number: 2, scene_number: 1 })),
+      { id: 'validate', stage: 'validation', status: 'completed', chapter_number: 2 },
+      { id: 'memory', stage: 'memory', status: 'completed', chapter_number: 2 },
+    ] }) }), job('plan', 'm3_music_plan', 'completed'), job('track', 'm3_music', 'running'),
+  ], requirements: [requirement('m3_music_plan', 'chapter-music', 'plan-artifact', 'plan'), requirement('m3_music', 'scene-1', null, 'track')] })
+  const rows = chapterGenerationProgress(current), validation = rows.findIndex(item => item.id === 'chapter-validation')
+  assert.deepEqual(rows.slice(validation, validation + 3).map(item => item.id), ['chapter-validation', 'm3_music_plan', 'memory'])
+  assert.equal(rows.filter(item => item.id === 'm3_music_plan').length, 1)
+  assert.equal(progressItemLabel(rows.find(item => item.id === 'm3_music')), '場面のBGM（0/1）')
+  assert.equal(productionCurrentProgress([current]), '第2章・場面のBGM（0/1）を制作中')
+})
+
+test('disabled and pre-music legacy chapters retain their original phases while old music jobs remain visible', () => {
+  for (const music_enabled of [undefined, false]) {
+    const current = chapter(1, 'writing', { music_enabled })
+    assert.equal(chapterGenerationProgress(current).some(item => item.id.startsWith('m3_music')), false)
+    assert.equal(chapterAssetProgress(current).length, 4)
+  }
+  const legacy = chapter(1, 'generating_assets', { jobs: [job('plan', 'm3_music_plan', 'completed'), job('track', 'm3_music', 'running')] })
+  assert.equal(progressItemLabel(chapterGenerationProgress(legacy).find(item => item.id === 'm3_music_plan')), 'BGM・場面転換の設計')
+  assert.equal(progressItemLabel(chapterGenerationProgress(legacy).find(item => item.id === 'm3_music')), '場面のBGM（0/1）')
+  const inherited = productionChapters(production({ music_enabled: true }), 3)
+  assert.ok(inherited.every(item => item.music_enabled === true))
+  const overridden = productionChapters(production({ music_enabled: true, chapters: [chapter(1, 'writing', { music_enabled: false })] }), 1)
+  assert.equal(overridden[0].music_enabled, false)
+})
 
 test('media progress groups required assets in model order and includes reused and unqueued work without main cast', () => {
   const current = chapter(2, 'generating_assets', {

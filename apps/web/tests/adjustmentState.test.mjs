@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { transformWithOxc } from 'vite'
-import { adjustmentFixture } from './adjustmentFixture.mjs'
+import { adjustmentFixture, adjustmentMusicFixture, adjustmentContinuityFixture } from './adjustmentFixture.mjs'
 
 const { code } = await transformWithOxc(await readFile(new URL('../src/adjustmentState.ts', import.meta.url), 'utf8'), 'adjustmentState.ts', { target: 'es2022' })
 const state = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
@@ -98,4 +98,131 @@ test('adjustment audio progress groups all lines and retains completed counts be
   assert.deepEqual(state.adjustmentJobProgress(source), [{ id: 'm3_voice_clone', label: '台詞・試聴の音声', completed: 40, current: 40, total: 45, status: 'running' }])
   source.jobs[40].status = 'failed'
   assert.equal(state.adjustmentJobProgress(source)[0].status, 'failed')
+})
+
+test('music assignment and volume are dirty draft edits isolated by chapter production and scene', () => {
+  const source = adjustmentMusicFixture()
+  const original = state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt')
+  const selected = state.selectAdjustmentMusicCandidate(original, source.scenes[0], source.music_candidates[0])
+  assert.equal(state.adjustmentDirty(selected), true)
+  assert.deepEqual(selected.scene_music[0], { production_id: 'chapter-1', scene_id: 'scene-1', candidate_id: 'music-1', action: 'play', volume: .35 })
+  assert.deepEqual(selected.scene_music[1], original.scene_music[1])
+  assert.equal(state.selectAdjustmentMusicCandidate(original, source.scenes[1], source.music_candidates[0]), original, 'same scene id in another chapter must not accept the candidate')
+  const changed = state.changeAdjustmentMusic(selected, source.scenes[0], { volume: .12, production_id: 'wrong', scene_id: 'wrong' })
+  assert.equal(changed.scene_music[0].volume, .12)
+  assert.equal(changed.scene_music[0].production_id, 'chapter-1')
+  assert.deepEqual(changed.characters, original.characters)
+  assert.deepEqual(state.adjustmentPayload(changed).scene_music, changed.scene_music)
+})
+
+test('polling candidates preserves local BGM edits and conflicts on a remote revision change', () => {
+  const source = adjustmentMusicFixture()
+  let current = state.selectAdjustmentMusicCandidate(state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt'), source.scenes[0], source.music_candidates[0])
+  const updated = structuredClone(source)
+  updated.music_candidates.push({ ...source.music_candidates[0], id: 'music-2' })
+  current = state.receiveAdjustment(current, updated)
+  assert.equal(current.scene_music[0].candidate_id, 'music-1')
+  assert.equal(current.source.music_candidates.length, 2)
+  assert.equal(current.conflict, false)
+  updated.draft.revision = 2
+  current = state.receiveAdjustment(current, updated)
+  assert.equal(current.conflict, true)
+  assert.equal(current.scene_music[0].candidate_id, 'music-1')
+  current = state.receiveAdjustment(current, updated, 'adopt')
+  assert.equal(current.conflict, false)
+  assert.equal(current.scene_music[0].candidate_id, null)
+  assert.equal(state.adjustmentDirty(current), false)
+})
+
+test('our music generation response advances revision without adopting a candidate or discarding edits', () => {
+  const source = adjustmentMusicFixture()
+  const current = state.changeAdjustmentMusic(state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt'), source.scenes[1], { action: 'continue', volume: .4 })
+  const response = structuredClone(source); response.draft.revision = 2
+  const next = state.receiveAdjustment(current, response, 'candidate')
+  assert.equal(next.base.revision, 2)
+  assert.equal(next.scene_music[1].action, 'continue')
+  assert.equal(next.scene_music[1].volume, .4)
+  assert.equal(next.scene_music[0].candidate_id, null)
+  assert.equal(state.adjustmentDirty(next), true)
+  assert.equal(state.selectAdjustmentMusicCandidate(next, source.scenes[0], { ...source.music_candidates[0], artifact_id: null }), next)
+})
+
+test('music job progress remains separate from dialogue work', () => {
+  const source = adjustmentMusicFixture()
+  source.jobs = [{ id: 'music-1', kind: 'music', status: 'completed', attempt_count: 1 }, { id: 'music-2', kind: 'music', status: 'running', attempt_count: 1 }]
+  assert.deepEqual(state.adjustmentJobProgress(source), [{ id: 'music', label: '場面のBGM候補', completed: 1, current: 1, total: 2, status: 'running' }])
+})
+
+test('normalized music jobs expose separate planning and generation progress', () => {
+  const source = adjustmentMusicFixture()
+  source.jobs = [
+    { id: 'music-plan', kind: 'music', generation_kind: 'm3_music_plan', status: 'completed', attempt_count: 1 },
+    { id: 'music-audio', kind: 'music', generation_kind: 'm3_music', status: 'running', attempt_count: 1 },
+  ]
+  assert.deepEqual(state.adjustmentJobProgress(source), [
+    { id: 'm3_music_plan', label: 'BGM・場面転換の設計', completed: 1, current: 1, total: 1, status: 'completed' },
+    { id: 'music', label: '場面のBGM候補', completed: 0, current: 0, total: 1, status: 'running' },
+  ])
+})
+
+test('effective music ranges inherit the lead candidate and volume without mutating drafts or crossing chapters', () => {
+  const source = adjustmentContinuityFixture()
+  const editor = state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt')
+  const original = structuredClone(editor)
+  const rows = state.adjustmentMusicContinuity(editor)
+  assert.deepEqual(rows.slice(0, 3).map(row => row.candidate.id), ['music-1', 'music-1', 'music-1'])
+  assert.equal(rows[0].range.end.scene_id, 'scene-3')
+  assert.equal(rows[1].source_scene.scene_id, 'scene-1')
+  assert.equal(rows[2].track_volume, .22)
+  assert.equal(rows[3].candidate, undefined)
+  assert.deepEqual(editor, original)
+  const invalid = state.changeAdjustmentMusic(editor, source.scenes[5], { action: 'continue' })
+  assert.match(state.adjustmentMusicContinuity(invalid)[5].error, /継続するBGMがありません/)
+})
+
+test('manual stop and play changes recompute the entire following continuation range immediately', () => {
+  const source = adjustmentContinuityFixture()
+  let editor = state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt')
+  editor = state.changeAdjustmentMusic(editor, source.scenes[1], { action: 'stop' })
+  let rows = state.adjustmentMusicContinuity(editor)
+  assert.equal(rows[0].range.end.scene_id, 'scene-1')
+  assert.match(rows[2].error, /継続するBGMがありません/)
+  editor = state.changeAdjustmentMusic(editor, source.scenes[1], { action: 'continue' })
+  editor = state.changeAdjustmentMusic(editor, source.scenes[3], { action: 'play', candidate_id: 'music-4', volume: .5 })
+  editor = state.changeAdjustmentMusic(editor, source.scenes[4], { action: 'continue' })
+  rows = state.adjustmentMusicContinuity(editor)
+  assert.equal(rows[3].range.end.scene_id, 'scene-5')
+  assert.equal(rows[4].candidate.id, 'music-4')
+  assert.equal(rows[4].track_volume, .5)
+  assert.equal(rows[5].candidate, undefined)
+})
+
+test('automatic reset restores action, transition and reason while retaining the edited volume', () => {
+  const source = adjustmentContinuityFixture()
+  let editor = state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt')
+  editor = state.changeAdjustmentMusic(editor, source.scenes[1], { action: 'stop', volume: .13, reason: '手動でBGMなしに設定' })
+  const reset = state.resetAutomaticSceneMusic(editor, source.scenes[1])
+  assert.deepEqual(reset.scene_music[1], { ...source.draft.scene_music[1], volume: .13 })
+  const missing = structuredClone(source.scenes[0]); missing.music_plan.candidate_id = 'unfinished'
+  assert.equal(state.resetAutomaticSceneMusic(editor, missing), editor)
+})
+
+test('switching automatic continuation to another cue restores fades and preserves explicitly edited zero fades', () => {
+  const source = adjustmentContinuityFixture()
+  const editor = state.receiveAdjustment(state.initialAdjustmentEditor, source, 'adopt')
+  const changed = state.changeAdjustmentMusic(editor, source.scenes[1], { action: 'play', candidate_id: 'new' })
+  assert.deepEqual(changed.scene_music[1].transition, { ...source.draft.scene_music[1].transition, music_fade_out_ms: 1000, music_fade_in_ms: 1000 })
+  const stopped = state.changeAdjustmentMusic(editor, source.scenes[1], { action: 'stop' })
+  assert.equal(stopped.scene_music[1].transition.music_fade_out_ms, 1000)
+  assert.equal(stopped.scene_music[1].transition.music_fade_in_ms, 0)
+  const explicit = state.changeAdjustmentMusic(editor, source.scenes[1], { transition: { ...source.draft.scene_music[1].transition, visual: 'cut' }, reason: '画面遷移を手動調整' })
+  const cut = state.changeAdjustmentMusic(explicit, source.scenes[1], { action: 'play' })
+  assert.equal(cut.scene_music[1].transition.music_fade_out_ms, 0)
+  assert.equal(cut.scene_music[1].transition.visual, 'cut')
+})
+
+test('chapter replans have independent progress without appearing as new audio generation', () => {
+  const source = adjustmentContinuityFixture()
+  source.jobs = [{ id: 'replan', kind: 'music', generation_kind: 'm3_music_plan', purpose: 'music_replan', status: 'running', attempt_count: 1 }]
+  assert.deepEqual(state.adjustmentJobProgress(source), [{ id: 'music_replan', label: '章のBGM・場面転換の見直し', completed: 0, current: 0, total: 1, status: 'running' }])
 })

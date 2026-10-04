@@ -17,8 +17,9 @@ if __package__ in {None, ""}:
 import httpx
 
 from services.worker.client import WorkerClient
-from services.worker.generation import image_session, llm_session
+from services.worker.generation import event_cg_session, image_session, llm_session, music_session
 from services.worker.generation.voice_session import prepare_job, reuse_voice_runtime
+from services.worker.process_lock import WorkerAlreadyRunning, worker_process_lock
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ def prepare_media_job(kind: str):
     prepare_job(kind)
     image_session.prepare_job(kind)
     llm_session.prepare_job(kind)
+    music_session.prepare_job(kind)
+    event_cg_session.prepare_job(kind)
 
 
 def maintain_runtimes(result: str, *sessions):
@@ -58,6 +61,8 @@ def main() -> int:
         "--no-voice-reuse", action="store_true", help="Reload Irodori for every voice job"
     )
     parser.add_argument("--no-image-reuse", action="store_true", help="Reload Anima for every image job")
+    parser.add_argument("--no-music-reuse", action="store_true", help="Reload Stable Audio for every music job")
+    parser.add_argument("--no-event-cg-reuse", action="store_true", help="Reload Qwen for every CG image")
     parser.add_argument(
         "--export-only", action="store_true", help="Run M1 export without loading M2 configuration"
     )
@@ -70,6 +75,20 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     root = Path(__file__).resolve().parents[2]
+    try:
+        with worker_process_lock(args.work_dir or root / "services/worker/cache/m2/jobs") as work_dir:
+            args.work_dir = work_dir
+            return run_worker(args, root)
+    except WorkerAlreadyRunning as error:
+        logger.error("%s", error)
+        return 1
+    except KeyboardInterrupt:
+        logger.info("Worker stopped; unfinished leases will recover on the coordinator")
+        return 0
+
+
+def run_worker(args: argparse.Namespace, root: Path) -> int:
+    """Prepare and register only after the process has exclusive directory ownership."""
     generation_runner = None
     generation_kinds = []
     llm_models = []
@@ -99,6 +118,8 @@ def main() -> int:
             reuse_voice_runtime(enabled=not args.no_voice_reuse and not args.export_only) as voices,
             image_session.reuse_image_runtime(enabled=not args.no_image_reuse and not args.export_only) as images,
             llm_session.reuse_llm_runtime(enabled=not args.export_only) as llms,
+            music_session.reuse_music_runtime(enabled=not args.no_music_reuse and not args.export_only) as music,
+            event_cg_session.reuse_event_cg_runtime(enabled=not args.no_event_cg_reuse and not args.export_only) as cgs,
             httpx.Client(base_url=args.coordinator, timeout=30.0, trust_env=False) as client,
             ExitStack() as download_stack,
         ):
@@ -115,7 +136,7 @@ def main() -> int:
             )
             downloads_started = False
             while True:
-                maintain_runtimes("idle", voices, images, llms)
+                maintain_runtimes("idle", voices, images, llms, music, cgs)
                 try:
                     if not args.export_only and not args.once and not downloads_started:
                         from services.worker.tts_download_client import TTSDownloadAgent
@@ -133,7 +154,7 @@ def main() -> int:
                 except httpx.HTTPError as error:
                     logger.warning("Coordinator unavailable: %s", error)
                     result = "deferred"
-                maintain_runtimes(result, voices, images, llms)
+                maintain_runtimes(result, voices, images, llms, music, cgs)
                 if args.once:
                     return 0 if result in {"idle", "completed"} else 1
                 if result != "completed":
@@ -143,7 +164,7 @@ def main() -> int:
                         interval = min(remaining, 1.0)
                         time.sleep(interval)
                         remaining -= interval
-                        maintain_runtimes("idle", voices, images, llms)
+                        maintain_runtimes("idle", voices, images, llms, music, cgs)
     except KeyboardInterrupt:
         logger.info("Worker stopped; unfinished leases will recover on the coordinator")
         return 0

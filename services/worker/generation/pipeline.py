@@ -13,7 +13,7 @@ from pathlib import Path
 from packages.contracts.tts_profile import select_tts_profile
 
 from ..model_config import catalog, model_base, select_config
-from . import image_session, llm_session, voice_session
+from . import image_session, llm_session, music_session, voice_session
 from .brief_requirements import _original_inputs, applied_instructions, ensure_brief_requirements
 from .cancellation import check_cancelled
 from .context_budget import OutputTokenPolicy
@@ -1171,7 +1171,11 @@ def _bundle(envelope: dict, assets: dict[str, bytes]) -> bytes:
 def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False) -> bytes:
     """Return a complete deterministic result ZIP; failed output is never adopted."""
     kind = job.get("kind")
+    from .event_cg_session import prepare_job as prepare_event_cg
+
+    prepare_event_cg(kind)
     voice_session.prepare_job(kind)
+    music_session.prepare_job(kind)
     image_session.prepare_job(kind)
     llm_session.prepare_job("m3_image" if supporting_portrait else kind)
     payload = job.get("payload")

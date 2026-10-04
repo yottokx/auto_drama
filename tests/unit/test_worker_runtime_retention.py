@@ -21,7 +21,7 @@ class Runtime:
 
 
 @pytest.mark.parametrize("waiting_result", ["idle", "deferred"])
-def test_worker_reuses_models_after_waiting_and_closes_on_exit(monkeypatch, waiting_result):
+def test_worker_reuses_models_after_waiting_and_closes_on_exit(monkeypatch, tmp_path, waiting_result):
     runtimes = [Runtime() for _ in range(3)]
 
     @contextmanager
@@ -34,7 +34,9 @@ def test_worker_reuses_models_after_waiting_and_closes_on_exit(monkeypatch, wait
     monkeypatch.setattr(worker_main, "reuse_voice_runtime", lambda **kw: scope(runtimes[0], **kw))
     monkeypatch.setattr(worker_main.image_session, "reuse_image_runtime", lambda **kw: scope(runtimes[1], **kw))
     monkeypatch.setattr(worker_main.llm_session, "reuse_llm_runtime", lambda **kw: scope(runtimes[2], **kw))
-    monkeypatch.setattr(worker_main.sys, "argv", ["worker", "--export-only", "--poll-interval", "2.5"])
+    monkeypatch.setattr(worker_main.sys, "argv", [
+        "worker", "--export-only", "--poll-interval", "2.5", "--work-dir", str(tmp_path)
+    ])
     sleeps = []
     monkeypatch.setattr(worker_main.time, "sleep", sleeps.append)
     outcomes = iter(["completed", waiting_result, "completed"])

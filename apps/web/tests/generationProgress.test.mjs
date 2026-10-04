@@ -41,6 +41,22 @@ test('paused and frozen views retain counts without claiming running work', () =
   assert.ok(!markup.includes('generation-progress-running'))
 })
 
+test('CG allocation and future selection stay visible while a paused chapter stops all pending stages', () => {
+  const chapter = { chapter_number: 1, status: 'writing', narrative_artifact_id: null, build: null, requirements: [],
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, budget_completed: false, chapter_budget: null, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    jobs: [{ id: 'budget', kind: 'm3_event_cg_budget', status: 'running', attempt_count: 1 }],
+  }
+  const markup = renderToStaticMarkup(GenerationProgress({ items: chapterGenerationProgress(chapter), label: '制作工程', paused: true }))
+  const rows = markup.match(/<li\b[^>]*>[\s\S]*?<\/li>/g) ?? []
+  assert.match(rows[0], /作品全体のCG配分/)
+  for (const label of ['作品全体のCG配分', 'イベントCGの選定・指示作成', '基本CG', 'CGの差分']) {
+    const row = rows.find(value => value.includes(label))
+    assert.match(row, /停止中/)
+    assert.doesNotMatch(row, /（0\//)
+  }
+  assert.doesNotMatch(markup, /generation-progress-running/)
+})
+
 test('sequential dialogue work keeps its active appearance during claim gaps and pauses without changing the count', () => {
   for (const [completed, runningIndex] of [[39, 39], [40, null], [40, 40]]) {
     const chapter = {
@@ -76,6 +92,28 @@ test('the initial chapter view shows gray scene and validation waiting rows befo
     assert.ok(rows[index].includes('待機中'))
     assert.ok(!rows[index].includes('STEP'))
   }
+})
+
+test('enabled music starts as gray waiting rows, with design immediately after validation and no unknown counts', () => {
+  const current = { chapter_number: 1, status: 'writing', narrative_artifact_id: null, build: null, music_enabled: true,
+    jobs: [{ id: 'narrative', kind: 'm3_narrative', status: 'running', attempt_count: 1 }],
+  }
+  const markup = renderToStaticMarkup(GenerationProgress({ items: chapterGenerationProgress(current), label: '制作工程' }))
+  const rows = markup.match(/<li\b[^>]*>[\s\S]*?<\/li>/g) ?? []
+  const validation = rows.findIndex(row => row.includes('内容・整合性の確認'))
+  assert.ok(rows[validation + 1].includes('BGM・場面転換の設計'))
+  const music = rows.filter(row => row.includes('BGM・場面転換の設計') || row.includes('場面のBGM'))
+  assert.equal(music.length, 2)
+  assert.ok(music.every(row => row.includes('generation-progress-pending') && row.includes('待機中')))
+  assert.ok(music.every(row => !row.includes('（') && !row.includes('STEP')))
+  assert.ok(!markup.includes('対象なし'))
+  current.narrative_artifact_id = 'narrative'
+  current.jobs = [{ id: 'plan', kind: 'm3_music_plan', status: 'completed', attempt_count: 1 }]
+  current.requirements = [{ kind: 'm3_music_plan', artifact_id: 'accepted-plan', job_id: 'plan' }]
+  const accepted = renderToStaticMarkup(GenerationProgress({ items: chapterGenerationProgress(current), label: '制作工程' }))
+  assert.ok(accepted.includes('場面のBGM（0曲）'))
+  assert.ok(accepted.includes('対象なし'))
+  assert.ok(!accepted.includes('BGM・場面転換の設計（'))
 })
 
 test('completed and in-progress scene requests render as one STEP row per scene', () => {

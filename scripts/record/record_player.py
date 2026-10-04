@@ -16,6 +16,7 @@ from urllib.parse import quote, urljoin, urlparse
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
+RECORDING_FADE_MILLISECONDS = 400
 
 PLAYER_PROGRESS = """() => {
   const k = window.TYRANO.kag;
@@ -40,27 +41,74 @@ AUDIO_START = """async () => {
   h.autoSuspend = false;
   await h.ctx.resume();
   const destination = h.ctx.createMediaStreamDestination();
-  h.masterGain.connect(destination);
-  // Record only the player's mix; do not play it on the user's speakers.
-  h.masterGain.disconnect(h.ctx.destination);
-  const recorder = new MediaRecorder(destination.stream, {mimeType: 'audio/webm;codecs=opus'});
-  let pending = Promise.resolve();
-  recorder.ondataavailable = event => {
-    if (!event.data.size) return;
-    pending = pending.then(async () => {
-      const bytes = new Uint8Array(await event.data.arrayBuffer());
-      let text = '';
-      for (let i = 0; i < bytes.length; i += 8192)
-        text += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      await window.recordAudioChunk(btoa(text));
-    });
+  const recordingGain = h.ctx.createGain();
+  recordingGain.connect(destination);
+  let musicTap = null, musicInput = null, cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try { musicInput?.disconnect(); } catch (_) {}
+    // The page remains open while FFmpeg encodes. Keep its speakers silent.
+    try { musicTap?.release({restoreSpeakers: false}); } catch (_) {}
+    try { h.masterGain.disconnect(recordingGain); } catch (_) {}
+    try { recordingGain.disconnect(); } catch (_) {}
+    destination.stream.getTracks().forEach(track => track.stop());
   };
-  window.finishRecordingAudio = () => new Promise((resolve, reject) => {
-    recorder.onerror = event => reject(Error(event.error?.message || 'Audio recording failed'));
-    recorder.onstop = () => pending.then(resolve, reject);
-    recorder.stop();
-  });
-  recorder.start(1000);
+  try {
+    h.masterGain.connect(recordingGain);
+    h.masterGain.disconnect(h.ctx.destination);
+    musicTap = window.AutoDramaMusic?.captureOutput?.() ?? null;
+    if (musicTap) {
+      // BGM arrives after its own authored/user gain. Mix it directly into the
+      // recording destination, so the voice master gain cannot change music.
+      musicInput = h.ctx.createMediaStreamSource(musicTap.stream);
+      musicInput.connect(recordingGain);
+    }
+    let fading = false;
+    window.fadeRecordingAudio = milliseconds => {
+      if (!Number.isInteger(milliseconds) || milliseconds < 0 || milliseconds > 2000)
+        throw Error('Invalid recording fade duration');
+      if (fading || cleaned) return;
+      fading = true;
+      // Only the captured mix fades. Reader playback, its loop position and
+      // authored/user gains are untouched by this recording-only envelope.
+      const param = recordingGain.gain, now = h.ctx.currentTime;
+      param.cancelScheduledValues?.(now);
+      param.setValueAtTime(param.value, now);
+      if (milliseconds && typeof param.linearRampToValueAtTime === 'function')
+        param.linearRampToValueAtTime(0, now + milliseconds / 1000);
+      else param.setValueAtTime(0, now);
+    };
+    const recorder = new MediaRecorder(destination.stream, {mimeType: 'audio/webm;codecs=opus'});
+    let pending = Promise.resolve(), recordingError = null, finished = null;
+    const stopped = new Promise(resolve => { recorder.onstop = resolve; });
+    recorder.onerror = event => {
+      recordingError = Error(event.error?.message || 'Audio recording failed');
+    };
+    recorder.ondataavailable = event => {
+      if (!event.data.size) return;
+      pending = pending.then(async () => {
+        const bytes = new Uint8Array(await event.data.arrayBuffer());
+        let text = '';
+        for (let i = 0; i < bytes.length; i += 8192)
+          text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        await window.recordAudioChunk(btoa(text));
+      });
+      pending.catch(() => {}); // The finish call reports a failed file write.
+    };
+    window.finishRecordingAudio = () => {
+      if (!finished) finished = (async () => {
+        try {
+          if (recorder.state !== 'inactive') recorder.stop();
+          await stopped;
+          await pending;
+          if (recordingError) throw recordingError;
+        } finally { cleanup(); }
+      })();
+      return finished;
+    };
+    recorder.start(1000);
+  } catch (error) { cleanup(); throw error; }
 }"""
 
 
@@ -137,6 +185,7 @@ def record_chapter(browser, url: str, directory: Path, args, progress) -> Path:
             frames = 0
             previous = first
             reason = None
+            fade_deadline = None
             last_report = started
             progress(phase="recording", chapter_recorded_seconds=0)
             try:
@@ -146,13 +195,19 @@ def record_chapter(browser, url: str, directory: Path, args, progress) -> Path:
                 page.locator("#ad-auto").dispatch_event("click")
                 while True:
                     elapsed = time.monotonic() - started
-                    if (args.output_dir / "stop.request").exists():
-                        reason = "停止要求を受け付けました。"
-                        break
-                    if elapsed >= args.max_seconds:
-                        reason = "章の最大録画時間に達しました。"
-                        break
-                    ended = page.locator("#ad-chapter-end").evaluate("element => !element.hidden")
+                    if fade_deadline is None:
+                        if (args.output_dir / "stop.request").exists():
+                            reason = "停止要求を受け付けました。"
+                        elif elapsed >= args.max_seconds:
+                            reason = "章の最大録画時間に達しました。"
+                        ended = page.locator("#ad-chapter-end").evaluate("element => !element.hidden")
+                        if reason or ended:
+                            page.evaluate("milliseconds => window.fadeRecordingAudio(milliseconds)",
+                                          RECORDING_FADE_MILLISECONDS)
+                            fade_deadline = time.monotonic() + RECORDING_FADE_MILLISECONDS / 1000
+                            progress(phase="recording", chapter_recorded_seconds=frames / args.fps,
+                                     finishing=True, fade_tail_seconds=RECORDING_FADE_MILLISECONDS / 1000,
+                                     **page.evaluate(PLAYER_PROGRESS))
                     current = page.screenshot(type="jpeg", quality=90)
                     target = max(1, math.ceil((time.monotonic() - started) * args.fps))
                     # Duplicate the preceding frame when capture is slow, preserving audio timing.
@@ -160,15 +215,18 @@ def record_chapter(browser, url: str, directory: Path, args, progress) -> Path:
                         encoder.stdin.write(current if frames == target - 1 else previous)
                         frames += 1
                     previous = current
-                    if ended or time.monotonic() - last_report >= 1:
+                    if fade_deadline is not None or time.monotonic() - last_report >= 1:
                         progress(phase="recording", chapter_recorded_seconds=frames / args.fps,
                                  **page.evaluate(PLAYER_PROGRESS))
                         last_report = time.monotonic()
-                    if ended:
+                    # A looping chapter outro must never keep the recording
+                    # alive. Capture this finite tail for audio/video alignment;
+                    # explicit stops and the time limit allow the same 400ms.
+                    if fade_deadline is not None and time.monotonic() >= fade_deadline:
                         break
                     page.wait_for_timeout(max(1, (frames / args.fps - (time.monotonic() - started)) * 1000))
             finally:
-                progress(phase="encoding", chapter_recorded_seconds=frames / args.fps)
+                progress(phase="encoding", chapter_recorded_seconds=frames / args.fps, finishing=False)
                 page.evaluate("() => window.finishRecordingAudio()")
                 encoder.stdin.close()
                 encoder.wait(timeout=120)

@@ -1,0 +1,28 @@
+{
+  "project_id": "bb3bace7a25c41c8a5b7ee065477cd4d",
+  "production_id": "bd66735f92544e17b7758e516d5988aa",
+  "chapters": [
+    {
+      "chapter": 1,
+      "original_job_id": "5adb4964d50a40b9b809801c13df17f8",
+      "original_cg": {
+        "id": "ae5f1f5e81b44b0192cbdd4eff85784e",
+        "sha256": "385a3e388095976ca13ffb70adee4203bf2762120594e495e1593b9b28f4fd94",
+        "kind": "event_cg",
+        "filename": "image.png"
+      },
+      "directory": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-appearance-replay-20261004-205136\\chapter-1"
+    },
+    {
+      "chapter": 2,
+      "original_job_id": "96dff48c16b04b399fe19ef0137d17ae",
+      "original_cg": {
+        "id": "8a1c1ad981da4ff8b0dd94ed40927e6f",
+        "sha256": "0383e4f8db0e0148a7669638a40ad11a5a8056291dc392eeacafb3899640f5e8",
+        "kind": "event_cg",
+        "filename": "image.png"
+      },
+      "directory": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-appearance-replay-20261004-205136\\chapter-2"
+    }
+  ]
+}

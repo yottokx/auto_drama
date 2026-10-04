@@ -1,0 +1,230 @@
+[
+  {
+    "chapter": 1,
+    "seconds": 76.53595110005699,
+    "seed": 1524320612,
+    "settings": {
+      "backend": "qwen_image21",
+      "model_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+      "dtype": "bfloat16",
+      "cpu_offload": true,
+      "use_kv_cache": true,
+      "steps": 40,
+      "width": 960,
+      "height": 640
+    },
+    "changed_request_fields": [
+      "prompt",
+      "input_sha256"
+    ],
+    "reference_roles": [
+      "character",
+      "character"
+    ],
+    "reference_sha256": [
+      "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+      "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb"
+    ],
+    "image_sha256": "eacab69de95b3f4720c313b61c3ced35303f1cd700d820ae75b22406ab6670c8",
+    "provenance": {
+      "dtype": "bfloat16",
+      "event_cg_protocol_version": 1,
+      "gpu_peak_allocated": 21292463104,
+      "gpu_peak_reserved": 23261609984,
+      "height": 640,
+      "image_sha256": "eacab69de95b3f4720c313b61c3ced35303f1cd700d820ae75b22406ab6670c8",
+      "inference_seconds": 39.05379289994016,
+      "initialization_seconds": 13.555822900030762,
+      "input_sha256": "4a886a9467c846efe7f72524d3348ba8f0ffaf3468a5c9e249d8759a1d9140e9",
+      "library_versions": {
+        "accelerate": "1.15.0",
+        "diffusers": "0.41.0.dev0",
+        "pillow": "12.3.0",
+        "torch": "2.10.0+cu128",
+        "transformers": "5.17.0"
+      },
+      "model": {
+        "manifest_sha256": "d74aed783d4d97e4b99ee9056671c3d9901c04a1ddb049b5df37dd294a52144f",
+        "model_id": "Qwen/Qwen-Image-2.1",
+        "model_path": "C:\\Python\\envs\\auto_drama\\services\\worker\\runtimes\\qwen_image_edit\\models\\qwen-image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+        "verified_files": 26
+      },
+      "model_configuration_identity": "5f192e206fc0c44c4857fb1f74f6281f845901bcda919c326070dd6ce162178d",
+      "model_reused": false,
+      "original_sha256": "5d8f7b20a5bbeb45baf0889216024449d1b8cb4449688e33f70a741a253706c6",
+      "process_ram_peak_bytes": 34820755456,
+      "provider": "local",
+      "quantization": "none",
+      "references": [
+        {
+          "alpha_range": [
+            0,
+            255
+          ],
+          "artifact_id": "6ace762ddcb44083ad6b3d9f8e666b2f",
+          "character_id": "character-1",
+          "height": 1024,
+          "name": "水瀬 透",
+          "normalization": "oriented-rgba-png/1",
+          "normalized_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-1\\event-cg-njr4viq7\\inputs\\reference-01.png",
+          "normalized_sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+          "order": 1,
+          "original_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-1\\cg-reference-01.png",
+          "original_sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+          "original_size_bytes": 224966,
+          "outfit_id": "default",
+          "path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-1\\cg-reference-01.png",
+          "reference_index": 1,
+          "role": "character",
+          "sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+          "source": {},
+          "source_format": "PNG",
+          "width": 768
+        },
+        {
+          "alpha_range": [
+            0,
+            255
+          ],
+          "artifact_id": "bc33b49a1fb646bcb18c3e2daf290c2e",
+          "character_id": "character-11c4020d-9596-4e3c-97f6-040bf01eabf8",
+          "height": 1024,
+          "name": "篠原 美緒",
+          "normalization": "oriented-rgba-png/1",
+          "normalized_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-1\\event-cg-njr4viq7\\inputs\\reference-02.png",
+          "normalized_sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+          "order": 2,
+          "original_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-1\\cg-reference-02.png",
+          "original_sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+          "original_size_bytes": 227487,
+          "outfit_id": "default",
+          "path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-1\\cg-reference-02.png",
+          "reference_index": 2,
+          "role": "character",
+          "sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+          "source": {},
+          "source_format": "PNG",
+          "width": 768
+        }
+      ],
+      "seed": 1524320612,
+      "verification_seconds": 20.890152199892327,
+      "width": 960
+    }
+  },
+  {
+    "chapter": 2,
+    "seconds": 74.46983469999395,
+    "seed": 383775884,
+    "settings": {
+      "backend": "qwen_image21",
+      "model_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+      "dtype": "bfloat16",
+      "cpu_offload": true,
+      "use_kv_cache": true,
+      "steps": 40,
+      "width": 960,
+      "height": 640
+    },
+    "changed_request_fields": [
+      "prompt",
+      "input_sha256"
+    ],
+    "reference_roles": [
+      "character",
+      "character"
+    ],
+    "reference_sha256": [
+      "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+      "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb"
+    ],
+    "image_sha256": "0b5155dfd99b2f8152bd84465f7d8cc14d1894744f0105919010dd4517ad5808",
+    "provenance": {
+      "dtype": "bfloat16",
+      "event_cg_protocol_version": 1,
+      "gpu_peak_allocated": 21272062464,
+      "gpu_peak_reserved": 23236444160,
+      "height": 640,
+      "image_sha256": "0b5155dfd99b2f8152bd84465f7d8cc14d1894744f0105919010dd4517ad5808",
+      "inference_seconds": 39.44301379984245,
+      "initialization_seconds": 12.543940199771896,
+      "input_sha256": "378aa66e9491c5b1f31ca3a92c25163f54f19074e32aa9c2987a0a503f69020a",
+      "library_versions": {
+        "accelerate": "1.15.0",
+        "diffusers": "0.41.0.dev0",
+        "pillow": "12.3.0",
+        "torch": "2.10.0+cu128",
+        "transformers": "5.17.0"
+      },
+      "model": {
+        "manifest_sha256": "d74aed783d4d97e4b99ee9056671c3d9901c04a1ddb049b5df37dd294a52144f",
+        "model_id": "Qwen/Qwen-Image-2.1",
+        "model_path": "C:\\Python\\envs\\auto_drama\\services\\worker\\runtimes\\qwen_image_edit\\models\\qwen-image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+        "verified_files": 26
+      },
+      "model_configuration_identity": "5f192e206fc0c44c4857fb1f74f6281f845901bcda919c326070dd6ce162178d",
+      "model_reused": false,
+      "original_sha256": "0b9eb0400adee3570e5afdc6a6df222456da50159663bc9d5f1b9e9ffb0fce3e",
+      "process_ram_peak_bytes": 34807713792,
+      "provider": "local",
+      "quantization": "none",
+      "references": [
+        {
+          "alpha_range": [
+            0,
+            255
+          ],
+          "artifact_id": "6ace762ddcb44083ad6b3d9f8e666b2f",
+          "character_id": "character-1",
+          "height": 1024,
+          "name": "水瀬 透",
+          "normalization": "oriented-rgba-png/1",
+          "normalized_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-2\\event-cg-py8xwyx1\\inputs\\reference-01.png",
+          "normalized_sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+          "order": 1,
+          "original_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-2\\cg-reference-01.png",
+          "original_sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+          "original_size_bytes": 224966,
+          "outfit_id": "default",
+          "path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-2\\cg-reference-01.png",
+          "reference_index": 1,
+          "role": "character",
+          "sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+          "source": {},
+          "source_format": "PNG",
+          "width": 768
+        },
+        {
+          "alpha_range": [
+            0,
+            255
+          ],
+          "artifact_id": "bc33b49a1fb646bcb18c3e2daf290c2e",
+          "character_id": "character-11c4020d-9596-4e3c-97f6-040bf01eabf8",
+          "height": 1024,
+          "name": "篠原 美緒",
+          "normalization": "oriented-rgba-png/1",
+          "normalized_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-2\\event-cg-py8xwyx1\\inputs\\reference-02.png",
+          "normalized_sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+          "order": 2,
+          "original_path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-2\\cg-reference-02.png",
+          "original_sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+          "original_size_bytes": 227487,
+          "outfit_id": "default",
+          "path": "C:\\Python\\envs\\auto_drama\\outputs\\event-cg-face-replay-20261004-210348\\chapter-2\\cg-reference-02.png",
+          "reference_index": 2,
+          "role": "character",
+          "sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+          "source": {},
+          "source_format": "PNG",
+          "width": 768
+        }
+      ],
+      "seed": 383775884,
+      "verification_seconds": 19.819387800060213,
+      "width": 960
+    }
+  }
+]

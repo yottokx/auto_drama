@@ -38,7 +38,7 @@ def plan_content(snapshot):
     return validate_plan_content(content, snapshot).model_dump(mode="json")
 
 
-def complete_and_approve_plan(client, project, *, llm_models=None):
+def complete_and_approve_plan(client, project, *, llm_models=None, music_enabled=False):
     project_id = project if isinstance(project, str) else project["project"]["id"]
     endpoint = f"/api/planning/projects/{project_id}"
     state = client.get(endpoint)
@@ -72,4 +72,9 @@ def complete_and_approve_plan(client, project, *, llm_models=None):
         "action": "approve", "expected_revision": planning["revision"],
     })
     assert response.status_code == 200, response.text
+    # Existing media fixtures explicitly exercise the image/voice workflow.
+    # Music integration tests opt in and provide real MP3 bundles separately.
+    if not music_enabled:
+        with client.app.state.coordinator.db.transaction() as connection:
+            connection.execute("UPDATE m3_production SET music_enabled=0 WHERE project_id=?", (project_id,))
     return response.json()

@@ -165,6 +165,7 @@ class GenerateWorld(Action):
 
 class SimpleAction(Action):
     action: Literal["confirm-world", "generate-characters", "approve"]
+    reconfirm: bool = Field(default=False, strict=True)
 
 
 class SaveCharacters(Action):

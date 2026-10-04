@@ -36,6 +36,7 @@ export function Dialog({ children }) { return children }
 export function PlanningContentEditor() { return null }
 export function PlanningContentView() { return null }
 export function GenerationProgress() { return null }
+export function EventCgPolicyEditor() { return null }
 `)
 async function moduleUrl(file, replacements = {}) {
   let source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8')
@@ -54,6 +55,7 @@ const { PlanningReviewPanel } = await import(await moduleUrl('PlanningReviewPane
   './Icons': childrenUrl, './PreviewComponents': childrenUrl,
   './PlanningContentEditor': childrenUrl, './PlanningContentView': childrenUrl,
   './GenerationProgress': childrenUrl, './productionState': productionStateUrl,
+  './EventCgPolicyEditor': childrenUrl,
 }))
 
 const content = {
@@ -197,4 +199,69 @@ test('tab switching and scoped cancellation preserve other edits and collapsed A
   assert.equal(walk(tree, node => node.type === 'textarea').props.value, '展開を自然に')
   assert.equal(h.button(tree, '全体計画を承認').props.disabled, true)
   assert.equal(h.pending.at(-1), true)
+})
+
+test('planning approval waits for saved CG policy readiness and submits its revision', async () => {
+  const h = renderHarness()
+  let tree = h.render()
+  assert.equal(h.button(tree, '全体計画を承認').props.disabled, true)
+  const policy = { max_cgs: 2, max_variants_per_cg: 1, revision: 5 }
+  h.child(tree, 'EventCgPolicyEditor').props.onStatusChange({ pending: true, canApprove: false, policy })
+  tree = h.render()
+  assert.equal(h.button(tree, '全体計画を承認').props.disabled, true)
+  h.child(tree, 'EventCgPolicyEditor').props.onStatusChange({ pending: false, canApprove: true, policy })
+  tree = h.render()
+  assert.equal(h.button(tree, '全体計画を承認').props.disabled, false)
+  h.button(tree, '全体計画を承認').props.onClick()
+  tree = h.render()
+  assert.match(text(tree), /イベントCGは作品全体で最大2件/)
+  api.respondWith(() => ({ project_id: 'story', planning: { ...plan(), status: 'approved' }, legacy_production: false }))
+  h.button(tree, '承認して第1章から制作する').props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(api.calls[0][2].expected_event_cg_policy_revision, 5)
+  assert.equal(api.calls[0][2].expected_revision, 1)
+  assert.equal(api.calls[0][2].reconfirm, false)
+})
+
+test('an approved plan retains its confirmation button and CG controls and explicitly starts another production', async () => {
+  const h = renderHarness({ status: 'approved', approval_id: 'approval-1', revision: 8 })
+  let tree = h.render()
+  assert.ok(h.button(tree, '本編の制作・鑑賞へ'))
+  assert.equal(h.button(tree, '全体計画を承認').props.disabled, true, 'wait for CG settings to load')
+  const policy = { max_cgs: 3, max_variants_per_cg: 1, revision: 6 }
+  const cg = h.child(tree, 'EventCgPolicyEditor')
+  assert.equal(cg.props.readonly, false)
+  cg.props.onStatusChange({ pending: true, canApprove: false, policy })
+  tree = h.render()
+  assert.equal(h.button(tree, '全体計画を承認').props.disabled, true, 'unsaved CG changes block reconfirmation')
+  h.child(tree, 'EventCgPolicyEditor').props.onStatusChange({ pending: false, canApprove: true, policy })
+  tree = h.render()
+  assert.equal(h.button(tree, '全体計画を承認').props.disabled, false)
+  h.button(tree, '全体計画を承認').props.onClick()
+  tree = h.render()
+  const dialog = h.child(tree, 'Dialog')
+  assert.match(text(dialog), /現在の本編制作を無効にして/)
+  assert.match(text(dialog), /変更履歴から戻せます/)
+  api.respondWith(() => ({ project_id: 'story', planning: { ...plan(), status: 'approved', revision: 9 }, legacy_production: false }))
+  h.button(tree, '承認して第1章から制作する').props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(api.calls[0][2], { action: 'approve', expected_revision: 8, reconfirm: true, expected_event_cg_policy_revision: 6 })
+})
+
+test('a CG readiness or policy race reloads CG controls without invalidating the story plan', async () => {
+  const h = renderHarness()
+  let tree = h.render()
+  const before = h.child(tree, 'EventCgPolicyEditor').key
+  h.child(tree, 'EventCgPolicyEditor').props.onStatusChange({ pending: false, canApprove: true, policy: { max_cgs: 1, max_variants_per_cg: 0, revision: 2 } })
+  tree = h.render()
+  h.button(tree, '全体計画を承認').props.onClick()
+  tree = h.render()
+  api.respondWith(() => { throw new api.ApiError('イベントCG設定が更新されました。最新の設定を確認してください。', 409) })
+  h.button(tree, '承認して第1章から制作する').props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  tree = h.render()
+  assert.notEqual(h.child(tree, 'EventCgPolicyEditor').key, before)
+  assert.equal(h.child(tree, 'EventCgPolicyEditor').props.disabled, false)
+  assert.equal(h.button(tree, '承認して第1章から制作する').props.disabled, true)
+  assert.doesNotMatch(text(tree), /保存済みの全体計画が更新/)
 })

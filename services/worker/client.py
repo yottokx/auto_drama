@@ -26,8 +26,10 @@ from services.worker.generation.cancellation import (
     cancellation_scope,
     check_cancelled,
 )
+from services.worker.generation.event_cg_session import current_session as current_event_cg_session
 from services.worker.generation.image_session import current_session as current_image_session
 from services.worker.generation.llm_session import current_session as current_llm_session
+from services.worker.generation.music_session import current_session as current_music_session
 from services.worker.generation.progress import progress_scope
 from services.worker.generation.voice_session import current_session
 
@@ -227,6 +229,8 @@ class WorkerClient:
             if job["kind"] in {"m2_voice_clone", "m3_voice_clone"}:
                 self._prepare_reference(job, directory)
                 heartbeat.check()
+            if job["kind"] == "m3_event_cg":
+                self._prepare_cg_references(job, directory, heartbeat)
             # Job identity, rather than attempt identity, preserves the request
             # and tool cache across lease recovery and transport retries.
             def publish_progress(progress):
@@ -264,6 +268,41 @@ class WorkerClient:
             assets[asset.id] = content
         heartbeat.check()
         return compile_bundle(script, assets)
+
+    def _prepare_cg_references(self, job, directory, heartbeat):
+        from PIL import Image
+
+        from packages.contracts.event_cg import image_input_sha256
+
+        payload = job["payload"]
+        if payload.get("input_sha256") != image_input_sha256(payload):
+            raise ValueError("CG frozen input hash mismatch.")
+        references = payload.get("references")
+        if not isinstance(references, list) or not 1 <= len(references) <= 10:
+            raise ValueError("CG references must contain one to ten images.")
+        for index, reference in enumerate(references, 1):
+            heartbeat.check()
+            check_cancelled()
+            identifier, expected = reference.get("artifact_id"), reference.get("sha256")
+            if (not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier)
+                    or not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected)
+                    or reference.get("reference_index") != index):
+                raise ValueError("Invalid CG reference identity or order.")
+            path = directory / f"cg-reference-{index:02d}.png"
+            cached = path.read_bytes() if path.is_file() and path.stat().st_size <= 32 * 1024 * 1024 else b""
+            content = cached if hashlib.sha256(cached).hexdigest() == expected else self._artifact(identifier)
+            if not content or len(content) > 32 * 1024 * 1024 or hashlib.sha256(content).hexdigest() != expected:
+                raise ValueError("CG reference content hash or size mismatch.")
+            with Image.open(io.BytesIO(content)) as image:
+                if image.format not in {"PNG", "WEBP", "JPEG"} or getattr(image, "n_frames", 1) != 1:
+                    raise ValueError("CG reference must be a static image.")
+                if not 1 <= min(image.size) <= max(image.size) <= 4096:
+                    raise ValueError("CG reference dimensions are invalid.")
+                image.load()
+            if content != cached:
+                temporary = path.with_suffix(".tmp")
+                temporary.write_bytes(content)
+                temporary.replace(path)
 
     def _complete(self, job: dict[str, Any], bundle: bytes) -> None:
         # A transport failure may happen after the server has committed the
@@ -367,6 +406,12 @@ class WorkerClient:
             llms = current_llm_session()
             if llms is not None:
                 llms.close()
+            music = current_music_session()
+            if music is not None:
+                music.close()
+            cgs = current_event_cg_session()
+            if cgs is not None:
+                cgs.close()
             logger.info("Job %s no longer belongs to this worker", job["id"])
             return "stale"
         except httpx.HTTPError:

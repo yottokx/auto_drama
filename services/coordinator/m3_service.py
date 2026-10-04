@@ -10,6 +10,7 @@ import zlib
 from uuid import uuid4
 
 from packages.contracts import Script
+from packages.contracts.event_cg import CG_KINDS, image_input_sha256
 from packages.contracts.m3 import (
     EMOTION_TAGS,
     M3_KINDS,
@@ -208,6 +209,8 @@ class M3Service(ChapterProduction):
             if filename.endswith(".png")
             else "audio/wav"
             if filename.endswith(".wav")
+            else "audio/mpeg"
+            if filename.endswith(".mp3")
             else "application/zip"
             if filename.endswith(".zip")
             else "text/plain; charset=utf-8"
@@ -302,6 +305,8 @@ class M3Service(ChapterProduction):
         if approved_plan:
             payload["approved_plan"] = {key: approved_plan[key] for key in ("content", "approval_id", "sha256")}
             payload["approved_plan"]["planning_protocol"] = plan_generation["planning_protocol"]
+        if kind == "m3_event_cg":
+            payload["input_sha256"] = image_input_sha256(payload)
         if kind == "m3_image":
             # Translate all required portraits before loading the image model.
             # Approved main images have no character_result and are reused.
@@ -345,7 +350,7 @@ class M3Service(ChapterProduction):
                         "seed": payload["seed"],
                     }
                 ),
-                101 - production["chapter_number"],
+                101 - production["chapter_number"] + int(kind == "m3_event_cg" and bool(payload.get("variant_id"))),
                 now,
                 now,
             ),
@@ -353,7 +358,7 @@ class M3Service(ChapterProduction):
         connection.execute(
             "INSERT INTO m3_production_job VALUES (?,?)", (production["id"], identifier)
         )
-        dependencies = {narrative_job["id"]} if narrative_job else set()
+        dependencies = {narrative_job["id"]} if narrative_job and kind != "m3_event_cg_budget" else set()
         if descriptor.get("previous_narrative_artifact_id"):
             prior = required(connection, "artifact", descriptor["previous_narrative_artifact_id"])
             if prior["source_job_id"]:
@@ -389,13 +394,21 @@ class M3Service(ChapterProduction):
             if (plan["project_id"] != project_id or draft["main_approval_id"] != approval_id
                     or draft["approved_plan_id"] != plan_approval_id):
                 raise ServiceError(409, "承認した構成とメイン設定が一致しません。")
+        from .event_cg_settings import EventCgSettings
+        from .music_service import enabled_for_new_series
+
+        cg_policy = EventCgSettings(self.coordinator).freeze(connection, project_id)
+
         connection.execute(
             "INSERT INTO m3_production (id,project_id,approval_id,approval_artifact_id,created_at,"
-            "storyline_id,m4_enabled,plan_approval_id,sequential_publication) VALUES (?,?,?,?,?,?,1,?,?)",
+            "storyline_id,m4_enabled,plan_approval_id,sequential_publication,music_enabled) VALUES (?,?,?,?,?,?,1,?,?,?)",
             (identifier, project_id, approval_id, approval["artifact_id"], self.clock(), identifier,
-             plan_approval_id, int(bool(plan_approval_id))),
+             plan_approval_id, int(bool(plan_approval_id)), int(enabled_for_new_series(plan_approval_id))),
         )
         production = required(connection, "m3_production", identifier)
+        if cg_policy.max_cgs:
+            connection.execute("INSERT INTO event_cg_production VALUES (?,?)",
+                               (identifier, cg_policy.model_dump_json()))
         self.history.set_selection(connection, project_id, identifier, None, None)
         descriptor = {} if plan_approval_id else {
             "story_workflow_version": 2,
@@ -403,6 +416,9 @@ class M3Service(ChapterProduction):
             "generator_protocol": generator_protocol("causal", "script_continuation_v1"),
         }
         self._enqueue(connection, production, "m3_narrative", descriptor)
+        from .event_cg_service import ensure_budget
+
+        ensure_budget(self, connection, production)
         return production
 
     def start(self, project_id: str) -> dict:
@@ -441,6 +457,9 @@ class M3Service(ChapterProduction):
                                (production["id"],))
             connection.execute("UPDATE m3_production SET control_state='running',m4_enabled=1 WHERE id=?",
                                (production["id"],))
+            from .event_cg_service import ensure_budget
+
+            ensure_budget(self, connection, production)
         self.advance(production["id"])
         return self.project(project_id)
 
@@ -667,11 +686,38 @@ class M3Service(ChapterProduction):
             if row is None:
                 return {"project_id": project_id, "production": None}
             production = public(dict(row))
+            production["music_enabled"] = bool(row["music_enabled"])
             production_id = production["id"]
             selected = self.history.selection(connection, project_id)
             production["history_frozen"] = bool(selected and selected["production_frozen"])
             chapters = self._chapters(connection, row)
+            from .music_service import plan_metadata
+
+            presentation = json.loads(required(connection, "publication_edition", selected["edition_id"])["state"]) if (
+                selected and selected.get("edition_id")) else None
+            for chapter in chapters:
+                chapter["music_enabled"] = production["music_enabled"]
+                from .event_cg_service import summary as cg_summary
+
+                cg = cg_summary(self, connection, row, chapter["requirements"],
+                                chapter_number=chapter["chapter_number"], budget_requirements=chapters[0]["requirements"])
+                if cg is not None:
+                    chapter["event_cg"] = cg
+                chapter["scenes"] = []
+                if not chapter["narrative_artifact_id"]:
+                    continue
+                adopted = required(connection, "m3_production", chapter["production_id"])
+                adopted["narrative_artifact_id"] = chapter["narrative_artifact_id"]
+                metadata = plan_metadata(connection, adopted, self, presentation)
+                chapter["scenes"] = [{"scene_id": scene.id, "music_plan": metadata[scene.id]}
+                                     for scene in self._load_narrative(connection, adopted).scenes]
             production["chapters"] = chapters
+            cg = cg_summary(self, connection, row, [item for chapter in chapters for item in chapter["requirements"]],
+                            budget_requirements=chapters[0]["requirements"])
+            if cg is not None:
+                cg["plan_completed"] = cg["budget_completed"] and all(
+                    chapter["event_cg"]["plan_completed"] for chapter in chapters)
+                production["event_cg"] = cg
             production["chapter_count"] = len(chapters)
             self._settle_control(connection, row)
             production["control_state"] = required(connection, "m3_production", production_id)["control_state"]
@@ -854,6 +900,11 @@ class M3Service(ChapterProduction):
                             "delivery": utterance.delivery,
                         },
                     )
+        if self._root(connection, production)["music_enabled"]:
+            from .music_service import context
+
+            self._requirement(connection, production, "m3_music_plan", "chapter-music",
+                              {"context": context(self, connection, production, narrative), "planning_version": 2})
 
     def advance(self, production_id: str) -> None:
         with self.db.transaction() as connection:
@@ -879,18 +930,22 @@ class M3Service(ChapterProduction):
                     return
                 if not self._has_current_plan(connection, production):
                     return
-                if (
-                    production["error"]
-                    or not production["narrative_artifact_id"]
-                ):
+                if production["error"]:
                     return
                 root = self._root(connection, production)
+                from .event_cg_service import ensure_budget, ensure_plan, prepare_image
+
+                if root["control_state"] == "running" and not self._selected_build(connection, root):
+                    ensure_budget(self, connection, root)
+                if not production["narrative_artifact_id"]:
+                    return
                 if not root["sequential_publication"]:
                     self._next_chapter(connection, production)
                 if self._selected_build(connection, production):
                     if root["sequential_publication"]:
                         self._next_chapter(connection, production)
                     return
+                ensure_plan(self, connection, production)
                 requirements = [
                     dict(row)
                     for row in connection.execute(
@@ -924,6 +979,10 @@ class M3Service(ChapterProduction):
                                 requirement["artifact_id"] = shared["artifact_id"]
                             continue
                     descriptor = json.loads(requirement["descriptor"])
+                    if requirement["kind"] == "m3_event_cg":
+                        descriptor = prepare_image(self, connection, production, requirement, descriptor)
+                        if descriptor is None:
+                            continue
                     if requirement["kind"] == "m3_voice_clone":
                         reference = references[descriptor["character_id"]]
                         if not reference["artifact_id"]:
@@ -1000,6 +1059,8 @@ class M3Service(ChapterProduction):
         references, content = {}, {}
         omitted_portraits = set()
         for item in requirements:
+            if item["kind"] in {"m3_music_plan", "m3_music"} | CG_KINDS:
+                continue
             record = required(connection, "artifact", item["artifact_id"])
             data = self.store.read(record)
             if record["project_id"] != production["project_id"]:
@@ -1043,6 +1104,12 @@ class M3Service(ChapterProduction):
             portrait_settings=portrait_settings,
             omitted_portraits=omitted_portraits,
         )
+        from .music_service import add_to_script
+
+        script = add_to_script(self, connection, production, narrative, script, content, requirements, presentation)
+        from .event_cg_service import add_to_script as add_cg_to_script
+
+        script = add_cg_to_script(self, connection, production, script, content, requirements)
         if presentation is not None:
             from packages.narrative.validation import script_character_id
             from packages.tyrano_export.presentation import apply_portrait_presentation
@@ -1168,6 +1235,14 @@ class M3Service(ChapterProduction):
             payload = json.loads(job["payload"])
         try:
             envelope, files = validate_bundle(data, job["kind"])
+            from .music_service import validate_plan, validate_result
+
+            music_plan = validate_plan(envelope["result"], payload) if job["kind"] == "m3_music_plan" else None
+            music = validate_result(envelope["result"], payload, files) if job["kind"] == "m3_music" else None
+            from .event_cg_service import validate_result as validate_cg_result
+
+            cg_result = (validate_cg_result(job["kind"], envelope["result"], payload, files)
+                         if job["kind"] in CG_KINDS else None)
             omission = None
             if job["kind"] == "m3_image" and envelope["result"]:
                 omission = PortraitOmission.model_validate(envelope["result"]["portrait"])
@@ -1311,12 +1386,37 @@ class M3Service(ChapterProduction):
                     "m3_background": "background",
                     "m3_voice": "audio",
                     "m3_voice_clone": "audio",
+                    "m3_music_plan": "music_plan",
+                    "m3_music": "music",
+                    "m3_event_cg_budget": "event_cg_budget",
+                    "m3_event_cg_plan": "event_cg_plan",
+                    "m3_event_cg": "event_cg",
                 }[job["kind"]]
                 filename = "voice.wav" if kind == "audio" else "image.png"
+                if music_plan is not None:
+                    filename = "music-plan.json"
+                    files[filename] = encode_json(music_plan.model_dump(mode="json"))
+                    for scene_prompt in music_plan.scenes:
+                        if scene_prompt.action != "play":
+                            continue
+                        self._requirement(connection, production, "m3_music", scene_prompt.scene_id,
+                            {"scene_id": scene_prompt.scene_id, "prompt": scene_prompt.prompt,
+                             "context": payload["context"], "duration_seconds": 120,
+                             "backend": "stable_audio3", "model": "medium"})
+                if music is not None:
+                    from .music_service import store_candidate
+
+                    record, _candidate = store_candidate(self, connection, production, music.model_dump(mode="json"),
+                        files, job=job, attempt=attempt, provenance=envelope["provenance"])
                 if omission is not None:
                     kind, filename = "portrait_omission", "portrait-omission.json"
                     files[filename] = encode_json(omission.model_dump())
-                record = self._artifact(
+                if cg_result is not None:
+                    from .event_cg_service import adopt
+
+                    record = adopt(self, connection, production, requirement, job, attempt,
+                                   payload, cg_result, files, envelope["provenance"])
+                record = record if music is not None or cg_result is not None else self._artifact(
                     connection,
                     production,
                     "media-" + requirement["id"],

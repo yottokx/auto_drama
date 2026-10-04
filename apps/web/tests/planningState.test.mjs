@@ -152,3 +152,13 @@ test('a failed AI revision leaves its retained valid plan available for explicit
   const retrying = receivePlanning(failed, plan(4, { status: 'generating', active_job_id: 'revision-job', jobs: [{ id: 'revision-job', status: 'pending' }] }))
   assert.equal(canApprovePlanning(retrying), false, 'an in-flight retry must complete before approval')
 })
+
+test('an approved plan can be confirmed again while retaining revision and edit guards', () => {
+  const approved = receivePlanning(initialPlanningEditor, plan(5, { status: 'approved', approval_id: 'approval-1' }))
+  assert.equal(canApprovePlanning(approved), true)
+  assert.deepEqual(planningAction(approved, 'approve'), { action: 'approve', expected_revision: 5 })
+  assert.equal(canApprovePlanning(approved, true), false)
+  assert.equal(canApprovePlanning({ ...approved, instruction: '修正したい' }), false)
+  assert.equal(canApprovePlanning({ ...approved, conflict: true }), false)
+  assert.equal(canApprovePlanning({ ...approved, content: editPlanningField(approved.content, ['plot', 'chapters', 0, 'title'], '未保存') }), false)
+})

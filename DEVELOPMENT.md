@@ -60,6 +60,8 @@ Windows、PowerShell 7、Git、uv、Node.js（20.19以上または22.12以上）
 
 UIで「新しい物語」を作成し、世界観の生成・確定からキャラクターの生成へ進みます。ワーカーが起動していれば設定・画像・音声の生成が進みます。M1画面の「サンプルを作成して変換」は引き続き固定脚本からのZIP出力に使えます。保存先の既定値は `data/` です。変更する場合は `start-coordinator.ps1 -DataDir <保存先>` を指定します。ワーカーは同じAPIからデータを取得し、DBを直接開きません。
 
+過去のSTEPへ戻り、同じ確定ボタンを押して後続工程をやり直せます。世界観の再確定はメインキャラ以降（固定した項目は維持）、メインキャラの再確定は全体計画以降、全体計画の再確定は本編を新しく制作します。再確定前の成果物は削除せず「変更履歴・元に戻す」から復元でき、作品ごとのCG上限設定も戻ります。復元だけでは生成を自動再開しません。生成が動作中の場合は完了を待つか、本編制作画面で停止・中断してから再確定します。
+
 ティラノ公式サンプルの配信:
 
 ```powershell
@@ -74,6 +76,8 @@ M0用のモデル取得情報は `config/m0-models-tts.json`、`config/m0-models
 
 - [Irodori-TTSの環境](docs/setup/irodori.md)
 - [画像生成の環境](docs/setup/diffusers.md)
+- [Animaによる立ち絵差分の調査と設計方針](docs/research/anima-portrait-variants-20261004.md)（差分生成・自動マスクは未実装）
+- [Qwen-Image-2.1によるイベントCGの実装計画](docs/qwen-event-cg-plan.md)、[イベントCGの利用と検証](docs/setup/event-cg.md)（任意機能・既定で無効）
 - [llama.cpp・ティラノの環境](docs/setup/native-runtimes.md)
 
 ワーカー用のランタイムはすべて `services/worker/` 配下です。別PCではこの配下と依存・ランタイムの構築手順から再構築します。Windowsのvenvには絶対パスが入るため、フォルダー移動後はそのPCでuv環境を再作成します。ワーカー配布のパッケージ化は今後実装します。

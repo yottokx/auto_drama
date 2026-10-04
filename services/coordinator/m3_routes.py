@@ -90,7 +90,9 @@ def router(coordinator: Callable[[], Coordinator]) -> APIRouter:
             adjustment = json.loads(job["payload"]).get("adjustment")
         if adjustment:
             from .adjustment_service import AdjustmentService
-            complete_job = AdjustmentService(service).complete
+            from .music_adjustments import MusicAdjustmentService
+
+            complete_job = (MusicAdjustmentService(service) if adjustment.get("music") else AdjustmentService(service)).complete
         elif kind == "m3_plan":
             from .planning_service import PlanningService
             complete_job = PlanningService(service).complete

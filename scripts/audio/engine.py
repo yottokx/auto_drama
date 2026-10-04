@@ -613,15 +613,10 @@ def load_pipeline(
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()
     load_started = time.perf_counter()
-    pipeline = diffusers.StableAudio3Pipeline.from_pretrained(
-        str(model_path), torch_dtype=dtype, local_files_only=True, use_safetensors=True,
-    )
-    enable_chunked_decode(pipeline.vae, chunk_size=128, overlap=32)
-    pipeline.set_progress_bar_config(disable=True)
-    if request.cpu_offload:
-        pipeline.enable_model_cpu_offload(gpu_id=0)
-    else:
-        pipeline.to(device)
+    from services.worker.generation.music.stable_audio import configure_pipeline
+
+    pipeline = configure_pipeline(diffusers, model_path, request, dtype, device,
+        chunked_decode=enable_chunked_decode)
     load_seconds = time.perf_counter() - load_started
     check_cancelled()
     return LoadedPipeline(
@@ -715,24 +710,10 @@ def generate_audio(
                 audio_codes=planner_result["audio_codes"] if planner_result else None,
             )
         else:
-            output = pipeline(
-                prompt=request.prompt,
-                duration=request.duration,
-                num_inference_steps=request.steps,
-                guidance_scale=1.0,
-                silence_padding_duration=0.0,
-                generator=generator,
-                callback_on_step_end=on_step_end,
-                output_type="latent",
-            )
-            # Native Pipeline's audio output clamps to [-1, 1]. Decode its final
-            # latents ourselves so float export and clipping statistics keep raw levels.
-            check_cancelled()
-            report("decoding", "音声を復元しています。", step=request.steps)
-            try:
-                audios = pipeline.vae.decode(output.audios).sample[:, :, :int(request.duration * sample_rate)]
-            finally:
-                pipeline.maybe_free_model_hooks()
+            from services.worker.generation.music.stable_audio import decode_latents
+
+            audios = decode_latents(pipeline, request, generator, on_step_end, check_cancelled,
+                decoding=lambda: report("decoding", "音声を復元しています。", step=request.steps))
     if device == "cuda":
         torch.cuda.synchronize()
     inference_seconds = time.perf_counter() - inference_started

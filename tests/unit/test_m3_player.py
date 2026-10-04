@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+from packages.contracts import Script
 from packages.tyrano_export import compile_bundle, demo_content, validate_bundle
 from packages.tyrano_export.player import ENGINE_SCRIPTS, ENGINE_STYLES, player_config, player_files
 from services.coordinator.m3_player import (
@@ -43,8 +44,19 @@ def engine_fixture(directory):
 
 
 @pytest.fixture
-def player(tmp_path, monkeypatch):
+def player(tmp_path, monkeypatch, request):
     script, assets = demo_content()
+    if getattr(request, "param", False):
+        music = b"ID3adopted MP3 route fixture"
+        assets["scene_music"] = music
+        value = script.model_dump(mode="json")
+        value["assets"].append({"id": "scene_music", "kind": "music",
+                                "artifact_id": "adopted-music", "filename": "scene_music.mp3",
+                                "sha256": hashlib.sha256(music).hexdigest()})
+        value["music_cues"] = [{"id": "music_start", "utterance_id": script.utterances[0].id,
+                                "action": "play", "asset_id": "scene_music",
+                                "loop_start_seconds": 10.0, "loop_end_seconds": 60.0}]
+        script = Script.model_validate(value)
     data = compile_bundle(script, assets)
     store = ArtifactStore(tmp_path / "store")
     stored = store.put(data)
@@ -175,6 +187,27 @@ def test_range_and_head_allow_media_seeking(player):
     assert int(head.headers["content-length"]) == len(expected)
     assert client.get("/player/published/" + path, headers={"Range": "bytes=0-1,4-5"}).status_code == 416
     assert byte_range("bytes=-8", 100) == (92, 99, True)
+
+
+@pytest.mark.parametrize("player", [True], indirect=True)
+def test_adopted_music_and_owned_helper_are_served_from_the_immutable_bundle(player):
+    client, data, _, _, _ = player
+    path = "data/bgm/scene_music.mp3"
+    expected = bundle_member(data, path)
+    response = client.get("/player/published/" + path)
+    assert response.status_code == 200 and response.content == expected
+    assert response.headers["content-type"].startswith("audio/mpeg")
+    assert response.headers["cache-control"].endswith("immutable")
+    partial = client.get("/player/published/" + path, headers={"Range": "bytes=3-12"})
+    assert partial.status_code == 206 and partial.content == expected[3:13]
+    assert partial.headers["content-range"] == f"bytes 3-12/{len(expected)}"
+    head = client.head("/player/published/" + path)
+    assert head.status_code == 200 and head.content == b""
+    assert int(head.headers["content-length"]) == len(expected)
+    helper = "data/others/auto_drama_music.js"
+    assert client.get("/player/published/" + helper).content == bundle_member(data, helper)
+    assert client.get("/player/published/data/bgm/original.wav").status_code == 404
+    assert client.get("/player/unpublished/" + path).status_code == 404
 
 
 def test_live_player_identity_is_fixed_to_build_and_absent_from_static_bundle(player):

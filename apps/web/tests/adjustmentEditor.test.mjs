@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { transformWithOxc } from 'vite'
-import { adjustmentFixture } from './adjustmentFixture.mjs'
+import { adjustmentFixture, adjustmentMusicFixture, adjustmentContinuityFixture } from './adjustmentFixture.mjs'
 
 const dataUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const hooksUrl = dataUrl(`
@@ -16,7 +16,7 @@ export function useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i
 export function useEffect(callback, dependencies) { effects.push({ callback, dependencies }) }
 `)
 const apiUrl = dataUrl(`export class ApiError extends Error { constructor(message, status) { super(message); this.status = status } }; export const errorMessage = error => error.message;`)
-const childrenUrl = dataUrl(`export function Icon() { return null }; export function PortraitCanvas() { return null }; export function AdjustmentPreview() { return null }; export function GenerationProgress() { return null }; export function Dialog() { return null };`)
+const childrenUrl = dataUrl(`export function Icon() { return null }; export function PortraitCanvas() { return null }; export function AdjustmentPreview() { return null }; export function AdjustmentMusicPreview() { return null }; export function AdjustmentMusicSeamPreview() { return null }; export function GenerationProgress() { return null }; export function Dialog() { return null };`)
 async function moduleUrl(file, replacements = {}) {
   let source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8')
   for (const [name, url] of Object.entries(replacements)) source = source.replaceAll(`'${name}'`, JSON.stringify(url))
@@ -27,7 +27,7 @@ async function moduleUrl(file, replacements = {}) {
 const stateUrl = await moduleUrl('adjustmentState.ts')
 const state = await import(stateUrl)
 const hooks = await import(hooksUrl)
-const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
+const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
 const { AdjustmentPreview } = await import(await moduleUrl('AdjustmentPreview.tsx'))
 function walkAll(node, predicate) {
   if (!node || typeof node !== 'object') return []
@@ -235,7 +235,7 @@ test('dedicated editor uses separate tabs and preserves each character and mater
   let tree = h.render()
   assert.equal(tree.type, 'section', 'the dedicated editor is not a collapsed inline details panel')
   assert.equal(walkAll(tree, node => node.props?.role === 'tablist').length, 1)
-  assert.deepEqual(walkAll(tree, node => node.props?.role === 'tab').map(node => [text(node), node.props['aria-selected']]), [['表示位置調整', true], ['立ち絵', false], ['基準音声', false]])
+  assert.deepEqual(walkAll(tree, node => node.props?.role === 'tab').map(node => [text(node), node.props['aria-selected']]), [['表示位置調整', true], ['立ち絵', false], ['基準音声', false], ['BGM', false]])
   assert.equal(walkAll(tree, node => node.type === 'textarea').length, 0)
   h.button(tree, '立ち絵').props.onClick()
   tree = h.render()
@@ -387,4 +387,198 @@ test('voice transcript is prefilled with self introduction and sent explicitly',
   assert.equal(transcript(tree).props.value, '', 'intentional clear must not restore default silently')
   assert.equal(pending.at(-1), true)
   assert.equal(h.button(tree, 'この設定で候補を生成').props.disabled, true)
+})
+
+test('BGM is scene-scoped without a character picker and saves selection and volume before publication', async t => {
+  const h = harness(t, adjustmentMusicFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  let tree = h.render()
+  assert.ok(!text(tree).includes('編集対象の人物'))
+  assert.equal(walkAll(tree, node => node.type === 'select' && node.props['aria-label'] === 'BGMの章').length, 1)
+  assert.equal(walkAll(tree, node => node.type === 'section' && node.props.id === 'adjustment-panel-image').length, 0)
+  h.button(tree, 'このBGM候補を選ぶ').props.onClick()
+  tree = h.render()
+  walkAll(tree, node => node.type === 'input' && node.props['aria-label'] === '場面のBGM音量')[0].props.onChange({ target: { value: '22' } })
+  tree = h.render()
+  assert.equal(h.button(tree, '調整版を反映').props.disabled, true)
+  h.handle(async (_path, options) => {
+    const next = structuredClone(h.source)
+    next.draft.revision = 2; next.draft.scene_music = JSON.parse(options.body).scene_music
+    return next
+  })
+  h.button(tree, '下書きを保存').props.onClick(); await settle()
+  const body = JSON.parse(h.calls[0].options.body)
+  assert.deepEqual(body.scene_music[0], { production_id: 'chapter-1', scene_id: 'scene-1', candidate_id: 'music-1', action: 'play', volume: .22, reason: '手動でBGM候補を選択' })
+  assert.equal(body.scene_music[1].candidate_id, null)
+  assert.deepEqual(body.characters, h.source.draft.characters)
+  assert.equal(h.button(h.render(), '調整版を反映').props.disabled, false)
+})
+
+test('BGM can be generated from the scene with an empty prompt and retains edited instructions across scene switches', async t => {
+  const h = harness(t, adjustmentMusicFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  const field = (tree, label) => walkAll(tree, node => node.type === 'textarea' && node.props['aria-label'] === label)[0]
+  assert.equal(field(h.render(), 'BGMの英語プロンプト').props.value, '')
+  h.handle(async () => { const response = structuredClone(h.source); response.draft.revision = 2; return response })
+  h.button(h.render(), '120秒のBGM候補を生成').props.onClick(); await settle()
+  assert.equal(h.calls[0].path, '/api/m3/projects/story/adjustments/music/generate')
+  assert.deepEqual(JSON.parse(h.calls[0].options.body), { expected_revision: 1, production_id: 'chapter-1', scene_id: 'scene-1', instruction: '' })
+  field(h.render(), 'BGMの英語プロンプト').props.onChange({ target: { value: 'Genre: Jazz. Instruments: Trumpet, piano. A bold trumpet melody.' } })
+  field(h.render(), '今回だけのBGM指示').props.onChange({ target: { value: '緊張感を強める' } })
+  const chapter = tree => walkAll(tree, node => node.type === 'select' && node.props['aria-label'] === 'BGMの章')[0]
+  chapter(h.render()).props.onChange({ target: { value: '2' } })
+  assert.equal(field(h.render(), 'BGMの英語プロンプト').props.value, '')
+  chapter(h.render()).props.onChange({ target: { value: '1' } })
+  assert.equal(field(h.render(), '今回だけのBGM指示').props.value, '緊張感を強める')
+  h.button(h.render(), '120秒のBGM候補を生成').props.onClick(); await settle()
+  assert.equal(JSON.parse(h.calls[1].options.body).source_prompt, 'Genre: Jazz. Instruments: Trumpet, piano. A bold trumpet melody.')
+  assert.equal(JSON.parse(h.calls[1].options.body).instruction, '緊張感を強める')
+  assert.equal(field(h.render(), '今回だけのBGM指示').props.value, '')
+  assert.equal(field(h.render(), 'BGMの英語プロンプト').props.value, 'Genre: Jazz. Instruments: Trumpet, piano. A bold trumpet melody.')
+})
+
+test('MP3 music import uses scene identity and does not discard unsaved volume', async t => {
+  const h = harness(t, adjustmentMusicFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  let tree = h.render()
+  walkAll(tree, node => node.type === 'input' && node.props['aria-label'] === '場面のBGM音量')[0].props.onChange({ target: { value: '16' } })
+  const file = new File(['music bytes'], 'music.mp3', { type: 'audio/mpeg' })
+  walkAll(tree, node => node.type === 'input' && node.props['aria-label'] === 'BGM音源の取り込み')[0].props.onChange({ target: { files: [file] } })
+  h.handle(async () => { const response = structuredClone(h.source); response.draft.revision = 2; return response })
+  h.button(h.render(), 'BGM候補に取り込む').props.onClick(); await settle()
+  const form = h.calls[0].options.body
+  assert.equal(h.calls[0].path, '/api/m3/projects/story/adjustments/music/upload')
+  assert.equal(form.get('production_id'), 'chapter-1')
+  assert.equal(form.get('scene_id'), 'scene-1')
+  assert.equal(form.get('expected_revision'), '1')
+  assert.equal(form.get('file').name, 'music.mp3')
+  assert.equal(form.get('character_id'), null)
+  assert.equal(form.get('reference_text'), null)
+  tree = h.render()
+  assert.equal(walkAll(tree, node => node.type === 'input' && node.props['aria-label'] === '場面のBGM音量')[0].props.value, 16)
+  assert.equal(h.button(tree, '下書きを保存').props.disabled, false)
+  assert.equal(h.button(tree, 'BGM候補に取り込む').props.disabled, true)
+})
+
+test('a delayed BGM response clears only its submitted scene and preserves another chapter inputs', async t => {
+  const h = harness(t, adjustmentMusicFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  const field = label => walkAll(h.render(), node => node.type === 'textarea' && node.props['aria-label'] === label)[0]
+  const chapter = () => walkAll(h.render(), node => node.type === 'select' && node.props['aria-label'] === 'BGMの章')[0]
+  chapter().props.onChange({ target: { value: '2' } })
+  field('BGMの英語プロンプト').props.onChange({ target: { value: 'An intense electronic chase melody.' } })
+  field('今回だけのBGM指示').props.onChange({ target: { value: '疾走感を残す' } })
+  const secondFile = new File(['second music'], 'second.mp3', { type: 'audio/mpeg' })
+  walkAll(h.render(), node => node.type === 'input' && node.props['aria-label'] === 'BGM音源の取り込み')[0].props.onChange({ target: { files: [secondFile] } })
+  chapter().props.onChange({ target: { value: '1' } })
+  field('今回だけのBGM指示').props.onChange({ target: { value: '喜劇的な軽さ' } })
+  let complete
+  h.handle(() => new Promise(resolve => { complete = resolve }))
+  h.button(h.render(), '120秒のBGM候補を生成').props.onClick(); await settle()
+  chapter().props.onChange({ target: { value: '2' } })
+  assert.equal(chapter().props.value, 2)
+  const response = structuredClone(h.source); response.draft.revision = 2
+  response.music_candidates.push({ ...response.music_candidates[0], id: 'pending-music', artifact_id: null, music_url: null, source_url: null, status: 'pending' })
+  complete(response); await settle()
+  assert.equal(field('BGMの英語プロンプト').props.value, 'An intense electronic chase melody.')
+  assert.equal(field('今回だけのBGM指示').props.value, '疾走感を残す')
+  assert.ok(text(h.render()).includes('second.mp3'))
+  assert.equal(JSON.parse(h.calls[0].options.body).production_id, 'chapter-1')
+  assert.equal(JSON.parse(h.calls[0].options.body).instruction, '喜劇的な軽さ')
+  chapter().props.onChange({ target: { value: '1' } })
+  assert.equal(field('今回だけのBGM指示').props.value, '')
+  assert.equal(h.button(h.render(), '下書きを保存').props.disabled, true, 'generation does not adopt a music candidate')
+})
+
+test('quality warnings read the worker nested silence report including the longest quiet stretch', t => {
+  const source = adjustmentMusicFixture()
+  source.music_candidates[0].quality = { needs_review: true, flags: ['long_silence'], silence: { total_seconds: 39.85, longest_seconds: 8.05, intervals: [] } }
+  const h = harness(t, source)
+  h.button(h.render(), 'BGM').props.onClick()
+  assert.ok(text(h.render()).includes('合計39.9秒'))
+  assert.ok(text(h.render()).includes('最長8.1秒'))
+})
+
+test('none and continue clear candidate adoption while reviewable source-only failures remain audible', t => {
+  const source = adjustmentMusicFixture()
+  source.music_candidates[0] = { ...source.music_candidates[0], music_url: null, artifact_id: null, status: 'failed', error: '自然なループ区間が見つかりませんでした。', quality: { needs_review: true, near_silence_seconds: 48.2 } }
+  const h = harness(t, source)
+  h.button(h.render(), 'BGM').props.onClick()
+  let tree = h.render()
+  assert.ok(text(tree).includes('品質の確認が必要です'))
+  assert.ok(text(tree).includes('合計48.2秒'))
+  assert.ok(text(tree).includes('自然なループ区間が見つかりませんでした'))
+  assert.equal(h.button(tree, 'この候補を試聴').props.disabled, false)
+  assert.equal(h.button(tree, 'このBGM候補を選ぶ').props.disabled, true)
+  walkAll(tree, node => node.type === 'select' && node.props['aria-label'] === '場面のBGMの扱い')[0].props.onChange({ target: { value: 'continue' } })
+  tree = h.render()
+  assert.equal(h.button(tree, '下書きを保存').props.disabled, true)
+  assert.ok(text(tree).includes('継続するBGMがありません'))
+  assert.equal(walkAll(tree, node => node.type === 'select' && node.props['aria-label'] === '場面のBGMの扱い')[0].props.value, 'continue')
+})
+
+test('the BGM editor shows automatic reasoning, live continuity ranges and inherited audio volume', t => {
+  const h = harness(t, adjustmentContinuityFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  let tree = h.render()
+  assert.ok(text(tree).includes('自動判断：港の出会い'))
+  assert.ok(text(tree).includes('現在の曲の範囲：港の出会い〜出航'))
+  h.button(tree, '港での会話').props.onClick()
+  tree = h.render()
+  assert.ok(text(tree).includes('前の場面から再生位置を引き継ぎます'))
+  const volume = walkAll(tree, node => node.type === 'input' && node.props['aria-label'] === '場面のBGM音量')[0]
+  assert.equal(volume.props.value, 22)
+  assert.equal(volume.props.disabled, true)
+  walkAll(tree, node => node.type === 'select' && node.props['aria-label'] === '場面のBGMの扱い')[0].props.onChange({ target: { value: 'stop' } })
+  tree = h.render()
+  assert.ok(text(tree).includes('港の出会い〜港の出会いで同じ曲を再生'))
+  assert.ok(text(tree).includes('継続するBGMがありません'))
+  assert.ok(text(tree).includes('現在の設定：手動でBGMなしに設定'))
+  assert.equal(h.button(tree, '下書きを保存').props.disabled, true)
+  assert.equal(h.button(tree, '調整版を反映').props.disabled, true)
+  h.button(tree, 'この場面を自動設定に戻す').props.onClick()
+  assert.equal(h.button(h.render(), '調整版を反映').props.disabled, false)
+})
+
+test('manual visual transition and bounded timings save full transition metadata', async t => {
+  const h = harness(t, adjustmentContinuityFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  const field = label => walkAll(h.render(), node => node.props?.['aria-label'] === label)[0]
+  field('場面の画面切り替え').props.onChange({ target: { value: 'dissolve' } })
+  field('画面の切り替え時間').props.onChange({ target: { value: '9000' } })
+  field('前のBGMのフェードアウト').props.onChange({ target: { value: '-100' } })
+  field('次のBGMのフェードイン').props.onChange({ target: { value: '1200' } })
+  h.button(h.render(), '下書きを保存').props.onClick(); await settle()
+  const saved = JSON.parse(h.calls[0].options.body).scene_music[0]
+  assert.deepEqual(saved.transition, { visual: 'dissolve', duration_ms: 3000, music_fade_out_ms: 0, music_fade_in_ms: 1200 })
+  assert.equal(saved.reason, '場面の切り替え時間を手動調整')
+})
+
+test('replanning sends only the chapter and revision and retains unsubmitted music text and files', async t => {
+  const h = harness(t, adjustmentContinuityFixture())
+  h.button(h.render(), 'BGM').props.onClick()
+  const field = label => walkAll(h.render(), node => node.props?.['aria-label'] === label)[0]
+  field('BGMの英語プロンプト').props.onChange({ target: { value: 'A bold brass melody.' } })
+  field('今回だけのBGM指示').props.onChange({ target: { value: '次の候補は緊迫感を強く' } })
+  const upload = new File(['audio'], 'later.mp3', { type: 'audio/mpeg' })
+  field('BGM音源の取り込み').props.onChange({ target: { files: [upload] } })
+  h.handle(async () => { const next = structuredClone(h.source); next.draft.revision = 2; return next })
+  h.button(h.render(), 'この章のつながりを見直す').props.onClick(); await settle()
+  assert.equal(h.calls[0].path, '/api/m3/projects/story/adjustments/music/replan')
+  assert.deepEqual(JSON.parse(h.calls[0].options.body), { expected_revision: 1, production_id: 'chapter-1' })
+  assert.equal(field('BGMの英語プロンプト').props.value, 'A bold brass melody.')
+  assert.equal(field('今回だけのBGM指示').props.value, '次の候補は緊迫感を強く')
+  assert.ok(text(h.render()).includes('later.mp3'))
+  field('場面のBGM音量').props.onChange({ target: { value: '17' } })
+  assert.equal(h.button(h.render(), 'この章のつながりを見直す').props.disabled, true)
+})
+
+test('reused assets are labelled and stale replan completion explains that manual settings were retained', t => {
+  const source = adjustmentContinuityFixture()
+  source.music_candidates[0].source = 'reused'
+  source.jobs = [{ id: 'replan', kind: 'music', generation_kind: 'm3_music_plan', purpose: 'music_replan', status: 'completed', attempt_count: 1, adoption_status: 'stale', adoption_reason: '下書きの音量が変更されています。' }]
+  const h = harness(t, source)
+  h.button(h.render(), 'BGM').props.onClick()
+  assert.ok(text(h.render()).includes('既存音源を再利用'))
+  assert.ok(text(h.render()).includes('章の見直し結果は下書きへ反映していません。下書きの音量が変更されています。'))
 })

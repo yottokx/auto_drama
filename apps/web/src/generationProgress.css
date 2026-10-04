@@ -3,6 +3,7 @@
 .generation-progress-marker { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #efede7; font-size: 14px; font-weight: 600; }
 .generation-progress-label { overflow-wrap: anywhere; }
 .generation-progress-status { font-size: 11px; white-space: nowrap; }
+.generation-progress-pending { color: #85817a; background: #f4f3ef; border-color: #e5e3df; }
 .generation-progress-running { border-color: #c6bd9c; background: #f7f2e4; color: #655530; }
 .generation-progress-running .generation-progress-marker { color: #fff; background: #9c8652; }
 .generation-progress-completed { color: #506647; }

@@ -68,6 +68,12 @@ class HistoryService:
             # Later media remain queued after a terminal stage failure. They
             # cannot execute until retry, so they must not keep history busy.
             "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
+            "JOIN m3_production p ON p.id=pj.production_id "
+            "JOIN m3_requirement r ON r.production_id=p.storyline_id "
+            "JOIN job blocker ON blocker.id=r.job_id "
+            "WHERE pj.job_id=job.id AND job.kind='m3_narrative' "
+            "AND r.kind='m3_event_cg_budget' AND r.artifact_id IS NULL AND blocker.status='failed') "
+            "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
             "JOIN m3_requirement r ON r.production_id=pj.production_id "
             "JOIN m3_production owner ON owner.id=pj.production_id "
             "LEFT JOIN job blocker ON blocker.id=r.job_id "
@@ -80,15 +86,19 @@ class HistoryService:
             "AND prior_chapter.chapter_number<owner.chapter_number "
             "AND prior.kind=r.kind AND prior.target_id=r.target_id AND prior.descriptor=r.descriptor "
             "AND prior.artifact_id IS NULL AND shared_blocker.status='failed')) AND ("
+            "(job.kind IN ('m3_image','m3_background','m3_voice','m3_voice_clone','m3_music','m3_event_cg') "
+            "AND r.kind IN ('m3_music_plan','m3_event_cg_budget','m3_event_cg_plan')) OR "
             "(job.kind='m3_background' AND r.kind='m3_image') OR "
-            "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background')) OR "
-            "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_voice')))) "
+            "(job.kind='m3_event_cg' AND r.kind IN ('m3_image','m3_background')) OR "
+            "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background','m3_event_cg')) OR "
+            "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_event_cg','m3_voice')) OR "
+            "(job.kind='m3_music' AND r.kind IN ('m3_image','m3_background','m3_event_cg','m3_voice','m3_voice_clone')))) "
             "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
             "JOIN m3_production p ON p.id=pj.production_id "
             "JOIN m3_production root ON root.id=p.storyline_id "
             "LEFT JOIN project_history_state h ON h.project_id=p.project_id "
             "WHERE pj.job_id=job.id AND (root.control_state!='running' "
-            "OR h.production_frozen=1 OR h.production_id!=root.id "
+            "OR h.production_frozen=1 OR h.production_id IS NULL OR h.production_id!=root.id "
             "OR (root.plan_approval_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM planning_draft dp "
             "WHERE dp.id=h.planning_id AND dp.approved_plan_id=root.plan_approval_id)))))) LIMIT 1",
             (project_id,),
@@ -118,6 +128,10 @@ class HistoryService:
                 "WHERE production_id=? ORDER BY rowid", (production_id,),
             )],
         }
+        cg_policy = connection.execute("SELECT policy FROM event_cg_production WHERE production_id=?",
+                                       (production["storyline_id"],)).fetchone()
+        if cg_policy:
+            result["event_cg_policy"] = json.loads(cg_policy["policy"])
         if children:
             chapters = []
             for row in connection.execute(
@@ -172,6 +186,20 @@ class HistoryService:
                 "production_frozen=?,production_snapshot=NULL,version=version+1 WHERE project_id=?", (*values, project_id),
             )
 
+    @staticmethod
+    def assert_reconfirmation_allowed(connection, project_id):
+        if HistoryService.busy(connection, project_id):
+            raise ServiceError(409, "生成処理中です。制作を停止するか、完了または失敗を確認してから確定し直してください。")
+
+    def clear_downstream(self, connection, project_id, *, planning=False):
+        """Detach later steps; immutable outputs remain available in history."""
+        self.set_selection(connection, project_id, None, None, None)
+        if planning:
+            connection.execute(
+                "UPDATE project_history_state SET planning_id=NULL,version=version+1 WHERE project_id=?",
+                (project_id,),
+            )
+
     def _snapshot(self, connection, project_id):
         from .m2_service import M2Service
 
@@ -184,9 +212,11 @@ class HistoryService:
         production_state = (json.loads(selection["production_snapshot"])
                             if selection["production_frozen"] and selection["production_snapshot"]
                             else self.production_state(connection, selection["production_id"]))
+        from .event_cg_settings import EventCgSettings
         from .planning_service import PlanningService
 
         result = {"schema_version": 1, "state": state, "production_state": production_state,
+                "event_cg_policy": EventCgSettings.policy(connection, project_id),
                 "planning_state": PlanningService.history_state(connection, project_id),
                 "adjustment_state": required(connection, "adjustment_draft", selection["adjustment_draft_id"])
                     if selection.get("adjustment_draft_id") else None, "selection": {
@@ -204,6 +234,12 @@ class HistoryService:
             result["adjustment_jobs"] = [dict(row) for row in connection.execute(
                 "SELECT j.id,j.status,j.attempt_count,j.result_artifact_id FROM job j JOIN adjustment_job a ON a.job_id=j.id "
                 "WHERE a.draft_id=? ORDER BY j.created_at,j.id", (draft["id"],))]
+            result["music_candidates"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM music_candidate WHERE storyline_id=? ORDER BY created_at,id", (draft["production_id"],))]
+            result["music_jobs"] = [dict(row) for row in connection.execute(
+                "SELECT j.id,j.status,j.attempt_count,j.result_artifact_id FROM job j WHERE j.id IN "
+                "(SELECT job_id FROM music_adjustment_job WHERE draft_id=? UNION SELECT job_id FROM music_replan_job WHERE draft_id=?) "
+                "ORDER BY j.created_at,j.id", (draft["id"], draft["id"]))]
         return result
 
     @staticmethod
@@ -214,6 +250,8 @@ class HistoryService:
         draft.pop("step", None)
         if result.get("adjustment_state"):
             result["adjustment_state"].pop("revision", None)
+        if result.get("event_cg_policy"):
+            result["event_cg_policy"].pop("revision", None)
         return result
 
     def _append(self, connection, project_id, label, action, snapshot, restored_from_id=None):
@@ -330,6 +368,12 @@ class HistoryService:
 
     def _validate_snapshot(self, connection, project_id, snapshot):
         references = set()
+        if "event_cg_policy" in snapshot:
+            from .event_cg_settings import PolicyUpdate
+
+            policy = snapshot["event_cg_policy"]
+            PolicyUpdate(expected_revision=policy["revision"], max_cgs=policy["max_cgs"],
+                         max_variants_per_cg=policy["max_variants_per_cg"])
 
         def collect(value):
             if isinstance(value, dict):
@@ -359,6 +403,21 @@ class HistoryService:
             edition = required(connection, "publication_edition", selected["edition_id"])
             if edition["project_id"] != project_id or edition["production_id"] != selected["production_id"]:
                 raise ValueError("publication edition belongs to another story")
+            edition_state = json.loads(edition["state"])
+            for production_id, identifier in edition_state.get("music_plans", {}).items():
+                from .m3_service import M3Service
+                from .music_service import candidate, chapter_plan
+
+                production = required(connection, "m3_production", production_id)
+                if production["storyline_id"] != selected["production_id"] or production["project_id"] != project_id:
+                    raise ValueError("Published music plan belongs to another story.")
+                chapter_plan(connection, production, M3Service(self.coordinator), edition_state)
+                references.add(identifier)
+                bindings = json.loads(required(connection, "artifact", identifier)["provenance"]).get("bindings", [])
+                for binding in bindings:
+                    if binding.get("candidate_id"):
+                        picked = candidate(connection, production_id, binding["scene_id"], binding["candidate_id"], project_id)
+                        references.update((picked["artifact_id"], picked["source_artifact_id"]))
             for row in connection.execute("SELECT b.* FROM edition_build e JOIN chapter_build b ON b.id=e.build_id WHERE e.edition_id=?", (edition["id"],)):
                 references.update((row["script_artifact_id"], row["export_artifact_id"]))
                 references.update(item["artifact_id"] for item in json.loads(row["manifest"]))
@@ -390,6 +449,57 @@ class HistoryService:
                     references.add(candidate["artifact_id"])
             for rows in adjustment_content["requirements"].values():
                 references.update(item["artifact_id"] for item in rows if item["artifact_id"])
+            for value in adjustment_content.get("scene_music", []):
+                from packages.contracts.music import SceneMusicSetting
+
+                setting = SceneMusicSetting.model_validate(value)
+                production = required(connection, "m3_production", setting.production_id)
+                if production["storyline_id"] != selected["production_id"] or production["project_id"] != project_id:
+                    raise ValueError("Music setting belongs to another story.")
+                if setting.candidate_id:
+                    from .music_service import candidate
+
+                    picked = candidate(connection, setting.production_id, setting.scene_id, setting.candidate_id, project_id)
+                    references.update((picked["artifact_id"], picked["source_artifact_id"]))
+            if adjustment_content.get("scene_music"):
+                from .m3_service import M3Service
+                from .music_service import original_settings, validate_continuity
+
+                m3 = M3Service(self.coordinator)
+                chapters = [dict(value) for value in connection.execute(
+                    "SELECT * FROM m3_production WHERE storyline_id=? ORDER BY chapter_number", (selected["production_id"],))]
+                rows = adjustment_content["scene_music"]
+                expected = {(value["production_id"], value["scene_id"]) for value in original_settings(connection, chapters, m3)}
+                if {(value["production_id"], value["scene_id"]) for value in rows} != expected or len(rows) != len(expected):
+                    raise ValueError("Music settings differ from the frozen story scenes.")
+                validate_continuity(rows, chapters, m3, connection)
+            for production_id, identifier in adjustment_content.get("music_plans", {}).items():
+                from .m3_service import M3Service
+                from .music_service import chapter_plan
+
+                production = required(connection, "m3_production", production_id)
+                if production["storyline_id"] != selected["production_id"] or production["project_id"] != project_id:
+                    raise ValueError("Music plan belongs to another story.")
+                chapter_plan(connection, production, M3Service(self.coordinator), adjustment_content)
+                references.add(identifier)
+                bindings = json.loads(required(connection, "artifact", identifier)["provenance"]).get("bindings", [])
+                for binding in bindings:
+                    if binding.get("candidate_id"):
+                        from .music_service import candidate
+
+                        picked = candidate(connection, production_id, binding["scene_id"], binding["candidate_id"], project_id)
+                        references.update((picked["artifact_id"], picked["source_artifact_id"]))
+            for value in snapshot.get("music_candidates", []):
+                original = required(connection, "music_candidate", value["id"])
+                if original["storyline_id"] != selected["production_id"] or original["project_id"] != project_id:
+                    raise ValueError("Music candidate audit belongs to another story.")
+                references.update(value[key] for key in ("artifact_id", "source_artifact_id") if value[key])
+            for value in snapshot.get("music_jobs", []):
+                original = required(connection, "job", value["id"])
+                if original["project_id"] != project_id:
+                    raise ValueError("Music job audit belongs to another story.")
+                if value["result_artifact_id"]:
+                    references.add(value["result_artifact_id"])
             for candidate in snapshot.get("adjustment_candidates", []):
                 original = required(connection, "adjustment_candidate", candidate["id"])
                 if original["project_id"] != project_id or original["production_id"] != selected["production_id"]:
@@ -475,6 +585,17 @@ class HistoryService:
             self.set_selection(connection, project_id, selected["production_id"], selected["build_id"], selected["portrait_settings_id"], frozen=True)
             from .planning_service import PlanningService
             PlanningService.restore(connection, project_id, snapshot)
+            if "event_cg_policy" in snapshot:
+                from .event_cg_settings import EventCgSettings
+
+                policy = snapshot["event_cg_policy"]
+                previous_policy = EventCgSettings.policy(connection, project_id)
+                connection.execute(
+                    "INSERT INTO event_cg_policy VALUES (?,?,?,?) ON CONFLICT(project_id) "
+                    "DO UPDATE SET max_cgs=excluded.max_cgs,max_variants_per_cg=excluded.max_variants_per_cg,"
+                    "revision=excluded.revision",
+                    (project_id, policy["max_cgs"], policy["max_variants_per_cg"], previous_policy["revision"] + 1),
+                )
             adjustment = snapshot.get("adjustment_state")
             if adjustment:
                 current_adjustment = required(connection, "adjustment_draft", adjustment["id"])

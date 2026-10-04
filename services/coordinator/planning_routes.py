@@ -12,6 +12,8 @@ from .planning_service import PlanningService
 class PlanningAction(Contract):
     action: Literal["generate", "revise", "save", "approve"]
     expected_revision: int = Field(ge=0, strict=True)
+    expected_event_cg_policy_revision: int | None = Field(default=None, ge=0, strict=True)
+    reconfirm: bool = Field(default=False, strict=True)
     content: dict | None = None
     target: Literal["all", "plot", "character", "relationships"] = "all"
     character_id: str | None = Field(default=None, max_length=100)

@@ -97,11 +97,51 @@
 .adjustment-content .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .adjustment-preview-column, .adjustment-controls-column { min-width: 0; }
 .adjustment-material-candidates { min-width: 0; }
+.adjustment-music-settings { display: flex; flex-wrap: wrap; gap: 18px; border: 1px solid #dedfd1; border-radius: 9px; padding: 16px; margin: 18px 0; }
+.adjustment-music-settings > label { display: grid; gap: 9px; flex: 1; min-width: 180px; font-size: 13px; }
+.adjustment-music-settings output { font-variant-numeric: tabular-nums; color: #526e42; }
+.adjustment-music-settings input[type="range"] { width: 100%; }
+.adjustment-music-audition { border: 1px solid #dce0d0; background: #f4f7ed; border-radius: 9px; padding: 16px; margin-bottom: 16px; }
+.adjustment-music-audition h3 { margin: 0 0 14px; font-size: 14px; color: #526348; }
+.adjustment-music-playback-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.adjustment-music-playback-actions > label { display: flex; gap: 7px; align-items: center; font-size: 12px; }
+.adjustment-music-timeline { position: relative; height: 48px; margin-top: 18px; }
+.adjustment-music-timeline input[type="range"] { position: absolute; top: 24px; left: 0; width: 100%; height: 22px; padding: 0; margin: 0; appearance: none; background: transparent; cursor: pointer; }
+.adjustment-music-timeline input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 4px; background: #8b958444; }
+.adjustment-music-timeline input[type="range"]::-webkit-slider-thumb { appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #466b8f; border: 2px solid #fff; margin-top: -5px; box-shadow: 0 0 0 1px #466b8f; }
+.adjustment-music-timeline input[type="range"]::-moz-range-track { height: 6px; border-radius: 4px; background: #8b958444; }
+.adjustment-music-timeline input[type="range"]::-moz-range-thumb { height: 12px; width: 12px; border-radius: 50%; background: #466b8f; border: 2px solid #fff; }
+.adjustment-music-loop-band { position: absolute; top: 32px; height: 6px; border-radius: 4px; background: #81afd4; }
+.adjustment-music-loop-mark { position: absolute; top: 0; font-size: 11px; font-weight: 600; color: #325d81; transform: translateX(-50%); }
+.adjustment-music-loop-end { transform: translateX(-100%); }
+.adjustment-music-loop-description { margin: 7px 0 0; font-size: 12px; color: #596b4e; line-height: 1.8; font-variant-numeric: tabular-nums; }
+.adjustment-music-warning { font-size: 12px; line-height: 1.7; color: #876431; padding: 10px; border-radius: 6px; background: #fff4dd; }
+.adjustment-candidates-music { grid-template-columns: 1fr; }
+.adjustment-music-plan, .adjustment-music-continuity, .adjustment-music-seam { margin: 16px 0; border: 1px solid #dedfd1; border-radius: 9px; padding: 16px; background: #fbfcf8; }
+.adjustment-music-plan h3, .adjustment-music-continuity h3, .adjustment-music-seam h3 { margin: 0 0 10px; font-size: 14px; }
+.adjustment-music-plan p, .adjustment-music-continuity p, .adjustment-music-seam p { font-size: 12px; line-height: 1.8; }
+.adjustment-music-continuity ol { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; padding: 0; list-style: none; }
+.adjustment-music-continuity li { flex: 1 1 180px; border: 1px solid #e0e4d8; border-radius: 7px; padding: 10px; min-width: 0; }
+.adjustment-music-continuity li.is-current { border-color: #61834c; background: #f0f6e8; }
+.adjustment-music-continuity li > button { display: block; border: 0; padding: 0; background: transparent; text-align: left; color: #35536a; text-decoration: underline; font-size: 12px; line-height: 1.8; cursor: pointer; }
+.adjustment-music-continuity li > span, .adjustment-music-continuity li > small { display: block; font-size: 11px; line-height: 1.8; margin-top: 4px; }
+.adjustment-music-continuity li > p { color: #954132; margin: 7px 0 0; }
+.adjustment-music-transition-details { width: 100%; font-size: 12px; }
+.adjustment-music-transition-details summary { cursor: pointer; }
+.adjustment-music-transition-details label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; }
+.adjustment-music-transition-details input { width: 100px; }
+.adjustment-music-settings > label > span { font-size: 11px; color: #58664e; }
+.adjustment-music-seam-stage { position: relative; aspect-ratio: 3/2; width: min(100%, 540px); background-color: #26302a; background-size: cover; background-position: center; border-radius: 7px; overflow: hidden; }
+.adjustment-music-seam-stage > strong, .adjustment-music-seam-stage > span { position: absolute; z-index: 2; color: white; background: #15251edb; padding: 10px 14px; border-radius: 5px; left: 12px; right: 12px; font-size: 12px; }
+.adjustment-music-seam-stage > strong { bottom: 56px; }
+.adjustment-music-seam-stage > span { bottom: 12px; }
+.adjustment-music-seam-overlay { position: absolute; inset: 0; z-index: 1; visibility: hidden; background-position: center; background-size: cover; }
 @media (min-width: 1100px) {
   .adjustment-material-workspace { display: grid; grid-template-columns: minmax(250px, .8fr) minmax(0, 1.2fr); align-items: start; gap: 22px; margin-bottom: 24px; }
   .adjustment-material-workspace .adjustment-new-material { margin: 0; padding: 18px; }
   .adjustment-material-workspace .adjustment-candidates { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); max-height: 850px; }
   .adjustment-material-workspace .adjustment-candidates-voice { grid-template-columns: 1fr; }
+  .adjustment-material-workspace .adjustment-candidates-music { grid-template-columns: 1fr; }
   .adjustment-material-workspace .adjustment-image-preview img { height: 340px; }
   .adjustment-workspace { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(285px, 1fr); gap: 22px; align-items: start; margin-top: 22px; }
   .adjustment-preview-column { position: sticky; top: 16px; }

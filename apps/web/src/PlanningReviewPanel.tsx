@@ -9,6 +9,8 @@ import {
 import { PlanningContentEditor } from './PlanningContentEditor'
 import { PlanningContentView } from './PlanningContentView'
 import { GenerationProgress } from './GenerationProgress'
+import { EventCgPolicyEditor } from './EventCgPolicyEditor'
+import type { EventCgEditorStatus } from './eventCgState'
 import { llmProgressItems } from './productionState'
 import type { CharacterBrief, WizardStep } from './wizardState'
 import './planning.css'
@@ -26,6 +28,8 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
   const [connectionError, setConnectionError] = useState('')
   const [notice, setNotice] = useState('')
   const [mutating, setMutating] = useState(false)
+  const [cgStatus, setCgStatus] = useState<EventCgEditorStatus>({ pending: false, canApprove: false, policy: null })
+  const [cgEpoch, setCgEpoch] = useState(0)
   const [target, setTarget] = useState<RevisionTarget>('all')
   const [characterId, setCharacterId] = useState('')
   const [chapter, setChapter] = useState('')
@@ -53,7 +57,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
     const next = update(current.current)
     current.current = next
     setState(next)
-    pendingCallback.current(planningDirty(next) || Boolean(next.instruction.trim()) || mutation.current)
+    pendingCallback.current(planningDirty(next) || Boolean(next.instruction.trim()) || mutation.current || cgStatus.pending)
   }
   function accept(response: PlanningResponse, adopted = false, clearInstruction = false) {
     if (response.project_id !== projectId) throw new Error('作品の全体計画を確認できませんでした。再読み込みしてください。')
@@ -90,7 +94,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
   }, [endpoint])
 
   const dirty = planningDirty(state)
-  const pending = dirty || Boolean(state.instruction.trim()) || mutating
+  const pending = dirty || Boolean(state.instruction.trim()) || mutating || cgStatus.pending
   useEffect(() => { onPendingChange(pending) }, [pending, onPendingChange])
   const planning = state.latest
   const setupInvalidated = !setupApproved || setupSource.current.approvalId !== mainApprovalId
@@ -98,7 +102,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
   const { generating, failed } = planningActivity(planning)
   const activePlanningJob = planning?.jobs.find(job => job.id === planning.active_job_id)
   const busy = mutating || Boolean(generating)
-  const canApprove = canApprovePlanning(state, mutating || setupInvalidated)
+  const canApprove = canApprovePlanning(state, mutating || setupInvalidated) && cgStatus.canApprove
   const selectedCharacter = state.content?.cast_plan.supporting_characters.find(character => character.id === characterId)?.id
     ?? state.content?.cast_plan.supporting_characters[0]?.id
   const editing = Boolean(editBaselines[tab])
@@ -130,6 +134,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
 
   async function mutate(action: 'generate' | 'save' | 'revise' | 'approve', retryId?: string) {
     if (mutation.current || generating || state.conflict || setupInvalidated) return
+    if (action === 'approve' && !canApprove) return
     const controller = new AbortController()
     controllers.current.add(controller)
     mutation.current = true; sequence.current += 1; setMutating(true); setError(''); setNotice('')
@@ -140,7 +145,8 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
         result = await request<PlanningResponse>(endpoint, controller.signal)
       } else {
         const body = planningAction(current.current, action, { target, characterId: selectedCharacter, ...(chapter ? { chapterNumber: Number(chapter) } : {}) })
-        result = await request<PlanningResponse>(`${endpoint}/actions`, controller.signal, body)
+        result = await request<PlanningResponse>(`${endpoint}/actions`, controller.signal, action === 'approve'
+          ? { ...body, reconfirm: planning?.status === 'approved', expected_event_cg_policy_revision: cgStatus.policy!.revision } : body)
       }
       if (!mounted.current || controller.signal.aborted) return
       accept(result, true, action === 'revise')
@@ -151,7 +157,13 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
       else await onRefresh()
     } catch (reason) {
       if (mounted.current && !controller.signal.aborted) {
-        if (reason instanceof ApiError && reason.status === 409) commit(previous => ({ ...previous, conflict: true }))
+        if (reason instanceof ApiError && reason.status === 409) {
+          if (action === 'approve' && reason.message.includes('イベントCG')) {
+            // Approval only accepts saved CG settings, so reloading them cannot lose a local edit.
+            // A CG policy/readiness race does not invalidate the narrative planning revision.
+            setCgStatus({ pending: false, canApprove: false, policy: null }); setCgEpoch(value => value + 1)
+          } else commit(previous => ({ ...previous, conflict: true }))
+        }
         setError(`${errorMessage(reason)} 入力は保持しています。`)
       }
     } finally {
@@ -220,9 +232,11 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
         </fieldset></>}</div></section>
       </>}
       {notice && <p className="planning-notice" role="status">{notice}</p>}
-      <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' ? <button className="button button-primary" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button> : <button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button>}</div>
+      <EventCgPolicyEditor key={`${projectId}:${cgEpoch}`} projectId={projectId} disabled={busy || state.conflict || setupInvalidated} readonly={false} onStatusChange={setCgStatus}/>
+      {planning.status === 'approved' && <p className="planning-notice">もう一度承認すると、現在の本編制作を無効にして第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}
+      <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' && <button className="button button-light" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button>}<button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button></div>
     </>}
-    {approveOpen && <Dialog title="全体計画を承認して、本編の制作へ。" onClose={() => { if (!mutating) setApproveOpen(false) }}><p className="dialog-intro">表示中の全体プロットとサブキャラの設定・関係性を、物語全体の計画として保存します。第1章から順番に本文・背景・立ち絵・音声を制作し、完成した章から鑑賞できます。</p><p className="dialog-info">本編制作では、計画と前章の内容を踏まえて場面を具体化します。追加の章ごとの承認はありません。</p><div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setApproveOpen(false)}>確認に戻る</button><button className="button button-primary" disabled={!canApprove} onClick={() => void mutate('approve')}>{mutating ? '制作を開始中…' : '承認して第1章から制作する'}</button></div></Dialog>}
+    {approveOpen && <Dialog title="全体計画を承認して、本編の制作へ。" onClose={() => { if (!mutating) setApproveOpen(false) }}><p className="dialog-intro">表示中の全体プロットとサブキャラの設定・関係性を、物語全体の計画として保存します。第1章から順番に本文・背景・立ち絵・音声を制作し、完成した章から鑑賞できます。</p><p className="dialog-info">本編制作では、計画と前章の内容を踏まえて場面を具体化します。追加の章ごとの承認はありません。</p>{planning?.status === 'approved' && <p className="dialog-info">現在の本編制作を無効にして、保存済みの全体計画とCG設定で第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}{cgStatus.policy && <p className="dialog-info">{cgStatus.policy.max_cgs === 0 ? 'イベントCGの自動生成は無効です。' : `イベントCGは作品全体で最大${cgStatus.policy.max_cgs}件、1件あたり追加差分は最大${cgStatus.policy.max_variants_per_cg}枚です。生成には追加の時間がかかります。`}</p>}<div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setApproveOpen(false)}>確認に戻る</button><button className="button button-primary" disabled={!canApprove} onClick={() => void mutate('approve')}>{mutating ? '制作を開始中…' : '承認して第1章から制作する'}</button></div></Dialog>}
     {discardOpen && <Dialog title="編集中の内容を取り消しますか。" onClose={() => { if (!mutating) setDiscardOpen(false) }}><p className="dialog-intro">未保存の直接編集とAIへの修正指示を取り消し、{discardSetup ? '最新の世界観・メインキャラの承認状態に対応した画面を開きます。' : '最新の保存済み計画を表示します。'}</p><div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setDiscardOpen(false)}>入力を残す</button><button className="button button-primary" disabled={mutating} onClick={() => void reload()}>{mutating ? '読み込み中…' : '取り消して読み込む'}</button></div></Dialog>}
   </section>
 }

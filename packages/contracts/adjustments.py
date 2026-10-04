@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import Field, StringConstraints, model_validator
 
 from .m2 import CharacterId
+from .music import SceneMusicSetting
 from .script import Contract, PortraitBounds
 
 Id = Annotated[str, StringConstraints(min_length=1, max_length=128)]
@@ -24,12 +25,17 @@ class AdjustmentCharacter(Contract):
 class AdjustmentSave(Contract):
     expected_revision: Revision
     characters: list[AdjustmentCharacter] = Field(min_length=1, max_length=100)
+    scene_music: list[SceneMusicSetting] | None = Field(default=None, max_length=800)
 
     @model_validator(mode="after")
     def unique_people(self):
         ids = [row.character_id for row in self.characters]
         if len(set(ids)) != len(ids):
             raise ValueError("Each character needs one presentation setting.")
+        if self.scene_music is not None:
+            scopes = [(row.production_id, row.scene_id) for row in self.scene_music]
+            if len(set(scopes)) != len(scopes):
+                raise ValueError("Each scene needs one music setting.")
         return self
 
 
@@ -59,3 +65,16 @@ class AdjustmentGenerate(AdjustmentRevision):
 
 class AdjustmentSample(AdjustmentRevision):
     candidate_id: Id
+
+
+class AdjustmentMusicGenerate(AdjustmentRevision):
+    production_id: Id
+    scene_id: Id
+    instruction: str = Field(default="", max_length=10000)
+    source_prompt: str | None = Field(default=None, min_length=1, max_length=10000)
+
+    @model_validator(mode="after")
+    def prompt_not_blank(self):
+        if self.source_prompt is not None and not self.source_prompt.strip():
+            raise ValueError("音楽プロンプトを空にすることはできません。")
+        return self

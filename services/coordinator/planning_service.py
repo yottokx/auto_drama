@@ -197,10 +197,19 @@ class PlanningService:
             row, state = self._current(connection, project_id)
             if row["revision"] != body.expected_revision:
                 raise ServiceError(409, "構成が更新されました。最新の版を確認してください。")
+            reconfirm = body.action == "approve" and body.reconfirm
+            if reconfirm:
+                self.history.assert_reconfirmation_allowed(connection, project_id)
+            if body.action == "approve" and (not row["approved_plan_id"] or reconfirm):
+                from .event_cg_settings import EventCgSettings
+
+                EventCgSettings(self.coordinator).freeze(
+                    connection, project_id,
+                    expected_revision=body.expected_event_cg_policy_revision)
             active = required(connection, "job", row["active_job_id"]) if row["active_job_id"] else None
             if active and active["status"] in {"pending", "running"}:
                 raise ServiceError(409, "構成を生成中です。完了または失敗を確認してください。")
-            if body.action == "approve" and row["approved_plan_id"]:
+            if body.action == "approve" and row["approved_plan_id"] and not reconfirm:
                 from .m3_service import M3Service
                 production = M3Service(self.coordinator).start_approved(
                     connection, project_id, row["main_approval_id"], row["approved_plan_id"])
@@ -210,6 +219,13 @@ class PlanningService:
                     "generate": "全体構成を生成", "revise": "全体構成を修正",
                     "save": "全体構成を編集", "approve": "構成を承認して本編制作",
                 }[body.action], "m3-plan-" + body.action)
+                if reconfirm:
+                    self.history.clear_downstream(connection, project_id)
+                    connection.execute(
+                        "UPDATE planning_draft SET revision=revision+1,approved_plan_id=NULL,updated_at=? WHERE id=?",
+                        (self.clock(), row["id"]),
+                    )
+                    row = required(connection, "planning_draft", row["id"])
                 if body.action == "save":
                     content = self._valid_content(body.content, self._snapshot(connection, row))
                 else:
