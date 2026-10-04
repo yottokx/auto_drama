@@ -74,6 +74,8 @@ M0用のモデル取得情報は `config/m0-models-tts.json`、`config/m0-models
 
 - [Irodori-TTSの環境](docs/setup/irodori.md)
 - [画像生成の環境](docs/setup/diffusers.md)
+- [Animaによる立ち絵差分の調査と設計方針](docs/research/anima-portrait-variants-20261004.md)（差分生成・自動マスクは未実装）
+- [Qwen-Image-2.1によるイベントCGの実装計画](docs/qwen-event-cg-plan.md)（本編への自動挿入・再生は未実装）
 - [llama.cpp・ティラノの環境](docs/setup/native-runtimes.md)
 
 ワーカー用のランタイムはすべて `services/worker/` 配下です。別PCではこの配下と依存・ランタイムの構築手順から再構築します。Windowsのvenvには絶対パスが入るため、フォルダー移動後はそのPCでuv環境を再作成します。ワーカー配布のパッケージ化は今後実装します。
