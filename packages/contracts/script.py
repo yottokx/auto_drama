@@ -43,7 +43,7 @@ class Contract(BaseModel):
 
 class AssetReference(Contract):
     id: Identifier
-    kind: Literal["background", "character", "audio", "music"]
+    kind: Literal["background", "character", "audio", "music", "event_cg"]
     artifact_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")]
     filename: Annotated[str, StringConstraints(min_length=1, max_length=128)]
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -235,6 +235,24 @@ class MusicCue(Contract):
         return self
 
 
+class EventCgVariant(Contract):
+    """An adopted image change immediately before an existing utterance."""
+
+    id: Identifier
+    utterance_id: Identifier
+    asset_id: Identifier
+
+
+class EventCgSegment(Contract):
+    """Half-open image interval; a null end keeps the CG through chapter end."""
+
+    id: Identifier
+    start_utterance_id: Identifier
+    end_utterance_id: Identifier | None = None
+    base_asset_id: Identifier
+    variants: list[EventCgVariant] = Field(default_factory=list, max_length=100)
+
+
 class Script(Contract):
     schema_version: Literal[1] = 1
     id: Identifier
@@ -248,6 +266,8 @@ class Script(Contract):
     scene_transitions: list[SceneTransitionCue] = Field(default_factory=list, max_length=10_000,
                                                       exclude_if=lambda value: not value)
     portrait_baseline: PortraitBaseline | None = Field(default=None, exclude_if=lambda value: value is None)
+    event_cg_segments: list[EventCgSegment] = Field(default_factory=list, max_length=10_000,
+                                                   exclude_if=lambda value: not value)
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -259,7 +279,7 @@ class Script(Contract):
     @model_validator(mode="after")
     def validate_references(self) -> Self:
         for values in (self.characters, self.utterances, self.directions, self.assets,
-                       self.music_cues, self.scene_transitions):
+                       self.music_cues, self.scene_transitions, self.event_cg_segments):
             ids = [value.id for value in values]
             if len(ids) != len(set(ids)):
                 raise ValueError("duplicate stable IDs in a script collection")
@@ -298,6 +318,30 @@ class Script(Contract):
         for transition in self.scene_transitions:
             if transition.utterance_id not in utterances:
                 raise ValueError(f"unknown scene transition utterance: {transition.utterance_id}")
+        positions = {value.id: index for index, value in enumerate(self.utterances)}
+        previous_end = -1
+        variant_ids = set()
+        for segment in sorted(self.event_cg_segments,
+                              key=lambda value: positions.get(value.start_utterance_id, -1)):
+            if segment.start_utterance_id not in positions or (
+                    segment.end_utterance_id is not None and segment.end_utterance_id not in positions):
+                raise ValueError("event CG interval references an unknown utterance")
+            start = positions[segment.start_utterance_id]
+            end = positions[segment.end_utterance_id] if segment.end_utterance_id else len(positions)
+            if start >= end or start < previous_end:
+                raise ValueError("event CG intervals must be nonempty and nonoverlapping")
+            previous_end = end
+            asset(segment.base_asset_id, "event_cg")
+            previous_variant = start
+            for variant in segment.variants:
+                if variant.id in variant_ids:
+                    raise ValueError("duplicate event CG variant ID")
+                variant_ids.add(variant.id)
+                position = positions.get(variant.utterance_id, -1)
+                if not previous_variant < position < end:
+                    raise ValueError("event CG variants must be ordered strictly inside their interval")
+                previous_variant = position
+                asset(variant.asset_id, "event_cg")
         for direction in self.directions:
             if direction.utterance_id not in utterances:
                 raise ValueError(f"unknown direction utterance: {direction.utterance_id}")

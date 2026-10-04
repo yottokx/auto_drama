@@ -13,7 +13,8 @@
             "background",
             "character",
             "audio",
-            "music"
+            "music",
+            "event_cg"
           ],
           "title": "Kind",
           "type": "string"
@@ -282,6 +283,83 @@
         "character_id"
       ],
       "title": "EnterDirection",
+      "type": "object"
+    },
+    "EventCgSegment": {
+      "additionalProperties": false,
+      "description": "Half-open image interval; a null end keeps the CG through chapter end.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "start_utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Start Utterance Id",
+          "type": "string"
+        },
+        "end_utterance_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Utterance Id"
+        },
+        "base_asset_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Base Asset Id",
+          "type": "string"
+        },
+        "variants": {
+          "items": {
+            "$ref": "#/$defs/EventCgVariant"
+          },
+          "maxItems": 100,
+          "title": "Variants",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "start_utterance_id",
+        "base_asset_id"
+      ],
+      "title": "EventCgSegment",
+      "type": "object"
+    },
+    "EventCgVariant": {
+      "additionalProperties": false,
+      "description": "An adopted image change immediately before an existing utterance.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "asset_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Asset Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "asset_id"
+      ],
+      "title": "EventCgVariant",
       "type": "object"
     },
     "ExitDirection": {
@@ -950,6 +1028,14 @@
         }
       ],
       "default": null
+    },
+    "event_cg_segments": {
+      "items": {
+        "$ref": "#/$defs/EventCgSegment"
+      },
+      "maxItems": 10000,
+      "title": "Event Cg Segments",
+      "type": "array"
     }
   },
   "required": [

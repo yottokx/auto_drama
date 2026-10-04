@@ -104,6 +104,7 @@ def create_app(
         return app.state.coordinator
 
     from .adjustment_routes import router as adjustment_router
+    from .event_cg_settings import router as event_cg_router
     from .image_experiment_routes import router as image_experiment_router
     from .m2_routes import router as m2_router
     from .m3_player import install_player_routes
@@ -115,6 +116,7 @@ def create_app(
     app.include_router(m3_router(service))
     app.include_router(planning_router(service))
     app.include_router(adjustment_router(service))
+    app.include_router(event_cg_router(service))
     app.include_router(image_experiment_router(service))
     install_player_routes(app, service)
     register_tts_routes(app, service)

@@ -1,0 +1,4 @@
+Character identity details, tied to the reference image numbers:
+Reference image 1 is Toru Minase: tousled short black hair with longer uneven bangs, and thin black rectangular eyeglasses. His eyeglasses are an essential identity feature.
+Reference image 2 is Mio Shinohara: a straight chin-length chestnut-brown bob with blunt bangs and large brown eyes. She does not wear eyeglasses.
+Preserve these character-specific details where naturally visible from the specified camera angle. Keep the scene, framing, body and head orientation, actions, expressions and gaze described above unchanged.

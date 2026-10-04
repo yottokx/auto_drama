@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 
+from packages.contracts.event_cg import CG_KINDS, EventCgBudget, EventCgPlan, EventCgResult
 from packages.contracts.m3 import GenerationEnvelope
 from packages.contracts.portrait_recovery import PortraitOmission
 
@@ -26,11 +27,14 @@ def validate_bundle(data: bytes, kind: str) -> tuple[dict, dict[str, bytes]]:
         expected.add("voice.wav")
     elif kind == "m3_music":
         expected.update({"music.mp3", "source.mp3"})
+    elif kind == "m3_event_cg":
+        expected.update({"image.png", "original.png"})
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         entries = archive.infolist()
         names = {entry.filename for entry in entries}
         omission_bundle = kind == "m3_image" and names == {"result.json"}
-        if omission_bundle:
+        cg_omission = kind == "m3_event_cg" and names == {"result.json"}
+        if omission_bundle or cg_omission:
             expected = {"result.json"}
         if len(entries) != len(expected) or names != expected:
             raise ValueError("bundle must contain exactly the expected files")
@@ -46,8 +50,14 @@ def validate_bundle(data: bytes, kind: str) -> tuple[dict, dict[str, bytes]]:
         if set(envelope["result"]) != {"portrait"}:
             raise ValueError("Missing explicit portrait omission")
         PortraitOmission.model_validate(envelope["result"]["portrait"])
-    if envelope["kind"] != kind or (kind not in {"m3_narrative", "m3_plan", "m3_music_plan", "m3_music"} and not omission_bundle and envelope["result"]):
+    if envelope["kind"] != kind or (kind not in {"m3_narrative", "m3_plan", "m3_music_plan", "m3_music"} | CG_KINDS and not omission_bundle and envelope["result"]):
         raise ValueError("result differs from job contract")
+    if kind in CG_KINDS:
+        contract = {"m3_event_cg_budget": EventCgBudget, "m3_event_cg_plan": EventCgPlan,
+                    "m3_event_cg": EventCgResult}[kind]
+        result = contract.model_validate(envelope["result"])
+        if kind == "m3_event_cg" and (result.status == "omitted") != cg_omission:
+            raise ValueError("CG image files differ from their completion status.")
     if kind == "m3_music_plan":
         from packages.contracts.music import MusicPlan
 

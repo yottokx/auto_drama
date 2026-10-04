@@ -29,7 +29,7 @@ from .workflow_version import generator_protocol
 def generation_kinds(available: list[str]) -> list[str]:
     kinds = []
     if "m2_world" in available:
-        kinds.extend(("m3_plan", "m3_narrative", "m3_music_plan"))
+        kinds.extend(("m3_plan", "m3_narrative", "m3_music_plan", "m3_event_cg_budget", "m3_event_cg_plan"))
     if "m2_image" in available:
         kinds.extend(("m3_background", "m3_image"))
     if "m2_voice" in available:
@@ -117,6 +117,13 @@ def _media_job(job: dict, work: Path) -> bytes:
 def generate_job(job: dict, work_dir: Path) -> bytes:
     check_cancelled()
     kind, payload = job.get("kind"), job.get("payload")
+    from .event_cg_session import prepare_job as prepare_event_cg
+
+    prepare_event_cg(kind)
+    if kind in {"m3_event_cg_budget", "m3_event_cg_plan", "m3_event_cg"}:
+        from .event_cg_pipeline import generate_job as generate_event_cg
+
+        return generate_event_cg(job, work_dir)
     music_session.prepare_job(kind)
     if kind in {"m3_music_plan", "m3_music"}:
         from .music_pipeline import generate_job as generate_music

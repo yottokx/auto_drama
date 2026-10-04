@@ -651,6 +651,7 @@ class M2Service:
                     409, "別の操作で更新されました。最新の内容を読み込み直してください。"
                 )
             name = body.action
+            reconfirm = getattr(body, "reconfirm", False) and name in {"confirm-world", "approve"}
             if name == "go-to":
                 step = "world-input" if body.step == "character-input" else body.step
                 if step == "character-review":
@@ -670,6 +671,7 @@ class M2Service:
                 return self._view(connection, project_id, state)
             if (
                 name == "confirm-world"
+                and not reconfirm
                 and draft["worldConfirmed"]
                 and not draft["worldPendingChanges"]
                 and (state["activeJobId"] or not self._needs_cast_generation(draft))
@@ -681,7 +683,7 @@ class M2Service:
                     self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
             self._assert_mutable(connection, project_id)
-            if name == "approve" and draft["approved"]:
+            if name == "approve" and draft["approved"] and not reconfirm:
                 self._approve(connection, project_id, state)
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
@@ -692,9 +694,18 @@ class M2Service:
                     return self._view(connection, project_id, state)
             from .project_history import HistoryService, operation_label
 
-            HistoryService(self.coordinator).begin(
+            history = HistoryService(self.coordinator)
+            # A direct edit may already have cleared the approval flag. Every
+            # real confirmation detaches later steps; duplicate navigation has
+            # returned above without changing the selected version.
+            restart_downstream = name in {"generate-world", "confirm-world", "approve"}
+            if restart_downstream:
+                history.assert_reconfirmation_allowed(connection, project_id)
+            history.begin(
                 connection, project_id, operation_label(body, state), name,
             )
+            if restart_downstream:
+                history.clear_downstream(connection, project_id, planning=True)
             if name == "save-brief":
                 previous = (
                     draft["worldInput"],
@@ -726,7 +737,7 @@ class M2Service:
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
             if name == "approve":
-                self._approve(connection, project_id, state)
+                self._approve(connection, project_id, state, reconfirm=reconfirm)
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
             # Failed previous work is superseded by an explicit edit/new generation.
@@ -767,7 +778,7 @@ class M2Service:
                     raise ServiceError(
                         409, "入力を反映した完全な世界観を生成してから確定してください。"
                     )
-                if not draft["worldConfirmed"]:
+                if not draft["worldConfirmed"] or reconfirm:
                     snapshot = {
                         "schema_version": 1,
                         "revision": draft["revision"],
@@ -787,7 +798,7 @@ class M2Service:
                     )
                     draft["worldConfirmationArtifactId"] = record["id"]
                 draft["worldConfirmed"], draft["step"] = True, "character-review"
-                self._queue_characters(state)
+                self._queue_characters(state, force=reconfirm)
             else:
                 self._world_confirmed(draft)
                 self._character_action(connection, project_id, state, body)
@@ -1078,7 +1089,7 @@ class M2Service:
             pending.append(task("m2_voice", character["id"], "voice-retake"))
         return pending
 
-    def _approve(self, connection, project_id: str, state: dict) -> None:
+    def _approve(self, connection, project_id: str, state: dict, *, reconfirm=False) -> None:
         draft = state["draft"]
         self._world_confirmed(draft)
         if state["activeJobId"] or state["queue"]:
@@ -1107,7 +1118,7 @@ class M2Service:
                 validate_relationship_coverage(relationships["result"], draft["characters"])
             except (ValidationError, ValueError) as exc:
                 raise ServiceError(409, "関係性が現在のキャラクター構成と一致しません。") from exc
-        if draft["approved"]:
+        if draft["approved"] and not reconfirm:
             draft["step"] = ("planning-review" if draft.get("planningRequired")
                              and not draft.get("planApproved") else "production")
             return

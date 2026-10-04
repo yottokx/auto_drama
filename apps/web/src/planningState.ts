@@ -61,7 +61,7 @@ export function planningActivity(planning: Planning | null) {
 export function canApprovePlanning(state: PlanningEditorState, blocked = false): boolean {
   return Boolean(state.content && !blocked && !state.conflict && !planningDirty(state)
     && !state.instruction.trim() && !planningActivity(state.latest).generating
-    && state.latest && ['ready', 'planned', 'failed'].includes(state.latest.status))
+    && state.latest && ['ready', 'planned', 'failed', 'approved'].includes(state.latest.status))
 }
 
 /** Polls can report newer content, but must never overwrite local edits or instructions. */

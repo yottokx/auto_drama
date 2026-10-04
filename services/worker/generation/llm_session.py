@@ -8,8 +8,9 @@ from contextvars import ContextVar
 from .cancellation import check_cancelled
 
 LLM_KINDS = frozenset({"m2_world", "m2_character", "m2_relationships",
-                       "m3_plan", "m3_narrative", "m3_music_plan"})
-COMPLETION_RETENTION_KINDS = frozenset({"m3_plan", "m3_narrative", "m3_music_plan"})
+                       "m3_plan", "m3_narrative", "m3_music_plan", "m3_event_cg_budget", "m3_event_cg_plan"})
+COMPLETION_RETENTION_KINDS = frozenset({"m3_plan", "m3_narrative", "m3_music_plan",
+    "m3_event_cg_budget", "m3_event_cg_plan"})
 CONVERSION_KINDS = frozenset({"m2_image"})
 MODEL_RETENTION_SECONDS = 300.0
 _active: ContextVar[LLMSession | None] = ContextVar("llm_session", default=None)

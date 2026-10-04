@@ -26,9 +26,16 @@ M1・M2・M3の軽量テストはGPUや実モデルを起動しません。リ�
 - `integration/test_m3_rebuild.py`: 採用本文・素材を再生成しない表示更新、旧版の保持、同じ出力の重複防止と失敗時のロールバック。
 - `integration/test_m3.py`: 承認から公開まで、凍結した設定の保持、不正素材・古いリースの拒否、再起動時の復旧、完成素材を保った組み立て再試行。
 - `integration/test_m3_review.py`: 実際のワーカークライアントを介した模擬生成、応答喪失後の再送、下書き変更後の承認素材再利用、ZIP内の原文照合。
+- `integration/test_step_reconfirmation.py`: 各STEPの再確定による後続工程の更新、同一要求の二重実行防止、実行中の競合拒否、完成版とCG設定の履歴復元。実モデルと実作品は使わない。
+- `unit/test_event_cg_*.py`: CG配分・区間・人物と参照順、画像単位の結果再利用、省略・取消、親が所有するGPUロック、公開Scriptと書き出し。実Qwenは起動しない。
+- `integration/test_event_cg.py`: N=0の互換性、設定・profileの固定、基本CGと差分の採用、部分的な指示作成失敗・画像省略、停止再開、履歴と完成後調整による再出版。
+- `integration/test_event_cg_browser.py`: ティラノのCG切替・通常表示への復帰、保存・再開、スキップ・章切替と画像読み込み失敗。ブラウザー実行条件は同ファイルを参照。
+- `apps/web/tests/event_cg_browser.py`: 独立したVite・模擬APIを使い、CG設定・承認の制御、競合、未準備、モバイル幅のUIを検査する。実作品を変更しない。
 - `fixtures/m1-script.json`: 版付き固定脚本。対応素材は `packages.tyrano_export.demo_content()` で再現できます。
 
 環境構築は `scripts/check-environment.ps1`、実モデルによる検証は [M0](../docs/setup/m0.md) と [M2](../docs/setup/m2.md)、M1のブラウザー確認は [M1](../docs/setup/m1.md) を参照してください。
+
+イベントCGの実生成結果・負荷・品質上の制限は [イベントCG](../docs/setup/event-cg.md) に記録する。既存の音声ファイル試験には専用音声環境のNumPy等が別途必要で、Coordinatorの軽量 `.venv` だけでは全件実行できない。
 
 `scripts/m2/check_cast.py --output-dir <保存先>` は実モデルで3人分の設定・立ち絵・自己紹介音声、全3組の関係性、承認、任意台詞のボイスクローンを検証します。保存先にはJSON・PNG・WAVを残します。GPUを使用し、新規の検証作品を作成するため軽量テストには含めません。
 

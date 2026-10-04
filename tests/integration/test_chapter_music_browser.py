@@ -24,7 +24,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("AUTO_DRAMA_CHAPTER_MUSIC_SMOKE")
 
 
 @pytest.fixture
-def chapter_site(tmp_path):
+def chapter_site(tmp_path, request):
     site = tmp_path / "site"
     site.mkdir()
     for number, identifier in enumerate(("first", "second"), start=1):
@@ -50,6 +50,14 @@ def chapter_site(tmp_path):
             "volume": 0.5, "loop_start_seconds": 0.2, "loop_end_seconds": 2.8}]
         value["scene_transitions"] = [{"id": "first_stage", "utterance_id": "line_001", "visual": "none",
             "duration_ms": 0, "music_fade_out_ms": 0, "music_fade_in_ms": 200}]
+        if getattr(request, "param", None) == "event_cg":
+            cg = "cg_" + identifier
+            assets[cg] = assets["station"]
+            value["assets"].append({"id": cg, "kind": "event_cg", "artifact_id": cg,
+                "filename": cg + ".png", "sha256": hashlib.sha256(assets[cg]).hexdigest()})
+            value["event_cg_segments"] = [{"id": cg,
+                "start_utterance_id": "line_001" if identifier == "first" else "line_002",
+                "end_utterance_id": None, "base_asset_id": cg}]
         chapter = site / identifier
         chapter.mkdir()
         with ZipFile(io.BytesIO(compile_bundle(Script.model_validate(value), assets))) as archive:

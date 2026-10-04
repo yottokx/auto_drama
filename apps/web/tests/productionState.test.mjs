@@ -26,6 +26,79 @@ const production = extra => ({
   ...extra,
 })
 
+test('CG progress separates plan, base and variants and reports omissions as processed work', () => {
+  const current = chapter(1, 'generating_assets', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, chapter_budget: 1, plan_completed: true, planned: 3, generated: 1, omitted: 2,
+      planning_omitted: 1, omissions: [{ cg_id: 'cg1', variant_id: 'v1', reason: '失敗1' }, { cg_id: 'cg1', variant_id: 'v2', reason: '失敗2' },
+        { cg_id: 'cg2', variant_id: null, reason: '指示作成を省略' }] },
+    requirements: [
+      { kind: 'm3_event_cg_plan', artifact_id: 'plan' },
+      { kind: 'm3_event_cg', artifact_id: 'base', descriptor: { cg_id: 'cg1', variant_id: null } },
+      { kind: 'm3_event_cg', artifact_id: 'omitted-1', descriptor: { cg_id: 'cg1', variant_id: 'v1' } },
+      { kind: 'm3_event_cg', artifact_id: 'omitted-2', descriptor: JSON.stringify({ cg_id: 'cg1', variant_id: 'v2' }) },
+    ],
+  })
+  const rows = chapterGenerationProgress(current)
+  assert.ok(rows.findIndex(row => row.id === 'm3_event_cg_plan') < rows.findIndex(row => row.id === 'm3_event_cg_base'))
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').total, 1)
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').statusText, undefined)
+  const variants = rows.find(row => row.id === 'm3_event_cg_variant')
+  assert.equal(variants.total, 2)
+  assert.equal(variants.status, 'skipped')
+  assert.equal(variants.statusText, '処理済み・2枚省略')
+  assert.equal(rows.find(row => row.id === 'build').status, 'running')
+})
+
+test('CG counts are unknown before planning and zero-budget chapters add no pending CG work', () => {
+  const waiting = chapter(1, 'generating_assets', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, chapter_budget: 1, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    requirements: [],
+  })
+  let rows = chapterGenerationProgress(waiting)
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_plan').status, 'pending')
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').total, null)
+  assert.equal(rows.find(row => row.id === 'build').status, 'pending')
+  rows = chapterGenerationProgress({ ...waiting, event_cg: { ...waiting.event_cg, chapter_budget: 0, plan_completed: true } })
+  assert.equal(rows.filter(row => row.id.startsWith('m3_event_cg')).every(row => row.status === 'completed' || row.status === 'skipped'), true)
+  assert.equal(rows.find(row => row.id === 'build').status, 'running')
+})
+
+test('enabled CG work is visible before requirements exist, with the whole-work allocation before chapter writing', () => {
+  const current = chapter(1, 'writing', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, budget_completed: false, chapter_budget: null, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    requirements: [],
+  })
+  const rows = chapterGenerationProgress(current)
+  const ids = rows.map(row => row.id)
+  assert.equal(ids[0], 'm3_event_cg_budget')
+  assert.equal(rows[0].status, 'pending')
+  assert.ok(ids.indexOf('m3_event_cg_plan') > ids.indexOf('chapter-validation'))
+  assert.ok(ids.indexOf('m3_event_cg_base') > ids.indexOf('m3_background'))
+  assert.ok(ids.indexOf('m3_event_cg_variant') > ids.indexOf('m3_event_cg_base'))
+  assert.ok(ids.indexOf('m3_event_cg_variant') < ids.indexOf('m3_voice_clone'))
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_base').total, null)
+  assert.equal(productionCurrentProgress([current]), '作品全体のCG配分の実行待ち')
+  assert.equal(chapterGenerationProgress({ ...current, chapter_number: 2 }).some(row => row.id === 'm3_event_cg_budget'), false)
+  assert.equal(chapterGenerationProgress({ ...current, event_cg: undefined }).some(row => row.id.startsWith('m3_event_cg')), false)
+})
+
+test('allocation work does not prematurely fix background counts or mark unselected CGs as complete', () => {
+  const current = chapter(1, 'writing', {
+    event_cg: { max_cgs: 3, max_variants_per_cg: 0, budget_completed: false, chapter_budget: null, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    requirements: [{ kind: 'm3_event_cg_budget', artifact_id: null, job_id: 'budget' }],
+    jobs: [{ id: 'budget', kind: 'm3_event_cg_budget', status: 'running', attempt_count: 1 }],
+  })
+  const rows = chapterGenerationProgress(current)
+  assert.equal(rows[0].status, 'running')
+  assert.equal(rows.find(row => row.id === 'm3_background').total, null)
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_plan').status, 'pending')
+  assert.equal(rows.find(row => row.id === 'm3_event_cg_variant').status, 'skipped')
+  assert.equal(productionCurrentProgress([current]), '作品全体のCG配分を制作中')
+  const completed = chapterGenerationProgress({ ...current, jobs: [], requirements: [], event_cg: { ...current.event_cg, budget_completed: true, chapter_budget: 1 } })
+  assert.equal(completed[0].status, 'completed')
+  assert.equal(completed.find(row => row.id === 'm3_event_cg_plan').status, 'pending')
+})
+
 test('a published first chapter is viewable while later chapters generate', () => {
   const view = productionView(production(), 3)
   assert.equal(view.complete, false)

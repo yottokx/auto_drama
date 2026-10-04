@@ -4,6 +4,8 @@ from .script import (
     AssetReference,
     Character,
     Direction,
+    EventCgSegment,
+    EventCgVariant,
     MusicCue,
     SceneTransitionCue,
     SceneTransitionSpec,
@@ -11,5 +13,5 @@ from .script import (
     Utterance,
 )
 
-__all__ = ["AssetReference", "Character", "Direction", "MusicCue", "SceneTransitionCue",
+__all__ = ["AssetReference", "Character", "Direction", "EventCgSegment", "EventCgVariant", "MusicCue", "SceneTransitionCue",
            "SceneTransitionSpec", "Script", "Utterance"]

@@ -11,7 +11,7 @@ StepId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,160}$")]
 Stage = Literal["cast_plan", "plot_plan", "chapter_scene_plan",
                 "supporting_characters", "relationships", "story_core", "plot",
                 "chapter_plan", "scene_plan", "script", "speech_extraction", "staging",
-                "validation", "memory", "revision"]
+                "validation", "memory", "revision", "event_cg_budget", "event_cg_plan", "event_cg_generate"]
 Count = Annotated[int, Field(strict=True, ge=0, le=10000)]
 
 

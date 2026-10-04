@@ -50,7 +50,7 @@
       music?.finishTransition?.();
       return true;
     }
-    async function run(id, {skip: fast = false, resume = false} = {}) {
+    async function run(id, {skip: fast = false, resume = false, visualOnly = false} = {}) {
       const scene = scenes.get(id);
       if (!scene || disposed) return false;
       if (operation) cancel();
@@ -61,14 +61,17 @@
       let reveal = Promise.resolve(), committed = false;
       try {
         // Both preparations are pure: the old screen and source remain active.
-        const [imagesReady, audioReady] = await Promise.all([
-          prepareImages(scene).then(value => value !== false).catch(() => false),
-          scene.music_cue_id && music?.prepareCue ?
+        const [imageResult, audioReady] = await Promise.all([
+          prepareImages(scene).catch(() => false),
+          !visualOnly && scene.music_cue_id && music?.prepareCue ?
             music.prepareCue(scene.music_cue_id, {signal}).catch(() => false) : true,
         ]);
         if (!valid()) return false;
+        const imagesReady = imageResult !== false;
+        const target = imageResult?.fallback ? {...scene, event_cg: null} : scene;
+        if (imageResult?.fallback) report(imageResult.message || "イベントCGを読み込めませんでした。通常の背景と立ち絵で本文の再生を続けます。");
         if (!imagesReady) report("場面の画像を準備できませんでした。本文の再生を続けます。");
-        const changed = imagesReady && !adapter.same(scene);
+        const changed = imagesReady && !adapter.same(target);
         const duration = () => state.fast ? 0 : scene.duration_ms;
         const covered = changed ? adapter.cover(scene.visual, duration(), signal) : Promise.resolve();
         covered.catch(() => {});
@@ -76,14 +79,15 @@
           await covered; aborted(signal);
           aborted(audioSignal);
           if (!valid()) throw Error("transition cancelled");
-          if (changed) adapter.apply(scene);
+          if (changed) adapter.apply(target);
+          adapter.remember?.(target);
           currentId = scene.id;
           committed = true;
           // Start the visual reveal and the new source's fade-in together.
           reveal = changed ? adapter.reveal(duration(), signal) : Promise.resolve();
           reveal.catch(() => {});
         };
-        const cue = scene.music_cue_id && music?.getCue?.(scene.music_cue_id);
+        const cue = !visualOnly && scene.music_cue_id && music?.getCue?.(scene.music_cue_id);
         const snapshot = resume ? music?.snapshot?.() : null;
         const alreadyCommitted = resume && cue && (cue.action === "stop" ? !snapshot :
           cue.action === "play" && snapshot?.cue_id === cue.id);
@@ -93,7 +97,7 @@
               .catch(() => { if (valid()) music.stop(); });
           } else if (valid()) music?.stop?.();
         };
-        if (audioReady && scene.music_cue_id && music?.transitionCue &&
+        if (!visualOnly && audioReady && scene.music_cue_id && music?.transitionCue &&
             cue?.action !== "continue" && !alreadyCommitted) {
           const success = await music.transitionCue(scene.music_cue_id, {
             fadeOutMs: state.fast ? 0 : scene.music_fade_out_ms,
@@ -172,10 +176,17 @@
       for (const animation of animations) animation.cancel();
       animations.clear(); overlay?.remove(); overlay = null;
     }
+    function visibleStage(scene) {
+      return scene.event_cg ? {...scene,
+        background: {storage: scene.event_cg.storage, folder: "cgimage", position: "center", fit: "contain"},
+        characters: []} : scene;
+    }
     function same(scene) {
+      scene = visibleStage(scene);
       const base = k.layer.getLayer("base", "fore").get(0);
       const source = base?.style.backgroundImage?.match(/url\(["']?(.*?)["']?\)/)?.[1] || "";
-      if (scene.background && source.split("/").pop() !== scene.background.storage) return false;
+      if (scene.background && !source.endsWith((scene.background.folder || "bgimage") + "/" + scene.background.storage)) return false;
+      if (!scene.background && source && source !== "none") return false;
       const visible = [...k.layer.getLayer("0", "fore").get(0).querySelectorAll(".tyrano_chara")];
       if (visible.length !== scene.characters.length) return false;
       return scene.characters.every(value => {
@@ -185,12 +196,14 @@
       });
     }
     function apply(scene) {
+      scene = visibleStage(scene);
       const base = k.layer.getLayer("base", "fore");
       if (scene.background) {
-        base.css({"background-image": "url(" + url("bgimage", scene.background.storage) + ")",
-          "background-size": scene.background.position ? "cover" : "100% 100%",
+        base.css({"background-image": "url(" + url(scene.background.folder || "bgimage", scene.background.storage) + ")",
+          "background-size": scene.background.fit || (scene.background.position ? "cover" : "100% 100%"),
+          "background-repeat": "no-repeat", "background-color": "#000",
           "background-position": scene.background.position || "center", display: "block", opacity: 1});
-      }
+      } else base.css({"background-image": "none", "background-color": "#000"});
       const layer = k.layer.getLayer("0", "fore"), desired = new Set(scene.characters.map(value => "ad_" + value.id));
       layer.find(".tyrano_chara").each(function () {
         const name = [...this.classList].find(value => desired.has(value));
@@ -213,6 +226,7 @@
           left: value.left + "px", top: value.top + "px", width: value.width + "px",
           height: value.height + "px", zIndex: String(value.z_index)});
         const img = element.querySelector(".chara_img");
+        img.src = url("fgimage", value.storage);
         Object.assign(img.style, {width: value.width + "px", height: value.height + "px"});
         const character = k.stat.charas?.[name];
         if (character) Object.assign(character, {is_show: "true", layer: "0", width: value.width, height: value.height});
@@ -236,11 +250,32 @@
       return visual === "fade" ? animate(overlay, 0, 1, duration, signal) : Promise.resolve();
     }
     return {same, apply, cover, reset,
-      prepare(scene, signal) {
-        return Promise.all([
+      remember(scene) {
+        k.stat.auto_drama_event_cg = scene.event_cg ? {
+          segment_id: scene.event_cg.segment_id, variant_id: scene.event_cg.variant_id,
+          utterance_id: scene.utterance_id,
+        } : null;
+      },
+      async prepare(scene, signal) {
+        const normal = () => Promise.all([
           ...(scene.background ? [image(url("bgimage", scene.background.storage), signal)] : []),
           ...scene.characters.map(value => image(url("fgimage", value.storage), signal)),
-        ]).then(() => true);
+        ]);
+        if (scene.event_cg) {
+          try { await image(url("cgimage", scene.event_cg.storage), signal); return true; }
+          catch (_) {
+            aborted(signal);
+            // Clear the old CG even if a fallback asset is missing as well.
+            await normal().catch(() => {}); aborted(signal);
+            return {fallback: true};
+          }
+        }
+        try { await normal(); return true; }
+        catch (error) {
+          aborted(signal);
+          if (!Object.prototype.hasOwnProperty.call(scene, "event_cg")) throw error;
+          return {fallback: true, message: "場面の画像を準備できませんでした。イベントCGを終了して本文の再生を続けます。"};
+        }
       },
       reveal(duration, signal) { return overlay ? animate(overlay, 1, 0, duration, signal) : Promise.resolve(); },
       finish() { for (const animation of animations) animation.finish(); },

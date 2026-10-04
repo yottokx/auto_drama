@@ -15,14 +15,14 @@ const request=JSON.parse(fs.readFileSync(0,'utf8'));
 const calls=[],resolvers={};
 const deferred=name=>new Promise(resolve=>resolvers[name]=resolve);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-let frame='old',track='old',snapshot=null;
+let frame='old',track='old',snapshot=null,cg=null;
 const adapter={
  prepare(scene,signal){calls.push(['prepare-image',scene.id]);
-  return request.cold?deferred('image'):Promise.resolve(true);},
+  return request.cold?deferred('image'):Promise.resolve(request.fallback?{fallback:true}:true);},
  same(){return !!request.same;},
  cover(style,duration,signal){calls.push(['cover',style,duration,frame,track]);
   return request.barriers?deferred('cover'):Promise.resolve();},
- apply(scene){calls.push(['apply',scene.id]);frame=scene.id;},
+ apply(scene){calls.push(['apply',scene.id]);frame=scene.id;cg=scene.event_cg||null;},
  reveal(duration){calls.push(['reveal',duration,frame,track]);
   return request.barriers?deferred('reveal'):Promise.resolve();},
  reset(){calls.push(['reset']);},
@@ -54,11 +54,12 @@ const context={console,Promise,Map,Set,AbortController};context.window=context;
 vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
 const scene={id:'new',visual:request.visual||'fade',duration_ms:500,music_fade_out_ms:1000,
  music_fade_in_ms:1000,music_cue_id:'next'};
+if(request.cg)scene.event_cg={segment_id:'event',variant_id:'variant',storage:'cg.png'};
 const controller=context.AutoDramaTransitions.create({scenes:[scene]},
  {music,adapter,report:message=>calls.push(['report',message]),onBusyChange:value=>calls.push(['busy',value])});
 (async()=>{
  if(request.case==='resume')snapshot={cue_id:'next'};
- const result=controller.run('new',{skip:request.case==='skip',resume:request.case==='resume'});
+ const result=controller.run('new',{skip:request.case==='skip',resume:request.case==='resume',visualOnly:request.visualOnly});
  await flush();
  if(request.cold){
   calls.push(['while-cold',frame,track,controller.busy()]);
@@ -78,7 +79,7 @@ const controller=context.AutoDramaTransitions.create({scenes:[scene]},
   frame='restored-old';track='restored-old';request.failSwitch=true;
   completed=await controller.run('new');
  }
- process.stdout.write(JSON.stringify({calls,completed,frame,track,busy:controller.busy()}));
+ process.stdout.write(JSON.stringify({calls,completed,frame,track,cg,busy:controller.busy()}));
 })().catch(error=>{console.error(error);process.exit(1);});
 '''
 
@@ -174,3 +175,17 @@ def test_restored_older_stage_can_reenter_previous_transition_after_music_failur
     result = run("retry-failed-switch")
     assert result["completed"] and result["frame"] == "new" and result["track"] is None
     assert result["calls"].count(["apply", "new"]) == 2
+
+
+def test_failed_cg_preparation_commits_normal_target_without_stale_cg():
+    result = run(cg=True, fallback=True, action="continue")
+    assert result["completed"] and result["frame"] == "new" and result["cg"] is None
+    assert result["track"] == "old" and any(row[0] == "report" for row in result["calls"])
+
+
+def test_restore_cg_picture_does_not_replay_its_music_cue():
+    result = run(cg=True, visualOnly=True)
+    assert result["completed"] and result["cg"]["variant_id"] == "variant"
+    assert result["track"] == "old"
+    assert not any(row[0] in {"prepare-audio", "music-out", "music-commit", "music-in"}
+                   for row in result["calls"])

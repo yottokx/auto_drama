@@ -1,0 +1,12 @@
+Create one coherent full-scene illustration using the individual character references.
+Environment: Interior of a cozy Japanese cafe at night, warm amber lighting, rain streaks on the window, blurred city lights outside.
+Lighting: Warm amber indoor light contrasting with cold blue night light from the window.
+Framing: Medium shot, side view of two people facing each other across a table.
+Reference image 1 character: position — left. action — leaning forward, hands clenched on the table. expression — desperate, trembling. Gaze directed toward the character from Reference image 2. Gaze detail: pleading.
+Reference image 2 character: position — right. action — sitting still, shoulders relaxed. expression — calm, compassionate. Gaze directed toward the character from Reference image 1. Gaze detail: observing.
+Preserve each referenced person's distinct face, hairstyle, hair and eye colors, clothing details, body proportions and illustration style. Do not swap or blend identities. Keep faces above the lower message area. No text, lettering, captions, speech bubbles, watermarks, extra people or montage.
+
+Character identity details, tied to the reference image numbers:
+Reference image 1 is Toru Minase: tousled short black hair with longer uneven bangs, and thin black rectangular eyeglasses. His eyeglasses are an essential identity feature.
+Reference image 2 is Mio Shinohara: a straight chin-length chestnut-brown bob with blunt bangs and large brown eyes. She does not wear eyeglasses.
+Preserve these character-specific details where naturally visible from the specified camera angle. Keep the scene, framing, body and head orientation, actions, expressions and gaze described above unchanged.

@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from .backend import load_pipeline, render_image
 from .common import MODEL_DIR, MODEL_ID, ROOT, RUNTIME, read_json, write_json
 from .resources import GenerationCancelled, StopToken, gpu_lock
 
@@ -399,7 +400,6 @@ def generate(request_data: dict, output_dir: Path) -> dict:
             os.environ.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
                               HF_HUB_DISABLE_TELEMETRY="1", HF_HOME=str(RUNTIME / "cache/huggingface"))
             import torch as torch_module
-            from diffusers import QwenImage21Pipeline
 
             torch = torch_module
             if not torch.cuda.is_available():
@@ -407,16 +407,7 @@ def generate(request_data: dict, output_dir: Path) -> dict:
             status({"phase": "loading", "message": "Qwen Image 2.1を読み込んでいます。",
                     "step": 0, "steps": request["steps"]})
             load_started = time.perf_counter()
-            with torch.inference_mode():
-                pipe = QwenImage21Pipeline.from_pretrained(
-                    request["model_path"], dtype=getattr(torch, request["dtype"]),
-                    local_files_only=True, trust_remote_code=False)
-                if request["cpu_offload"]:
-                    pipe.enable_model_cpu_offload()
-                else:
-                    pipe.to("cuda")
-                if hasattr(pipe, "set_progress_bar_config"):
-                    pipe.set_progress_bar_config(disable=True)
+            pipe = load_pipeline(request, torch)
             report.update(library_versions=_versions(), gpu=torch.cuda.get_device_name(),
                           initialization_seconds=round(time.perf_counter() - load_started, 3),
                           pipeline="QwenImage21Pipeline", true_cfg_scale=1.0, negative_prompt=None,
@@ -430,16 +421,9 @@ def generate(request_data: dict, output_dir: Path) -> dict:
                 status({"phase": "generating", "message": f"画像 {batch}/{len(seeds)} を生成中",
                         "step": 0, "steps": request["steps"], "seed": seed,
                         "batch": batch, "batches": len(seeds)})
-                with torch.inference_mode():
-                    generated = pipe(
-                        prompt=request["prompt"], image=images, width=request["width"],
-                        height=request["height"], num_inference_steps=request["steps"],
-                        true_cfg_scale=1.0, output_resolution=request["reference_resolution"],
-                        use_kv_cache=request["use_kv_cache"],
-                        generator=torch.Generator("cpu").manual_seed(seed), output_type="pil",
-                        callback_on_step_end=step_callback(token, status, steps=request["steps"],
-                            seed=seed, batch=batch, batches=len(seeds)),
-                        callback_on_step_end_tensor_inputs=[]).images[0]
+                generated = render_image(pipe, torch, request, images, seed,
+                    step_callback(token, status, steps=request["steps"],
+                        seed=seed, batch=batch, batches=len(seeds)))
                 # Never publish the decoded incomplete image after a stop request.
                 token.check()
                 filename = output_dir / "outputs" / f"image-{batch:02d}-seed-{seed}.png"

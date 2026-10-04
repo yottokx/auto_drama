@@ -41,6 +41,22 @@ test('paused and frozen views retain counts without claiming running work', () =
   assert.ok(!markup.includes('generation-progress-running'))
 })
 
+test('CG allocation and future selection stay visible while a paused chapter stops all pending stages', () => {
+  const chapter = { chapter_number: 1, status: 'writing', narrative_artifact_id: null, build: null, requirements: [],
+    event_cg: { max_cgs: 3, max_variants_per_cg: 2, budget_completed: false, chapter_budget: null, plan_completed: false, planned: 0, generated: 0, omitted: 0 },
+    jobs: [{ id: 'budget', kind: 'm3_event_cg_budget', status: 'running', attempt_count: 1 }],
+  }
+  const markup = renderToStaticMarkup(GenerationProgress({ items: chapterGenerationProgress(chapter), label: '制作工程', paused: true }))
+  const rows = markup.match(/<li\b[^>]*>[\s\S]*?<\/li>/g) ?? []
+  assert.match(rows[0], /作品全体のCG配分/)
+  for (const label of ['作品全体のCG配分', 'イベントCGの選定・指示作成', '基本CG', 'CGの差分']) {
+    const row = rows.find(value => value.includes(label))
+    assert.match(row, /停止中/)
+    assert.doesNotMatch(row, /（0\//)
+  }
+  assert.doesNotMatch(markup, /generation-progress-running/)
+})
+
 test('sequential dialogue work keeps its active appearance during claim gaps and pauses without changing the count', () => {
   for (const [completed, runningIndex] of [[39, 39], [40, null], [40, 40]]) {
     const chapter = {

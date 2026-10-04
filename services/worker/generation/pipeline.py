@@ -1171,6 +1171,9 @@ def _bundle(envelope: dict, assets: dict[str, bytes]) -> bytes:
 def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False) -> bytes:
     """Return a complete deterministic result ZIP; failed output is never adopted."""
     kind = job.get("kind")
+    from .event_cg_session import prepare_job as prepare_event_cg
+
+    prepare_event_cg(kind)
     voice_session.prepare_job(kind)
     music_session.prepare_job(kind)
     image_session.prepare_job(kind)

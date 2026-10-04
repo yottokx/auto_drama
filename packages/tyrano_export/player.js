@@ -22,6 +22,27 @@
     if (k && k.stat.is_auto) k.ftag.startTag("autostop", {next: "false"});
   };
   const controls = () => byId("ad-toolbar").querySelectorAll("button, select, input");
+  const needsStages = value => !!((value.scene_transitions || []).length || (value.event_cg_segments || []).length);
+  function stageAnchors(value) {
+    const anchors = new Map((value.scene_transitions || []).map(cue => [cue.utterance_id + ":before", cue.id]));
+    const lines = value.utterances.map(line => line.id);
+    const cgLines = new Set();
+    for (const segment of value.event_cg_segments || []) {
+      const start = lines.indexOf(segment.start_utterance_id);
+      const end = segment.end_utterance_id === null ? lines.length : lines.indexOf(segment.end_utterance_id);
+      lines.slice(start, end).forEach(id => cgLines.add(id));
+      for (const id of lines.slice(start, end + 1)) {
+        if (!anchors.has(id + ":before")) anchors.set(id + ":before", "cg:" + id);
+      }
+    }
+    for (const direction of value.directions || []) {
+      if (cgLines.has(direction.utterance_id) && direction.timing === "after" &&
+          ["background", "enter", "exit", "position"].includes(direction.kind)) {
+        anchors.set(direction.utterance_id + ":after", "cg-after:" + direction.utterance_id);
+      }
+    }
+    return anchors;
+  }
   const saveIdentity = eventId => ({schema_version: 1, ...identity, event_id: eventId});
   function readSave() {
     try {
@@ -123,7 +144,7 @@
     if (!remember) pendingTransition = null;
   }
   function bindTransitions(k) {
-    if (!(script.scene_transitions || []).length) return;
+    if (!needsStages(script)) return;
     transitions = window.AutoDramaTransitions.create(stages, {
       music, adapter: window.AutoDramaTransitions.kagAdapter(k), report: status,
       onBusyChange: value => { k.tmp.auto_drama_transition = value; },
@@ -147,6 +168,13 @@
       });
     }};
     transitions.warm(stages.scenes[0]?.id).catch(() => {});
+  }
+  function restoreEventCg() {
+    if (!(script.event_cg_segments || []).length || !transitions) return Promise.resolve();
+    const saved = kag().stat.auto_drama_position?.event_id;
+    const line = saved === "chapter_end" ? script.utterances[script.utterances.length - 1]?.id : saved;
+    const target = stages.scenes.filter(scene => scene.utterance_id === line && scene.event_cg).at(-1);
+    return target ? transitions.run(target.id, {skip: true, resume: true, visualOnly: true}) : Promise.resolve();
   }
   function clearEnd() {
     epoch++;
@@ -198,12 +226,16 @@
       if (first?.audio_asset_id) selected.add(first.audio_asset_id);
       const cue = (next.music_cues || []).find(value => value.utterance_id === first?.id && value.action === "play");
       if (cue) selected.add(cue.asset_id);
-      if ((next.scene_transitions || []).length) {
+      if (needsStages(next)) {
         const targets = await boundedRead(prefix + "data/others/auto_drama_stages.json",
           {signal: controller.signal, cache: "force-cache"});
         const stage = targets.scenes?.[0];
         if (stage?.background) {
           const asset = next.assets.find(value => value.kind === "background" && value.filename === stage.background.storage);
+          if (asset) selected.add(asset.id);
+        }
+        if (stage?.event_cg) {
+          const asset = next.assets.find(value => value.id === stage.event_cg.asset_id && value.kind === "event_cg");
           if (asset) selected.add(asset.id);
         }
         for (const character of (stage?.characters || []).slice(0, 3)) {
@@ -219,7 +251,7 @@
           }
         }
       }
-      const folders = {background: "bgimage", character: "fgimage", audio: "sound", music: "bgm"};
+      const folders = {background: "bgimage", character: "fgimage", audio: "sound", music: "bgm", event_cg: "cgimage"};
       const assets = next.assets.filter(value => selected.has(value.id)).slice(0, 8);
       await Promise.all(assets.map(value => {
         if (!folders[value.kind] || !/^[A-Za-z0-9][A-Za-z0-9_.-]*\.[A-Za-z0-9]+$/.test(value.filename)) return;
@@ -558,13 +590,15 @@
       return response.json();
     }).then(async value => {
       script = value;
-      if (!(value.scene_transitions || []).length) return;
+      if (!needsStages(value)) return;
       const response = await fetch("./data/others/auto_drama_stages.json");
       if (!response.ok) throw Error("stage targets unavailable");
       const result = await response.json();
+      const expected = stageAnchors(value);
       if (result.schema_version !== 1 || !Array.isArray(result.scenes) ||
-          result.scenes.length !== value.scene_transitions.length ||
-          result.scenes.some(scene => !value.scene_transitions.some(cue => cue.id === scene.id))) {
+          result.scenes.length !== expected.size ||
+          new Set(result.scenes.map(scene => scene.id)).size !== expected.size ||
+          result.scenes.some(scene => expected.get(scene.utterance_id + ":" + (scene.timing || "before")) !== scene.id)) {
         throw Error("stage targets do not match adopted script");
       }
       stages = result;
@@ -586,7 +620,7 @@
     });
     setInterval(() => {
       const k = kag();
-      const ready = !!(context && script && (!(script.scene_transitions || []).length || stages) &&
+      const ready = !!(context && script && (!needsStages(script) || stages) &&
         k && k.key_mouse && k.stat && k.stat.current_scenario &&
         k.ftag && k.ftag.array_tag);
       const stable = ready && !storyLoading && !k.tmp.auto_drama_transition && !k.stat.is_adding_text && !k.tmp.is_se_play &&
@@ -599,7 +633,7 @@
           startupFailure("BGM再生ファイルの版が一致しません。サーバーを再起動して公開版を開き直してください。");
           return;
         }
-        if ((script.scene_transitions || []).length && !window.AutoDramaTransitions?.create) {
+        if (needsStages(script) && !window.AutoDramaTransitions?.create) {
           startupFailure("場面転換ファイルの版が一致しません。サーバーを再起動して公開版を開き直してください。");
           return;
         }
@@ -632,7 +666,7 @@
           const token = musicEpoch, stat = k.stat;
           // Native loads expose their saved strong-stop flag before make.ks
           // returns. Hold boundary autosave until its saved track is restored.
-          Promise.resolve(restoreMusic()).finally(() => {
+          Promise.all([restoreMusic(), restoreEventCg()]).finally(() => {
             if (token === musicEpoch && stat === k.stat) storyLoading = false;
           });
           status("保存した位置から再開しました。");

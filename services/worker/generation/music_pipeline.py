@@ -274,6 +274,9 @@ def plan_music(payload: dict, llm) -> dict:
 def generate_job(job: dict, work_dir: Path) -> bytes:
     check_cancelled()
     kind, payload = job.get("kind"), job.get("payload")
+    from .event_cg_session import prepare_job as prepare_event_cg
+
+    prepare_event_cg(kind)
     if kind not in KINDS or not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported music job or schema.")
     seed = payload.get("seed")

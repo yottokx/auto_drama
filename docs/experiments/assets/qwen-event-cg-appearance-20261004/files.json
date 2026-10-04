@@ -1,0 +1,119 @@
+{
+  "recorded_date_jst": "2026-10-04",
+  "files": [
+    {
+      "file": "chapter-1-original.png",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/before.png",
+      "sha256": "385a3e388095976ca13ffb70adee4203bf2762120594e495e1593b9b28f4fd94",
+      "bytes": 755896
+    },
+    {
+      "file": "chapter-1-full-appearance.png",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/after.png",
+      "sha256": "d7457b1dd4905ef90cec4c12bde008b083331039ffeb38a73ca8ebc3f35f8ae6",
+      "bytes": 763795
+    },
+    {
+      "file": "chapter-1-face-only.png",
+      "source": "outputs/event-cg-face-replay-20261004-210348/chapter-1/after.png",
+      "sha256": "eacab69de95b3f4720c313b61c3ced35303f1cd700d820ae75b22406ab6670c8",
+      "bytes": 746317
+    },
+    {
+      "file": "prompts/chapter-1-original.txt",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/original-prompt.txt",
+      "sha256": "7aadd0ef6b222cd9ea424128df36e9fc91f131083cf8dfbf094783f039c7029b",
+      "bytes": 1130
+    },
+    {
+      "file": "prompts/chapter-1-full-appearance.txt",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/replay-prompt.txt",
+      "sha256": "b8bcd73ed21d861662b76dc1b914740094ffc766236b1d287282dad0cb492c4d",
+      "bytes": 2198
+    },
+    {
+      "file": "prompts/chapter-1-face-only.txt",
+      "source": "outputs/event-cg-face-replay-20261004-210348/chapter-1/replay-prompt.txt",
+      "sha256": "756613553e8bae97e96ad61fe8e420716d5a32f9a758448a797ac1dd6230047e",
+      "bytes": 1730
+    },
+    {
+      "file": "chapter-2-original.png",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-2/before.png",
+      "sha256": "0383e4f8db0e0148a7669638a40ad11a5a8056291dc392eeacafb3899640f5e8",
+      "bytes": 703898
+    },
+    {
+      "file": "chapter-2-full-appearance.png",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-2/after.png",
+      "sha256": "0fc3e04dea804bdd183c807a8a8a3c32526d1e05b1e2cfdec2864b02f5d06db4",
+      "bytes": 695539
+    },
+    {
+      "file": "chapter-2-face-only.png",
+      "source": "outputs/event-cg-face-replay-20261004-210348/chapter-2/after.png",
+      "sha256": "0b5155dfd99b2f8152bd84465f7d8cc14d1894744f0105919010dd4517ad5808",
+      "bytes": 719162
+    },
+    {
+      "file": "prompts/chapter-2-original.txt",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-2/original-prompt.txt",
+      "sha256": "ea035a2311aa59c0281a5f368aa140e40d4236a73b984d65bd3ff2774097be28",
+      "bytes": 1081
+    },
+    {
+      "file": "prompts/chapter-2-full-appearance.txt",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-2/replay-prompt.txt",
+      "sha256": "e76d909637664c8a2335c3bca898a1302f509d5b1ff0e3428f19a3fc66c17cf5",
+      "bytes": 2149
+    },
+    {
+      "file": "prompts/chapter-2-face-only.txt",
+      "source": "outputs/event-cg-face-replay-20261004-210348/chapter-2/replay-prompt.txt",
+      "sha256": "962f918650d6693764a1d411045e504ba6a066bdc2d312f03b1496bd49afd43f",
+      "bytes": 1681
+    },
+    {
+      "file": "reference-toru.png",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/cg-reference-01.png",
+      "sha256": "fa1a3be807649a7b94769e3622def87fc47c502f0c7eb4d7cf5cbf91cdda3a2d",
+      "bytes": 224966
+    },
+    {
+      "file": "reference-mio.png",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/cg-reference-02.png",
+      "sha256": "ec953be2f1de52ca33d993a7eeaf76296b0dc4a8efa054280402137d345d3bcb",
+      "bytes": 227487
+    },
+    {
+      "file": "prompts/full-appearance-addition.txt",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/chapter-1/appearance-addition.txt",
+      "sha256": "bfe6fd4429eea5992474184793b92e293c07493fcdae7bb963dcea1ba2ab13b4",
+      "bytes": 1064
+    },
+    {
+      "file": "prompts/face-only-addition.txt",
+      "source": "outputs/event-cg-face-replay-20261004-210348/chapter-1/appearance-addition.txt",
+      "sha256": "db38266d188b3bde302dbf079796209860a2415806d2c5fa844a40e8ad6bb064",
+      "bytes": 596
+    },
+    {
+      "file": "full-appearance-results.json",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/results.json",
+      "sha256": "4705ce4fb521b4150d201de5a685bf1318a86e01c556f7cce242b27ba620a676",
+      "bytes": 9951
+    },
+    {
+      "file": "face-only-results.json",
+      "source": "outputs/event-cg-face-replay-20261004-210348/results.json",
+      "sha256": "e3bdca89bbe2ad16e62cef609ae2f44b78185a6bdc8214c746a12f114f867c2d",
+      "bytes": 9877
+    },
+    {
+      "file": "source-manifest.json",
+      "source": "outputs/event-cg-appearance-replay-20261004-205136/manifest.json",
+      "sha256": "f54890613fa3b9697af0f3353c8bd7e06ca732fce35e3a0e7b1c5424f90510a2",
+      "bytes": 1028
+    }
+  ]
+}

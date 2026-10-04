@@ -430,24 +430,30 @@ class Coordinator:
                 "SELECT * FROM job WHERE status='pending' AND NOT EXISTS "
                 "(SELECT 1 FROM job_dependency d JOIN job parent ON parent.id=d.depends_on_id "
                 "WHERE d.job_id=job.id AND parent.status!='completed') "
+                "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
+                "JOIN m3_production p ON p.id=pj.production_id "
+                "JOIN m3_requirement r ON r.production_id=p.storyline_id "
+                "WHERE pj.job_id=job.id AND job.kind='m3_narrative' "
+                "AND r.kind='m3_event_cg_budget' AND r.artifact_id IS NULL) "
                 # Keep a chapter's media stages together, including jobs queued
                 # before this policy was introduced. Adoption, rather than job
                 # completion alone, releases the next stage and supports reuse.
                 "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
                 "JOIN m3_requirement r ON r.production_id=pj.production_id "
                 "WHERE pj.job_id=job.id AND r.artifact_id IS NULL AND ("
-                "(job.kind IN ('m3_image','m3_background','m3_voice','m3_voice_clone','m3_music') "
-                "AND r.kind='m3_music_plan') OR "
+                "(job.kind IN ('m3_image','m3_background','m3_voice','m3_voice_clone','m3_music','m3_event_cg') "
+                "AND r.kind IN ('m3_music_plan','m3_event_cg_budget','m3_event_cg_plan')) OR "
                 "(job.kind='m3_background' AND r.kind='m3_image') OR "
-                "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background')) OR "
-                "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_voice')) OR "
-                "(job.kind='m3_music' AND r.kind IN ('m3_image','m3_background','m3_voice','m3_voice_clone')))) "
+                "(job.kind='m3_event_cg' AND r.kind IN ('m3_image','m3_background')) OR "
+                "(job.kind='m3_voice' AND r.kind IN ('m3_image','m3_background','m3_event_cg')) OR "
+                "(job.kind='m3_voice_clone' AND r.kind IN ('m3_image','m3_background','m3_event_cg','m3_voice')) OR "
+                "(job.kind='m3_music' AND r.kind IN ('m3_image','m3_background','m3_event_cg','m3_voice','m3_voice_clone')))) "
                 "AND NOT EXISTS (SELECT 1 FROM m3_production_job pj "
                 "JOIN m3_production p ON p.id=pj.production_id "
                 "JOIN m3_production root ON root.id=p.storyline_id "
                 "LEFT JOIN project_history_state h ON h.project_id=p.project_id "
                 "WHERE pj.job_id=job.id AND (root.control_state!='running' "
-                "OR h.production_frozen=1 OR h.production_id!=root.id "
+                "OR h.production_frozen=1 OR h.production_id IS NULL OR h.production_id!=root.id "
                 "OR (root.plan_approval_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM planning_draft dp "
                 "WHERE dp.id=h.planning_id AND dp.approved_plan_id=root.plan_approval_id)))) "
                 "AND NOT EXISTS (SELECT 1 FROM planning_job pj "
@@ -473,7 +479,8 @@ class Coordinator:
                     return False
                 profile = payload.get("profile", {})
                 uses_llm = row["kind"] in {"m2_world", "m2_character", "m2_relationships",
-                                            "m2_image", "m3_narrative", "m3_image", "m3_plan", "m3_music_plan"}
+                                            "m2_image", "m3_narrative", "m3_image", "m3_plan", "m3_music_plan",
+                                            "m3_event_cg_budget", "m3_event_cg_plan"}
                 return (not uses_llm
                         or (not profile.get("common_settings_version") and not models)
                         or any(model.supports(profile) for model in models))

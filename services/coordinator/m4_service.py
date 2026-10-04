@@ -137,6 +137,11 @@ class ChapterProduction:
             )
             connection.execute("UPDATE m3_production SET error=NULL WHERE storyline_id=?",
                                (root["id"],))
+            from .event_cg_service import ensure_budget
+
+            # Upgrade an interrupted pre-allocation production before its
+            # pending narrative can be claimed after this transaction commits.
+            ensure_budget(self, connection, root)
         self.advance(root["id"])
         return self.project(project_id)
 
