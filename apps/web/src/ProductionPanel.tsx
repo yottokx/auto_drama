@@ -12,6 +12,32 @@ export type { ProductionResponse } from './productionState'
 
 type ProductionPanelProps = { projectId: string; approved: boolean; chapterCount: number; onPendingChange?: (pending: boolean) => void; onOpenAdjustments: () => void }
 
+export function EventCgPlanDetails({ value }: { value: EventCgSummary }) {
+  if (!value.plans?.length && !value.planning_notes?.length) return null
+  return <details className="event-cg-plan-details">
+    <summary>CGの表示区間・差分の詳細</summary>
+    <p>物語の内容に触れます。発話数には地の文を含みます。文字数は表示する本文の合計で、表示時間ではありません。</p>
+    {value.plans?.map((plan, index) => <section className="event-cg-plan" key={`${plan.chapter_number}-${plan.cg_id}`}>
+      <h4>CG {index + 1}<span className="event-cg-plan-id">{plan.cg_id}</span></h4>
+      <dl className="event-cg-plan-reasons">
+        {plan.start_reason && <><dt>表示を始める理由</dt><dd>{plan.start_reason}</dd></>}
+        {plan.end_reason && <><dt>通常画面へ戻る理由</dt><dd>{plan.end_reason}</dd></>}
+        {plan.composition && <><dt>共通の構図</dt><dd>{plan.composition}</dd></>}
+      </dl>
+      <ol className="event-cg-image-plans" aria-label={`${plan.cg_id}の画像ごとの表示区間`}>{plan.images.map((image, imageIndex) => <li key={image.id}>
+        <div className="event-cg-image-heading"><strong>{image.variant_id ? `差分 ${imageIndex}` : '基本画像'}</strong><span>{image.utterance_count}発話 · {image.character_count}文字</span></div>
+        <p className="event-cg-image-range">{image.start_utterance_id} から {image.end_utterance_id ? `${image.end_utterance_id} の直前まで` : 'シーン末尾まで'}</p>
+        {image.reason && <p><span>{image.variant_id ? '切替理由' : '選定理由'}：</span>{image.reason}</p>}
+        {image.visual_change && <p><span>{image.variant_id ? '見た目の変化' : '描く状態'}：</span>{image.visual_change}</p>}
+      </li>)}</ol>
+    </section>)}
+    {Boolean(value.planning_notes?.length) && <section className="event-cg-planning-notes"><h4>計画の調整・削減理由</h4><ul>{value.planning_notes!.map((note, index) => <li key={`${note.chapter_number}-${note.cg_id ?? 'plan'}-${note.variant_id ?? 'base'}-${index}`}>
+      <strong>{note.variant_id ? '差分' : note.cg_id ? '基本CG' : 'CG計画'}{note.cg_id && <span className="event-cg-plan-id">{note.cg_id}{note.variant_id ? ` / ${note.variant_id}` : ''}</span>}</strong>
+      <p>{note.reason}</p>
+    </li>)}</ul></section>}
+  </details>
+}
+
 export function EventCgStatus({ value, chapter = false }: { value: EventCgSummary; chapter?: boolean }) {
   if (value.max_cgs === 0) return chapter ? null : <p className="event-cg-summary">この制作版：イベントCGの自動生成なし</p>
   return <div className="event-cg-summary">
@@ -24,6 +50,7 @@ export function EventCgStatus({ value, chapter = false }: { value: EventCgSummar
     <p>{eventCgImagePlanText(value, chapter)}</p>
     <p>生成済み {value.generated}枚 · 省略 {value.omitted}枚（差分を含む）</p>
     {Boolean(value.planning_omitted) && <p>CG指示の作成を{value.planning_omitted}件省略しました。制作の詳細で理由を確認できます。</p>}
+    {chapter && <EventCgPlanDetails value={value}/>}
   </div>
 }
 

@@ -661,7 +661,8 @@ def _write_scene(run, setting, memory, proposal, names, cast):
         for u, a in zip(utterances, staging.emotions, strict=True)]
     review = legacy._review_scene(run.llm, encoded(local_context), plan, utterances)
     return NarrativeScene(id=plan.id, plan=plan, raw_text=raw, utterances=utterances,
-                          directions=legacy._directions(plan, utterances, staging), review=review)
+                          directions=legacy._directions(plan, utterances, staging, trace=run.llm.trace),
+                          review=review)
 
 
 def _write_editor_draft(run, setting, memory, proposal, names, cast, preceding):

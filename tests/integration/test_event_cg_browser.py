@@ -83,13 +83,21 @@ def cg_site(tmp_path):
         worker.join()
 
 
+STATE = "window.AutoDramaPlayer.state()"
+
+
+def begin(page, url):
+    page.goto(url)
+    page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=20000)
+    page.locator("#adn-begin").click()
+
+
 def stable_line(page, identifier):
-    page.wait_for_function("""id => {
-      const k = window.TYRANO?.kag;
-      return k?.ftag?.array_tag[k.ftag.current_order_index]?.name === 'p' &&
-        !k.stat.is_adding_text && !k.tmp.auto_drama_transition &&
-        document.querySelector('.message_inner')?.textContent.includes(id);
-    }""", arg=identifier, timeout=20000)
+    """The line is fully shown and waiting for a click, with no transition in flight."""
+    page.wait_for_function(
+        "id => { const s = " + STATE + "; return s.line === id && s.tag === 'wait' && !s.busy && !s.seeking; }",
+        arg=identifier, timeout=20000)
+    assert page.locator("#adn-body").text_content().startswith(identifier)
 
 
 def picture(page):
@@ -111,38 +119,49 @@ def test_cg_variant_restore_skip_and_chapter_end(cg_site, tmp_path):
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         try:
-            page.goto(url)
-            page.locator("#ad-start-button").click(timeout=20000)
+            begin(page, url)
             stable_line(page, "line_001")
             assert len(picture(page)["cast"]) == 2
-            page.locator(".layer_event_click").click(force=True)
+            page.keyboard.press("Enter")
             stable_line(page, "line_002")
             first = picture(page)
             assert "cg_base.png" in first["source"] and first["fit"] == "contain" and not first["cast"]
-            page.locator(".layer_event_click").click(force=True)
+            page.keyboard.press("Enter")
             stable_line(page, "line_003")
             assert "cg_variant.png" in picture(page)["source"] and not picture(page)["cast"]
             page.screenshot(path=str(tmp_path / "cg-variant.png"))
-            page.locator("#ad-save").click()
-            page.wait_for_function("document.querySelector('#ad-status').textContent.includes('保存しました')")
-            page.locator(".layer_event_click").click(force=True)
+            page.locator("#adn-m-save").click()
+            page.wait_for_function("document.getElementById('adn-toast').textContent === 'セーブしました'")
+            page.keyboard.press("Enter")
             stable_line(page, "line_004")
             normal = picture(page)
             assert "later_background.png" in normal["source"] and len(normal["cast"]) == 1
             assert "ad_ren" in normal["cast"][0]
-            page.reload()
-            page.locator("#ad-resume-button").click(timeout=20000)
+            # Loading returns into the middle of the CG interval with its variant.
+            page.locator("#adn-m-load").click()
             stable_line(page, "line_003")
             page.wait_for_function("window.TYRANO.kag.stat.auto_drama_event_cg?.variant_id === 'change_one'")
             assert "cg_variant.png" in picture(page)["source"] and not picture(page)["cast"]
-            page.evaluate("window.TYRANO.kag.config.unReadTextSkip = 'true'; window.TYRANO.kag.key_mouse.skip()")
-            page.wait_for_function("!document.querySelector('#ad-chapter-end').hidden", timeout=20000)
+            # The backlog can return from a CG line to the normal stage before it.
+            page.keyboard.press("ArrowUp")
+            page.wait_for_function(STATE + ".log")
+            page.locator("#adn-log-list .entry").first.hover()
+            page.locator("#adn-log-list .entry").first.get_by_text("ここへ戻る").click()
+            stable_line(page, "line_001")
+            back = picture(page)
+            assert "station.png" in back["source"] and len(back["cast"]) == 2 and back["cg"] is None
+            page.keyboard.down("Control")
+            page.wait_for_function(STATE + ".ended", timeout=20000)
+            page.keyboard.up("Control")
             last = picture(page)
             assert "cg_base.png" in last["source"] and not last["cast"]
+            # A reload resumes at the furthest line, inside the chapter's closing CG.
             page.reload()
-            page.locator("#ad-resume-button").click(timeout=20000)
-            page.wait_for_function("!document.querySelector('#ad-chapter-end').hidden", timeout=20000)
+            page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=20000)
+            page.locator("#adn-resume").click()
+            stable_line(page, "line_006")
             assert picture(page)["cg"]["segment_id"] == "event_last"
+            assert "cg_base.png" in picture(page)["source"] and not picture(page)["cast"]
             assert not errors, errors
         finally:
             browser.close()
@@ -157,18 +176,17 @@ def test_missing_cg_uses_current_normal_stage_and_keeps_reading(cg_site):
         browser = playwright.chromium.launch(channel="msedge", headless=True, args=["--mute-audio"])
         page = browser.new_page(viewport={"width": 1200, "height": 900})
         try:
-            page.goto(url)
-            page.locator("#ad-start-button").click(timeout=20000)
+            begin(page, url)
             stable_line(page, "line_001")
-            page.locator(".layer_event_click").click(force=True)
+            page.keyboard.press("Enter")
             stable_line(page, "line_002")
             assert "station.png" in picture(page)["source"] and len(picture(page)["cast"]) == 2
-            page.locator(".layer_event_click").click(force=True)
+            assert "イベントCGを読み込めませんでした" in page.locator("#adn-toast").text_content()
+            page.keyboard.press("Enter")
             stable_line(page, "line_003")
             assert "later_background.png" in picture(page)["source"]
             assert len(picture(page)["cast"]) == 1
-            assert "イベントCGを読み込めませんでした" in page.locator("#ad-status").inner_text()
-            page.locator(".layer_event_click").click(force=True)
+            page.keyboard.press("Enter")
             stable_line(page, "line_004")
             assert len(picture(page)["cast"]) == 1 and picture(page)["cg"] is None
         finally:
@@ -190,12 +208,17 @@ def test_next_chapter_replaces_old_cg_and_next_cg_keeps_music_running(chapter_si
         try:
             test_chapter_music_browser.reach_chapter_end(page, url)
             assert "cg_first.png" in picture(page)["source"] and not picture(page)["cast"]
-            page.locator("#ad-next-button").click()
-            stable_line(page, "second_line_001")
+            page.locator("#adn-next").click()
+            page.wait_for_url("**/player/second/", timeout=15000)
+            page.wait_for_function(
+                "id => { const s = window.AutoDramaPlayer?.state(); return s && s.line === id && s.tag === 'wait'; }",
+                arg="line_001", timeout=20000)
             assert "station.png" in picture(page)["source"] and len(picture(page)["cast"]) == 2
             before = page.evaluate("window.testMusic.snapshot()")
-            page.locator(".layer_event_click").click(force=True)
-            stable_line(page, "second_line_002")
+            page.keyboard.press("Enter")
+            page.wait_for_function(
+                "id => { const s = " + STATE + "; return s.line === id && s.tag === 'wait' && !s.busy; }",
+                arg="line_002", timeout=20000)
             after = page.evaluate("window.testMusic.snapshot()")
             assert "cg_second.png" in picture(page)["source"] and not picture(page)["cast"]
             assert before["cue_id"] == after["cue_id"] == "music_second"

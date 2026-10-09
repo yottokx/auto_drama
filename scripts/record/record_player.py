@@ -17,6 +17,36 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 RECORDING_FADE_MILLISECONDS = 400
+# Reader-only controls and indicators. The window, speaker name, page counter and
+# wait marks stay, since they are part of how the story is shown.
+RECORDING_STYLE = ("#adn-foot,#adn-gauge,#adn-voice,#adn-toast,#adn-end,#adn-log,#adn-config"
+                   "{visibility:hidden!important}")
+
+# The viewing screen reads its settings from this browser-wide key before it starts.
+SETTINGS_KEY = "adn_settings_v1"
+TEXT_SIZES = {"small": 21, "standard": 24, "large": 28}
+
+
+class RecordingStopped(RuntimeError):
+    """The user asked to stop; what was captured so far is kept and still joined."""
+
+    def __init__(self, path: Path):
+        super().__init__(f"停止要求を受け付けました。 途中の録画: {path}")
+        self.path = path
+
+
+def viewing_settings(args) -> dict:
+    """Recorder options in the viewing screen's own units."""
+    return {"size": TEXT_SIZES[args.text_size], "face": args.typeface, "speed": args.text_speed,
+            "wait": round(args.auto_wait * 10), "voice": args.voice_volume, "bgm": args.bgm_volume,
+            "alpha": args.window_opacity}
+
+
+def settings_script(args) -> str:
+    """Runs before the page's own scripts in each chapter's fresh browser profile."""
+    key, value = json.dumps(SETTINGS_KEY), json.dumps(json.dumps(viewing_settings(args)))
+    return f"try {{ window.localStorage.setItem({key}, {value}); }} catch (_) {{}}"
+
 
 PLAYER_PROGRESS = """() => {
   const k = window.TYRANO.kag;
@@ -162,14 +192,16 @@ def record_chapter(browser, url: str, directory: Path, args, progress) -> Path:
     directory.mkdir()
     context = browser.new_context(viewport={"width": args.width, "height": args.height},
                                   device_scale_factor=1)
+    # Each chapter opens in a fresh browser profile, so seed the settings before any page script.
+    context.add_init_script(settings_script(args))
     page = context.new_page()
     encoder = None
     try:
         page.goto(url, wait_until="load", timeout=60000)
-        page.wait_for_function("document.getElementById('ad-start-button')?.disabled === false", timeout=30000)
-        page.locator("#ad-start-button").wait_for()
+        page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=30000)
+        page.locator("#adn-begin").wait_for()
         progress(phase="loading", chapter_recorded_seconds=0, **page.evaluate(PLAYER_PROGRESS))
-        page.add_style_tag(content="#ad-toolbar,#ad-chapter-end {visibility:hidden!important}")
+        page.add_style_tag(content=RECORDING_STYLE)
         with (directory / "audio.webm").open("wb") as audio, (directory / "ffmpeg.log").open("wb") as log:
             page.expose_function("recordAudioChunk", lambda data: audio.write(base64.b64decode(data)))
             # Start before clicking play so the very first utterance is included.
@@ -185,22 +217,23 @@ def record_chapter(browser, url: str, directory: Path, args, progress) -> Path:
             frames = 0
             previous = first
             reason = None
+            stopped = False
             fade_deadline = None
             last_report = started
             progress(phase="recording", chapter_recorded_seconds=0)
             try:
-                page.locator("#ad-start-button").click()
-                # Use the same handler as the visible Auto button, without exposing the toolbar.
-                page.wait_for_function("!document.getElementById('ad-auto').disabled")
-                page.locator("#ad-auto").dispatch_event("click")
+                page.locator("#adn-begin").click()
+                # Use the same handler as the visible Auto button, without exposing the menu.
+                page.wait_for_function("window.AutoDramaPlayer.state().started")
+                page.locator("#adn-m-auto").dispatch_event("click")
                 while True:
                     elapsed = time.monotonic() - started
                     if fade_deadline is None:
                         if (args.output_dir / "stop.request").exists():
-                            reason = "停止要求を受け付けました。"
+                            reason, stopped = "停止要求を受け付けました。", True
                         elif elapsed >= args.max_seconds:
                             reason = "章の最大録画時間に達しました。"
-                        ended = page.locator("#ad-chapter-end").evaluate("element => !element.hidden")
+                        ended = page.locator("#adn-end").evaluate("element => !element.hidden")
                         if reason or ended:
                             page.evaluate("milliseconds => window.fadeRecordingAudio(milliseconds)",
                                           RECORDING_FADE_MILLISECONDS)
@@ -243,6 +276,8 @@ def record_chapter(browser, url: str, directory: Path, args, progress) -> Path:
                 "-af", "aresample=async=1:first_pts=0,apad", "-shortest",
                 "-movflags", "+faststart", str(output)],
                directory / "ffmpeg.log")
+        if stopped:
+            raise RecordingStopped(output)
         if reason:
             raise RuntimeError(f"{reason} 途中の録画: {output}")
         if not args.keep_raw:
@@ -271,6 +306,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--height", type=int, default=720)
     result.add_argument("--max-seconds", type=float, default=7200, help="1章あたりの上限秒数")
     result.add_argument("--single-chapter", action="store_true")
+    view = result.add_argument_group("鑑賞設定", "録画する画面の表示と音量。鑑賞画面の「設定」と同じ項目です。")
+    view.add_argument("--text-size", choices=list(TEXT_SIZES), default="standard", help="文字の大きさ")
+    view.add_argument("--typeface", choices=["gothic", "mincho"], default="gothic", help="書体")
+    view.add_argument("--text-speed", type=int, default=62, help="文字の速さ 0〜100（98以上は一括表示）")
+    view.add_argument("--auto-wait", type=float, default=1.4, help="オートの待ち時間（秒）0.3〜4.0")
+    view.add_argument("--voice-volume", type=int, default=100, help="音声の音量 0〜100")
+    view.add_argument("--bgm-volume", type=int, default=100, help="BGMの音量 0〜100")
+    view.add_argument("--window-opacity", type=int, default=80, help="ウィンドウの濃さ 30〜100")
     result.add_argument("--keep-raw", action="store_true", help="合成前の映像・音声も保持")
     return result
 
@@ -281,6 +324,11 @@ def main(argv=None) -> int:
             or args.width % 2 or args.height % 2
             or not math.isfinite(args.max_seconds) or args.max_seconds <= 0):
         raise SystemExit("fpsは1〜60、幅・高さは正の偶数、上限秒数は正の有限値にしてください。")
+    if (not 0 <= args.text_speed <= 100 or not 0 <= args.voice_volume <= 100
+            or not 0 <= args.bgm_volume <= 100 or not 30 <= args.window_opacity <= 100
+            or not math.isfinite(args.auto_wait) or not .3 <= args.auto_wait <= 4):
+        raise SystemExit("文字の速さと音量は0〜100、ウィンドウの濃さは30〜100、"
+                         "オートの待ち時間は0.3〜4.0秒にしてください。")
     if not shutil.which(args.ffmpeg):
         raise SystemExit("FFmpegが見つかりません。--ffmpeg に実行ファイルを指定してください。")
     from playwright.sync_api import sync_playwright
@@ -290,6 +338,7 @@ def main(argv=None) -> int:
     run_started = time.monotonic()
     state = {"status": "running", "phase": "starting", "chapters": [],
              "output_dir": str(args.output_dir), "recorded_seconds": 0,
+             "viewing_settings": viewing_settings(args),
              "started_at": datetime.now(UTC).isoformat()}
 
     def save(**updates):
@@ -303,6 +352,7 @@ def main(argv=None) -> int:
     try:
         url = resolve_url(args)
         seen = set()
+        stopped = False
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
                 channel=args.browser, headless=True,
@@ -323,12 +373,20 @@ def main(argv=None) -> int:
                             updates["recorded_seconds"] = recorded_before + updates["chapter_recorded_seconds"]
                         save(**updates)
 
+                    if (args.output_dir / "stop.request").exists():
+                        stopped = True  # Asked between chapters: nothing of this one is recorded.
+                        break
                     print(f"録画中: {url}", flush=True)
-                    path = record_chapter(browser, url, args.output_dir / f"chapter-{index:03d}",
-                                          args, chapter_progress)
+                    try:
+                        path = record_chapter(browser, url, args.output_dir / f"chapter-{index:03d}",
+                                              args, chapter_progress)
+                    except RecordingStopped as stop:
+                        path, stopped = stop.path, True
                     state["chapters"].append({"url": url, "file": str(path),
                                               "recorded_seconds": state["chapter_recorded_seconds"],
                                               "utterances": state["utterance_total"]})
+                    if stopped:
+                        break
                     save(phase="checking_next")
                     if args.single_chapter:
                         state["end_reason"] = "single_chapter"
@@ -345,17 +403,25 @@ def main(argv=None) -> int:
                     url = urljoin(url, "/player/" + next_id + "/")
             finally:
                 browser.close()
+        if stopped:
+            state["end_reason"] = "stopped"
+            if not state["chapters"]:
+                state.update(status="stopped", phase="stopped", output=None)
+                print("録画を停止しました。保存した映像はありません。", flush=True)
+                return 0
         listing = args.output_dir / "chapters.txt"
+        # A stopped run ends with the current chapter's partial file; join it like the rest.
         listing.write_text("".join(
-            f"file 'chapter-{i:03d}/chapter.mp4'\n" for i in range(1, len(state["chapters"]) + 1)),
-            encoding="utf-8")
+            f"file '{Path(chapter['file']).relative_to(args.output_dir).as_posix()}'\n"
+            for chapter in state["chapters"]), encoding="utf-8")
         output = args.output_dir / "recording.mp4"
         save(phase="joining")
         encode([args.ffmpeg, "-nostdin", "-n", "-loglevel", "warning", "-f", "concat",
                 "-safe", "1", "-i", str(listing), "-c", "copy", "-movflags", "+faststart",
                 str(output)], args.output_dir / "ffmpeg.log")
-        state.update(status="completed", phase="completed", output=str(output))
-        print(f"保存しました: {output}", flush=True)
+        final = "stopped" if stopped else "completed"
+        state.update(status=final, phase=final, output=str(output))
+        print(("停止しました。ここまでを保存しました: " if stopped else "保存しました: ") + str(output), flush=True)
         return 0
     except Exception as exc:  # noqa: BLE001 -- persist any browser/encoder failure for background runs
         state.update(status="failed", phase="failed", error=str(exc))

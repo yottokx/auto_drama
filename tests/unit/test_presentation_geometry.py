@@ -111,10 +111,10 @@ def test_preview_and_output_use_same_coordinates_for_entry_move_and_message_wind
     assert 'zindex="10"' in show
     assert 'position="center center"' in next(line for line in scenario.splitlines() if line.startswith("[bg "))
     window = preview["message_window"]
-    position = next(line for line in scenario.splitlines() if line.startswith("[position "))
+    # The viewing screen draws its own window; the engine's message layer stays hidden.
+    assert "[position " not in scenario and '[layopt layer="message0" visible="false"]' in scenario
     config = player_config(adjusted.model_dump_json().encode()).decode()
-    for key, setting in (("left", "ml"), ("top", "mt"), ("width", "mw"), ("height", "mh")):
-        assert f'{key}="{window[key]}"' in position
+    for setting, key in (("ml", "left"), ("mt", "top"), ("mw", "width"), ("mh", "height")):
         assert f";{setting} = {window[key]};" in config
     assert script.utterances == adjusted.utterances
     assert script.directions == adjusted.directions

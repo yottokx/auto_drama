@@ -7,7 +7,15 @@ param(
     [int]$Fps = 15,
     [double]$MaxSeconds = 7200,
     [switch]$SingleChapter,
-    [switch]$Foreground
+    [switch]$Foreground,
+    # 録画する画面の設定。鑑賞画面の「設定」と同じ項目です。
+    [ValidateSet('small', 'standard', 'large')][string]$TextSize = 'standard',
+    [ValidateSet('gothic', 'mincho')][string]$Typeface = 'gothic',
+    [ValidateRange(0, 100)][int]$TextSpeed = 62,
+    [ValidateRange(0.3, 4.0)][double]$AutoWait = 1.4,
+    [ValidateRange(0, 100)][int]$VoiceVolume = 100,
+    [ValidateRange(0, 100)][int]$BgmVolume = 100,
+    [ValidateRange(30, 100)][int]$WindowOpacity = 80
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -22,7 +30,10 @@ $parent = Split-Path $OutputDir -Parent
 New-Item -ItemType Directory -Path $parent -Force | Out-Null
 $arguments = @('-u', '-X', 'utf8', (Join-Path $PSScriptRoot 'record/record_player.py'),
     '--output-dir', $OutputDir, '--base-url', $BaseUrl, '--browser', $Browser,
-    '--fps', "$Fps", '--max-seconds', $MaxSeconds.ToString([cultureinfo]::InvariantCulture))
+    '--fps', "$Fps", '--max-seconds', $MaxSeconds.ToString([cultureinfo]::InvariantCulture),
+    '--text-size', $TextSize, '--typeface', $Typeface, '--text-speed', "$TextSpeed",
+    '--auto-wait', $AutoWait.ToString([cultureinfo]::InvariantCulture),
+    '--voice-volume', "$VoiceVolume", '--bgm-volume', "$BgmVolume", '--window-opacity', "$WindowOpacity")
 if ($ProjectId) { $arguments += @('--project-id', $ProjectId) }
 if ($Url) { $arguments += @('--url', $Url) }
 if ($SingleChapter) { $arguments += '--single-chapter' }

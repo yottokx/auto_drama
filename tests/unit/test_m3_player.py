@@ -16,8 +16,14 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from packages.contracts import Script
-from packages.tyrano_export import compile_bundle, demo_content, validate_bundle
-from packages.tyrano_export.player import ENGINE_SCRIPTS, ENGINE_STYLES, player_config, player_files
+from packages.tyrano_export import compile_bundle, compile_scenario, demo_content, validate_bundle
+from packages.tyrano_export.player import (
+    ENGINE_SCRIPTS,
+    ENGINE_STYLES,
+    player_config,
+    player_files,
+    player_html,
+)
 from services.coordinator.m3_player import (
     InstalledEngine,
     bundle_member,
@@ -43,10 +49,35 @@ def engine_fixture(directory):
     return directory
 
 
+LEGACY_FILES = {
+    "index.html": b"<!doctype html><button id=\"ad-start-button\">old screen</button>",
+    "data/scenario/first.ks": "_旧画面の本文[p]\n[s]\n".encode(),
+    "data/others/auto_drama_player.js": b"// old player",
+    "data/others/auto_drama_playback.js": b"// old playback helper",
+}
+
+
+def legacy_bundle(data: bytes) -> bytes:
+    """A published ZIP as an earlier player wrote it: same script and assets, older screen."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        files = {name: archive.read(name) for name in archive.namelist() if name != "manifest.json"}
+        manifest = json.loads(archive.read("manifest.json"))
+    del files["data/others/auto_drama_states.json"]
+    files.update(LEGACY_FILES)
+    manifest["files"] = {name: {"bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+                         for name, content in sorted(files.items())}
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, content in sorted(files.items()):
+            archive.writestr(name, content)
+        archive.writestr("manifest.json", json.dumps(manifest))
+    return output.getvalue()
+
+
 @pytest.fixture
 def player(tmp_path, monkeypatch, request):
     script, assets = demo_content()
-    if getattr(request, "param", False):
+    if getattr(request, "param", False) is True:
         music = b"ID3adopted MP3 route fixture"
         assets["scene_music"] = music
         value = script.model_dump(mode="json")
@@ -58,6 +89,8 @@ def player(tmp_path, monkeypatch, request):
                                 "loop_start_seconds": 10.0, "loop_end_seconds": 60.0}]
         script = Script.model_validate(value)
     data = compile_bundle(script, assets)
+    if getattr(request, "param", False) == "legacy":
+        data = legacy_bundle(data)
     store = ArtifactStore(tmp_path / "store")
     stored = store.put(data)
     record = vars(stored)
@@ -112,7 +145,8 @@ def test_source_export_contains_owned_launcher_and_public_documents():
         assert archive.read("sources/scene_001.txt") == documents["sources/scene_001.txt"]
         assert "index.html" in manifest["files"]
         assert not any(name.startswith("tyrano/") for name in archive.namelist())
-        assert b"ad-start-button" in archive.read("index.html")
+        assert b"auto_drama_player.js" in archive.read("index.html")
+        assert b"auto_drama_playback.js" not in archive.read("index.html")
     assert data == compile_bundle(script, assets, documents=dict(reversed(list(documents.items()))))
     assert player_config(b"first") != player_config(b"second")
 
@@ -155,10 +189,13 @@ def test_player_routes_only_published_immutable_files(player):
     assert "再生する" not in response.text  # Only enabled by client after engine readiness.
     assert response.content == bundle_member(data, "index.html")
     assert response.headers["x-content-type-options"] == "nosniff"
-    assert response.headers["cache-control"].endswith("immutable")
-    assert client.get("/player/published/data/scenario/first.ks").content == bundle_member(
-        data, "data/scenario/first.ks"
-    )
+    # The screen follows the running code; only script, assets and documents are immutable.
+    assert response.headers["cache-control"] == "no-store"
+    scenario = client.get("/player/published/data/scenario/first.ks")
+    assert scenario.content == bundle_member(data, "data/scenario/first.ks")
+    assert scenario.headers["cache-control"] == "no-store"
+    assert client.get("/player/published/script.json").headers["cache-control"].endswith("immutable")
+    assert client.get("/player/published/data/bgimage/station.png").headers["cache-control"].endswith("immutable")
     assert client.get("/player/published/tyrano/tyrano.js").status_code == 200
     assert client.get("/player/published/data/scenario/private.ks").status_code == 404
     assert client.get("/player/published/.env").status_code == 404
@@ -224,7 +261,7 @@ def test_live_player_identity_is_fixed_to_build_and_absent_from_static_bundle(pl
     assert client.get("/player/unpublished/player-context.json").status_code == 404
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         assert "player-context.json" not in archive.namelist()
-        assert b"ad-chapter-end" in archive.read("index.html")
+        assert b"adn-end" in archive.read("data/others/auto_drama_player.js")
         assert b"*auto_drama_chapter_end" in archive.read("data/scenario/first.ks")
 
 
@@ -271,162 +308,67 @@ def test_installed_engine_matches_owned_launcher():
     InstalledEngine(ROOT / "tyranoscript").validate()
 
 
-@pytest.mark.parametrize("native_input", [False, True])
-def test_player_javascript_parses_and_uses_safe_read_only_backlog(native_input):
+@pytest.mark.parametrize("player", ["legacy"], indirect=True)
+def test_chapter_published_by_an_earlier_player_opens_in_the_current_screen(player):
+    client, data, _, _, _ = player
+    script, assets = demo_content()
+    assert bundle_member(data, "index.html") == LEGACY_FILES["index.html"]  # The stored ZIP is untouched.
+    assert client.get("/player/published/").content == player_html()
+    scenario = client.get("/player/published/data/scenario/first.ks")
+    assert scenario.content == compile_scenario(script, assets).encode("utf-8")
+    assert scenario.headers["cache-control"] == "no-store"
+    states = client.get("/player/published/data/others/auto_drama_states.json")
+    assert states.status_code == 200
+    assert list(states.json()["entries"]) == [line.id for line in script.utterances]
+    current = player_files(bundle_member(data, "script.json"))
+    for name in ("data/others/auto_drama_player.js", "data/others/auto_drama_player.css",
+                 "data/system/Config.tjs", "data/system/KeyConfig.js"):
+        assert client.get("/player/published/" + name).content == current[name]
+    # Published content is still served as stored, hash-checked and immutable.
+    art = client.get("/player/published/data/bgimage/station.png")
+    assert art.content == assets["station"] and art.headers["cache-control"].endswith("immutable")
+    assert client.get("/player/published/script.json").content == bundle_member(data, "script.json")
+
+
+@pytest.mark.parametrize("player", ["legacy"], indirect=True)
+def test_corrupted_earlier_chapter_is_refused_instead_of_recompiled(player):
+    client, _, record, store, _ = player
+    (store.root / record["storage_key"]).write_bytes(b"partial")
+    assert client.get("/player/published/").status_code == 503
+    assert client.get("/player/published/data/scenario/first.ks").status_code == 503
+
+
+def test_player_javascript_parses_and_registers_its_tags_before_the_engine_starts():
     node = shutil.which("node")
     if not node:
-        pytest.skip("Node is required for the player control test")
-    native_path = ROOT / "tyranoscript/tyrano/plugins/kag/kag.key_mouse.js"
-    if native_input and not native_path.is_file():
-        pytest.skip("The installed engine is needed for its real mouse handler regression")
-    # Exercise our actual JS with a tiny DOM, a chapter containing malicious
-    # markup, an unread future line, and native-shaped engine control methods.
+        pytest.skip("Node is required for the player script check")
+    # Tags must exist when the engine copies its tag table at initialization, so they
+    # are registered while the script loads, before any element or story data exists.
     source = r'''
 const fs = require('fs'), vm = require('vm');
-class Element {
-  constructor(tag = '') { this.tag = tag; this.children = []; this.listeners = {}; this.value = '24'; }
-  addEventListener(name, fn) { this.listeners[name] = fn; }
-  append(child) { this.children.push(child); }
-  replaceChildren() { this.children = []; }
-  querySelectorAll(selector) {
-    return selector === 'button, select, input' ? this.children :
-      this.children.filter(c => c.tag === 'audio');
-  }
-  setAttribute(name, value) { this[name] = value; }
-  showModal() { this.open = true; }
-  close() { this.open = false; this.listeners.close(); }
-  pause() { this.paused = true; }
-  closest() { return this.control ? this : null; }
-  getBoundingClientRect() { return {left:20, right:620, top:400, bottom:700, width:600, height:300}; }
-}
-const elements = {}, callbacks = {}, actions = [], nativeEvents = {};
-const get = id => elements[id] ||= new Element();
-get('ad-toolbar').children = ['ad-auto','ad-save','ad-load','ad-backlog','ad-font','ad-volume'].map(id => {
-  const control = get(id); control.control = true; return control;
-});
-const document = {getElementById: get, createElement: tag => new Element(tag),
-  addEventListener(name, fn) { callbacks[name] = fn; },
-  querySelectorAll(selector) {return selector === '.message_outer' ? [get('message')] : []}};
-const k = {stat: {current_scenario:'first.ks', font:{}, default_font:{}}, tmp:{},
-  config:{projectID:'immutable'}, readyAudio() {actions.push('audio')}, on() {},
-  setAuto(value) {this.stat.is_auto = value; actions.push(['setAuto',value])},
-  key_mouse: {next() {actions.push('next')}, auto() {actions.push('native-auto'); return true},
-    qsave() {return true}, qload() {},
-    util:{canShowMenu() {return true}}},
-  ftag:{array_tag:[{name:'label',pm:{label_name:'utterance_seen'}}, {name:'text'}, {name:'p'},
-    {name:'label',pm:{label_name:'utterance_future'}}, {name:'text'}, {name:'p'}],current_order_index:2,
-    nextOrder() {this.current_order_index++; actions.push('next-order')},
-    startTag(name, params) {
-      actions.push([name,params]); if (name === 'autostop') k.stat.is_auto = false;
-    }}};
-const script = {characters:[{id:'a',name:'<img onerror=bad>'}],assets:[{id:'audio',filename:'line.wav'}],
-  utterances:[{id:'seen',speaker_id:'a',display_text:'<script>bad</script>',audio_asset_id:'audio'},
-    {id:'future',display_text:'SPOILER'}]};
-let tick, manualRequests = 0;
-const context = {document, window:{TYRANO:{kag:k}}, tyrano:{plugin:{kag:{}}},
-  $:() => ({0:{}, on(name, fn) {nativeEvents[name] = fn;}}),
-  fetch:async() => ({ok:true, json:async() => script}), setInterval(fn) {tick=fn}};
+const element = () => new Proxy(function () {}, {get: (_, key) => key === 'classList' ?
+  {add() {}, remove() {}, toggle() {}, contains: () => false} : key === 'style' ? {setProperty() {}} :
+  key === 'dataset' ? {} : key === 'querySelectorAll' ? () => [] : key === 'querySelector' ? () => null :
+  key === 'getBoundingClientRect' ? () => ({width: 0, height: 0, left: 0, top: 0}) : element(),
+  apply: () => undefined, set: () => true});
+const tags = {};
+const context = {window: {tyrano: {plugin: {kag: {tag: tags}}}, location: {pathname: '/player/build/'},
+    localStorage: {getItem: () => null, setItem() {}}, addEventListener() {}, innerWidth: 960, innerHeight: 640},
+  document: {body: {insertAdjacentHTML() {}}, documentElement: element(), getElementById: element,
+    querySelectorAll: () => [], addEventListener() {}, fonts: {ready: Promise.resolve()}},
+  fetch: () => new Promise(() => {}), setInterval() {}, setTimeout() {}, clearTimeout() {},
+  performance: {now: () => 0}, Promise, JSON, Math, Number, Object, Map, Date, Error, String};
 vm.createContext(context);
-vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context);
-const makePlayback = context.window.AutoDramaPlayback;
-context.window.AutoDramaPlayback = (...args) => {
-  const control = makePlayback(...args), advance = control.advance;
-  control.advance = () => {manualRequests++; return advance();};
-  return control;
-};
-vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
-callbacks.DOMContentLoaded();
-let nativeInterference = false;
-if (process.argv[3]) {
-  vm.runInContext(fs.readFileSync(process.argv[3],'utf8'),context);
-  const native = context.tyrano.plugin.kag.key_mouse;
-  native.kag = k; native.util.parent = native;
-  native.util.refer(native.util); native.mouse.init(native);
-  k.stat.is_auto = true; k.config.autoClickStop = 'true';
-  nativeEvents.mousedown({button:0});
-  nativeInterference = !k.stat.is_auto; // Prove the actual engine exhibits the original trigger.
-  actions.length = 0;
-}
-function bubble(target, surface, type) {
-  const event = {button:0, stopped:false, prevented:false,
-    stopPropagation() {this.stopped=true}, preventDefault() {this.prevented=true}};
-  if (target.listeners[type]) target.listeners[type](event);
-  if (!event.stopped && surface.listeners[type]) surface.listeners[type](event);
-  if (!event.stopped && nativeEvents[type]) nativeEvents[type](event);
-  return {stopped:event.stopped, prevented:event.prevented};
-}
-setImmediate(() => {
-  tick(); get('ad-start-button').listeners.click({stopPropagation(){}});
-  k.ftag.current_order_index = 4; k.stat.is_adding_text = true;
-  get('ad-backlog').listeners.click();
-  const openedDuringTyping = get('ad-log').open;
-  get('ad-volume').listeners.input({target:{value:'42'}});
-  get('ad-font').listeners.change({target:{value:'28'}});
-  get('ad-log-close').listeners.click();
-  tick();
-  const activeControls = ['ad-auto','ad-font','ad-volume'].map(id => get(id).disabled);
-  const guardedControls = ['ad-save','ad-load','ad-backlog'].map(id => get(id).disabled);
-  get('ad-auto').listeners.click();
-  const autoArmed = k.stat.is_auto;
-  const propagation = [];
-  for (const surface of [get('ad-toolbar'),get('ad-log')]) {
-    for (const type of ['pointerdown','mousedown','touchstart','keydown','keyup']) {
-      propagation.push(bubble(new Element(),surface,type));
-    }
-  }
-  bubble(get('ad-auto'),get('ad-toolbar'),'mousedown');
-  bubble(get('ad-auto'),get('ad-toolbar'),'mouseup');
-  bubble(get('ad-auto'),get('ad-toolbar'),'click');
-  function input(type, data) {
-    const event = {button:0, target:get('message'), clientX:200, clientY:500, key:'Enter',
-      repeat:false, stopped:false, prevented:false, ...data,
-      stopPropagation() {this.stopped=true}, preventDefault() {this.prevented=true}};
-    callbacks[type](event);
-    return {stopped:event.stopped, prevented:event.prevented, requests:manualRequests};
-  }
-  const messageInput = {
-    outside: input('click', {clientY:100}),
-    toolbar: input('click', {target:get('ad-auto')}),
-    message: input('click', {}),
-    controlEnter: input('keydown', {target:get('ad-volume')}),
-    enter: input('keydown', {}),
-    repeatedEnter: input('keydown', {repeat:true}),
-  };
-  const row = get('ad-log-items').children[0];
-  process.stdout.write(JSON.stringify({actions, rows:get('ad-log-items').children.length,
-    name:row.children[0].textContent, text:row.children[1].textContent,
-    audio:row.children[2].src, font:k.stat.default_font.size, gate:get('ad-start').hidden,
-    activeControls, guardedControls, autoArmed, autoStopped:!k.stat.is_auto,
-    propagation, nativeInterference, openedDuringTyping, messageInput,
-    revealRequested:!!k.stat.is_click_text}));
-});
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+process.stdout.write(JSON.stringify({tags: Object.keys(tags).sort(),
+  vital: Object.fromEntries(Object.entries(tags).map(([name, tag]) => [name, tag.vital])),
+  state: context.window.AutoDramaPlayer.state()}));
 '''
-    result = subprocess.run([node, "-e", source, str(ROOT / "packages/tyrano_export/player.js"),
-                             str(ROOT / "packages/tyrano_export/playback.js"),
-                             str(native_path) if native_input else ""],
+    result = subprocess.run([node, "-e", source, str(ROOT / "packages/tyrano_export/player.js")],
                             capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     value = json.loads(result.stdout)
-    assert value["rows"] == 1
-    assert value["name"] == "<img onerror=bad>"
-    assert value["text"] == "<script>bad</script>"
-    assert value["audio"] == "./data/sound/line.wav"
-    assert value["font"] == "28" and value["gate"] is True
-    assert value["activeControls"] == [False, False, False]
-    assert value["guardedControls"] == [True, True, False]
-    assert value["openedDuringTyping"] is True
-    assert value["autoArmed"] is True and value["autoStopped"] is True
-    assert value["propagation"] == [{"stopped": True, "prevented": False}] * 10
-    if native_input:
-        assert value["nativeInterference"] is True
-    assert value["messageInput"] == {
-        "outside": {"stopped": False, "prevented": False, "requests": 0},
-        "toolbar": {"stopped": False, "prevented": False, "requests": 0},
-        "message": {"stopped": True, "prevented": True, "requests": 1},
-        "controlEnter": {"stopped": False, "prevented": False, "requests": 1},
-        "enter": {"stopped": True, "prevented": True, "requests": 2},
-        "repeatedEnter": {"stopped": True, "prevented": True, "requests": 2},
-    }
-    assert value["revealRequested"] is True
-    assert value["actions"] == ["audio", "next", ["seopt", {"volume": "42", "next": "false"}],
-                                ["setAuto", True], ["autostop", {"next": "false"}]]
+    assert value["tags"] == ["ad_end", "ad_gate", "ad_line", "ad_music", "ad_pause", "ad_say",
+                             "ad_transition", "ad_wait"]
+    assert value["vital"]["ad_say"] == ["id"] and value["vital"]["ad_transition"] == ["cue"]
+    assert value["state"]["started"] is False and value["state"]["tag"] == "idle"

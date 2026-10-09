@@ -15,6 +15,7 @@ from packages.contracts.event_cg import (
     EventCgPolicy,
     EventCgResult,
     image_input_sha256,
+    image_spans,
     validate_budget,
     validate_plan,
 )
@@ -253,17 +254,36 @@ def add_to_script(m3, connection, production, script, content, requirements):
         content[identifier] = data
         return identifier
 
+    order = {line.id: index for index, line in enumerate(script.utterances)}
+
+    def boundary(identifier):
+        return len(order) if identifier is None else order[identifier]
+
     for cg in plan.cgs:
         base = resolve(cg.id)
         if base is None:
             continue
-        variants = []
+        variants, end = [], cg.end_utterance_id
+        current = cg
         for variant in cg.variants:
+            if plan.planning_version >= 2:
+                if current.staging is None:
+                    raise ValueError("CG staging is required for safe image fallback.")
+                if boundary(variant.start_utterance_id) > boundary(current.staging.safe_end_utterance_id):
+                    # A missing image may be bridged only while the last image
+                    # still matches the story. Do not reopen this CG later.
+                    break
             image = resolve(cg.id, variant.id)
             if image:
                 variants.append({"id": variant.id, "utterance_id": variant.start_utterance_id, "asset_id": image})
+                current = variant
+        if plan.planning_version >= 2:
+            if current.staging is None:
+                raise ValueError("CG staging is required for safe image fallback.")
+            if boundary(current.staging.safe_end_utterance_id) < boundary(end):
+                end = current.staging.safe_end_utterance_id
         segments.append({"id": cg.id, "start_utterance_id": cg.start_utterance_id,
-                         "end_utterance_id": cg.end_utterance_id, "base_asset_id": base, "variants": variants})
+                         "end_utterance_id": end, "base_asset_id": base, "variants": variants})
     return Script.model_validate(script.model_dump(mode="json") | {"assets": assets, "event_cg_segments": segments})
 
 
@@ -295,11 +315,34 @@ def summary(m3, connection, production, requirements, *, chapter_number=None, bu
             omissions.append({"cg_id": value.cg_id, "variant_id": value.variant_id, "reason": value.reason})
     plans = [row for row in requirements if row["kind"] == "m3_event_cg_plan"]
     omitted_count = len(omissions)
+    plan_details, planning_notes = [], []
     planning_omitted = 0
     for row in requirements:
         if row["kind"] in {"m3_event_cg_budget", "m3_event_cg_plan"} and row["artifact_id"]:
             record = required(connection, "artifact", row["artifact_id"])
             value = json.loads(m3.store.read(record))
+            if row["kind"] == "m3_event_cg_plan":
+                plan = EventCgPlan.model_validate(value)
+                owner_id = json.loads(record["provenance"])["production_id"]
+                owner = required(connection, "m3_production", owner_id)
+                # The frozen requirement owns the narrative used by this plan;
+                # do not calculate its lengths against a later selected edition.
+                frozen = json.loads(row["descriptor"])["context"]["narrative"]
+                for cg in plan.cgs:
+                    planned_images = {None: cg, **{variant.id: variant for variant in cg.variants}}
+                    spans = []
+                    for span in image_spans(cg, frozen):
+                        image = planned_images[span["variant_id"]]
+                        staging = image.staging
+                        spans.append({**span, "reason": staging.reason if staging else image.interpretation,
+                                      "visual_change": staging.change if staging else ""})
+                    plan_details.append({"chapter_number": owner["chapter_number"], "cg_id": cg.id,
+                                         "planning_version": plan.planning_version,
+                                         "start_reason": cg.staging.reason if cg.staging else cg.interpretation,
+                                         "end_reason": cg.end_reason, "composition": cg.composition,
+                                         "images": spans})
+                planning_notes.extend({"chapter_number": owner["chapter_number"], **note.model_dump(mode="json")}
+                                      for note in plan.planning_notes)
             partial = value.get("prompt_omissions", [])
             planning_omitted += len(partial)
             omissions.extend({"cg_id": item["cg_id"], "variant_id": None, "reason": item["reason"]} for item in partial)
@@ -309,6 +352,7 @@ def summary(m3, connection, production, requirements, *, chapter_number=None, bu
     return {"max_cgs": settings.max_cgs, "max_variants_per_cg": settings.max_variants_per_cg,
             "planned": len(images), "generated": generated, "omitted": omitted_count, "omissions": omissions,
             "planning_omitted": planning_omitted,
+            "plans": plan_details, "planning_notes": planning_notes,
             "budget_omission_reason": budget_omission_reason,
             "budget_completed": budget_completed, "chapter_budgets": chapter_budgets,
             "chapter_budget": limit, "plan_completed": limit == 0 or bool(plans and all(row["artifact_id"] for row in plans))}

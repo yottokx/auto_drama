@@ -105,11 +105,18 @@ def validate_request(data: dict) -> dict:
     if dtype not in {"bfloat16", "float16", "float32"}:
         raise ValueError("計算精度はbfloat16・float16・float32から選んでください。")
     booleans = {}
-    for key, default in (("cpu_offload", True), ("use_kv_cache", True), ("transparent", False)):
+    for key, default in (("cpu_offload", True), ("use_kv_cache", True), ("transparent", False),
+                         ("vae_tiling", False)):
         value = data.get(key, default)
         if type(value) is not bool:
             raise ValueError(f"{key}にはtrueまたはfalseを指定してください。")
         booleans[key] = value
+    encoder = data.get("text_encoder_offload", "model")
+    if encoder not in {"model", "layers"}:
+        raise ValueError("text_encoder_offloadにはmodelまたはlayersを指定してください。")
+    storage = data.get("transformer_storage", "native")
+    if storage not in {"native", "fp8"}:
+        raise ValueError("transformer_storageにはnativeまたはfp8を指定してください。")
     resolution = _integer(data.get("reference_resolution", 1024), "参照解像度", 256, 2048)
     if resolution % 32:
         raise ValueError("参照解像度は32px単位で指定してください。")
@@ -120,6 +127,7 @@ def validate_request(data: dict) -> dict:
               "references": normalized_refs, "model_path": str(Path(model_path).resolve()),
               "width": width, "height": height, "steps": steps, "seed": seed,
               "dtype": dtype, "reference_resolution": resolution, "context": context,
+              "text_encoder_offload": encoder, "transformer_storage": storage,
               **booleans}
     if seeds is not None:
         result["seeds"] = seeds

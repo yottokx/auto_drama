@@ -42,8 +42,11 @@ def test_portrait_settings_publish_new_layout_without_regeneration(tmp_path):
             client.get(new["export_url"]).content)) as right:
             changed = {name for name in left.namelist() if left.read(name) != right.read(name)}
             assert changed <= {"manifest.json", "script.json", "data/scenario/first.ks",
-                               "data/system/Config.tjs", "data/others/auto_drama_player.json"}
-            assert "data/scenario/first.ks" in changed
+                               "data/system/Config.tjs", "data/others/auto_drama_player.json",
+                               # Portrait rectangles are also recorded per line and per scene.
+                               "data/others/auto_drama_states.json", "data/others/auto_drama_stages.json"}
+            # Scene-entry portraits are placed from the stage targets, not from scenario tags.
+            assert "data/others/auto_drama_stages.json" in changed
             script = json.loads(right.read("script.json"))
             assert sorted(c["height_cm"] for c in script["characters"]) == [120, 170]
             assert all(c["framing"] == "upper_body" for c in script["characters"])

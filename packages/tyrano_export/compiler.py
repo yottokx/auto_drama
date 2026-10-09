@@ -11,46 +11,14 @@ import zipfile
 from packages.contracts import Script
 
 from .player import player_files
-from .presentation import BACKGROUND, MESSAGE_WINDOW, PORTRAIT_Z_INDEX, script_portrait_layouts
+from .presentation import BACKGROUND, PORTRAIT_Z_INDEX, script_portrait_layouts
 
 ASSET_FOLDERS = {"background": "bgimage", "character": "fgimage", "audio": "sound", "music": "bgm",
                  "event_cg": "cgimage"}
 
-# Compiler-owned code only. Tyrano's story text uses a text sink, but its backlog
-# uses HTML; escaping solely the .ks parser would leave an HTML injection there.
-BACKLOG_SAFETY = b""""use strict";
-(function () {
-  const tag = tyrano.plugin.kag.tag.text;
-  if (tag.autoDramaSafeBacklog) return;
-  const original = tag.pushTextToBackLog;
-  const escape = value => String(value).replace(/[&<>"']/g, character =>
-    ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[character]));
-  tag.pushTextToBackLog = function (_name, text) {
-    // Display names already occur as literal prose. Internal character IDs are
-    // used only for focus, and must not become extra visible backlog labels.
-    return original.call(this, "", escape(text));
-  };
-  tag.autoDramaSafeBacklog = true;
-})();
-"""
-
 
 def canonical_json(value: dict) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
-
-
-def literal_text(value: str, *, next_tag: str = "[r]") -> str:
-    """Protect all line-prefix syntax and brackets without changing visible text.
-
-    Tyrano trims each source line before parsing, so an owned tag is placed at
-    each line's end to preserve trailing spaces. All author content is text,
-    including titles and speaker names; none enters a tag parameter.
-    """
-    lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    encoded = ["_" + line.replace("\\", "\\\\").replace("[", "\\[") for line in lines]
-    return "\n".join(
-        line + ("[r]" if i < len(lines) - 1 else next_tag) for i, line in enumerate(encoded)
-    )
 
 
 def event_cg_frames(script: Script) -> dict[str, dict]:
@@ -159,39 +127,22 @@ def scene_stage_data(script: Script, images: dict[str, bytes]) -> dict:
 
 
 def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
+    """Stage tags only. Names and prose are looked up in script.json by utterance ID,
+
+    so no author text enters the scenario or a tag parameter.
+    """
     script = Script.model_validate(script.model_dump(mode="json"))
-    characters = {value.id: value for value in script.characters}
     assets = {value.id: value for value in script.assets}
+    characters = {value.id: value for value in script.characters}
     portraits = script_portrait_layouts(script, images)
-    window, padding = MESSAGE_WINDOW, MESSAGE_WINDOW["padding"]
-    lines = [
-        "; Auto Drama M1: source-only deterministic export.",
-        '[loadjs storage="auto_drama_backlog.js"]',
-        '[chara_config pos_mode="false" talk_focus="brightness"]',
-        (
-            f'[position layer="message0" left="{window["left"]}" top="{window["top"]}" '
-            f'width="{window["width"]}" height="{window["height"]}" '
-            f'marginl="{padding["left"]}" margint="{padding["top"]}" '
-            f'marginr="{padding["right"]}" marginb="{padding["bottom"]}"]'
-        ),
-        '[layopt layer="message0" visible="true"]',
-        f'[deffont size="{window["font_size"]}"]',
-    ]
-    for character in sorted(script.characters, key=lambda value: value.id):
-        if character.image_asset_id:
-            filename = assets[character.image_asset_id].filename
-            lines.append(f'[chara_new name="ad_{character.id}" storage="{filename}"]')
-    lines.extend([literal_text(script.title, next_tag="[p]"), "[cm]"])
-    directions_by_anchor = {}
     music_by_anchor = {cue.utterance_id: cue for cue in script.music_cues}
     transitions_by_anchor = stage_anchors(script)
     scene_entries = {cue.utterance_id for cue in script.scene_transitions}
     cg_frames = event_cg_frames(script)
     cg_after = event_cg_after_anchors(script)
+    directions_by_anchor: dict[tuple[str, str], list] = {}
     for direction in script.directions:
-        directions_by_anchor.setdefault((direction.utterance_id, direction.timing), []).append(
-            direction
-        )
+        directions_by_anchor.setdefault((direction.utterance_id, direction.timing), []).append(direction)
 
     def direction_lines(utterance_id: str, timing: str) -> list[str]:
         result = []
@@ -218,63 +169,118 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
                         f'time="{direction.duration_ms}"' + z_index + ']'
                     )
                 case "exit":
-                    result.append(
-                        f'[chara_hide name="ad_{direction.character_id}" '
-                        f'time="{direction.duration_ms}"]'
-                    )
+                    result.append(f'[chara_hide name="ad_{direction.character_id}" time="{direction.duration_ms}"]')
                 case "position":
                     portrait = portraits[direction.character_id]
                     result.append(
                         f'[chara_move name="ad_{direction.character_id}" '
-                        f'left="{portrait.left(direction.position)}" '
-                        f'time="{direction.duration_ms}" anim="true"]'
+                        f'left="{portrait.left(direction.position)}" time="{direction.duration_ms}" anim="true"]'
                     )
                 case "focus":
                     result.append(f'[chara_ptext name="ad_{direction.character_id}"]')
                 case "blackout":
-                    result.extend(
-                        [
-                            f'[mask color="0x000000" time="{direction.duration_ms}"]',
-                            f'[mask_off time="{direction.duration_ms}"]',
-                        ]
-                    )
+                    result.extend([f'[mask color="0x000000" time="{direction.duration_ms}"]',
+                                   f'[mask_off time="{direction.duration_ms}"]'])
                 case "pause":
-                    result.append(f'[wait time="{direction.duration_ms}"]')
+                    # The engine's [wait] ignores skip and cannot be cancelled by a jump.
+                    result.append(f'[ad_pause time="{direction.duration_ms}"]')
         if timing == "after" and utterance_id in cg_after:
             result.append(f'[ad_transition cue="cg-after:{utterance_id}"]')
         return result
 
+    lines = [
+        "; Auto Drama: source-only deterministic export.",
+        # A browser may still hold an earlier screen's index.html and scripts for this URL,
+        # cached as immutable, while the engine always fetches this scenario fresh. That
+        # screen cannot run these tags, so make it reload once to pick up the current one.
+        ("[eval exp=\"window.AutoDramaPlayer||sessionStorage.getItem('ad_reload'+location.pathname)||"
+         "(sessionStorage.setItem('ad_reload'+location.pathname,1),location.reload())\"]"),
+        '[chara_config pos_mode="false" talk_focus="brightness"]',
+        '[layopt layer="message0" visible="false"]',
+    ]
+    for character in sorted(script.characters, key=lambda value: value.id):
+        if character.image_asset_id:
+            lines.append(f'[chara_new name="ad_{character.id}" storage="{assets[character.image_asset_id].filename}"]')
+    lines.append("[ad_gate]")
     for utterance in script.utterances:
-        lines.extend([f"*utterance_{utterance.id}", "[cm]"])
+        lines.extend([f"*utterance_{utterance.id}", f'[ad_line id="{utterance.id}"]'])
         if utterance.id in transitions_by_anchor:
             lines.append(f'[ad_transition cue="{transitions_by_anchor[utterance.id]["id"]}"]')
         elif utterance.id in music_by_anchor:
             lines.append(f'[ad_music cue="{music_by_anchor[utterance.id].id}"]')
         lines.extend(direction_lines(utterance.id, "before"))
         character = characters.get(utterance.speaker_id)
-        if character:
-            if character.image_asset_id:
-                lines.append(f'[chara_ptext name="ad_{character.id}"]')
-            else:
-                lines.append('[chara_ptext name=""]')
-            lines.append(literal_text(character.name))
-        else:
-            lines.append('[chara_ptext name=""]')
+        lines.append(f'[chara_ptext name="ad_{character.id}"]' if character and character.image_asset_id
+                     else '[chara_ptext name=""]')
         lines.extend(direction_lines(utterance.id, "start"))
-        if utterance.audio_asset_id:
-            filename = assets[utterance.audio_asset_id].filename
-            lines.append(f'[playse storage="{filename}" buf="1"]')
-        # [r] is also a terminator that preserves final-line trailing spaces.
-        lines.append(literal_text(utterance.display_text))
-        if utterance.audio_asset_id:
-            lines.append("[wse]")
+        lines.append(f'[ad_say id="{utterance.id}"]')
         lines.extend(direction_lines(utterance.id, "after"))
-        lines.append("[p]")
-    lines.extend(["*auto_drama_chapter_end", "[cm]", literal_text("この章はここまでです。")])
-    # Retain the last scene's loop while the reader waits at the boundary.
-    # The owned Next button fades it only when leaving this chapter.
-    lines.append("[s]")
+        lines.append("[ad_wait]")
+    lines.extend(["*auto_drama_chapter_end", "[ad_end]", "[s]"])
     return "\n".join(lines) + "\n"
+
+
+def entry_states(script: Script, images: dict[str, bytes]) -> dict:
+    """The stage and music in effect when each line begins, before its own directions.
+
+    A jump restores this and then replays the line from its label, so entrances
+    and scene transitions that belong to the line still play as written.
+    """
+    assets = {value.id: value for value in script.assets}
+    characters = {value.id: value for value in script.characters}
+    portraits = script_portrait_layouts(script, images)
+    cg_frames = event_cg_frames(script)
+    cues = {value.utterance_id: value for value in script.music_cues}
+    directions: dict[str, list] = {}
+    for value in script.directions:
+        directions.setdefault(value.utterance_id, []).append(value)
+    background, cast, music, frame, entries = None, {}, None, None, {}
+    for utterance in script.utterances:
+        entries[utterance.id] = {
+            "background": dict(background) if background else None,
+            "characters": [dict(cast[key]) for key in sorted(cast)],
+            "event_cg": {**frame, "storage": assets[frame["asset_id"]].filename} if frame else None,
+            "music_cue_id": music,
+        }
+        cue = cues.get(utterance.id)
+        if cue and cue.action in {"play", "stop"}:
+            music = cue.id if cue.action == "play" else None
+        for timing in ("before", "start", "after"):
+            for direction in (value for value in directions.get(utterance.id, []) if value.timing == timing):
+                if direction.kind == "background":
+                    background = {"storage": assets[direction.asset_id].filename,
+                                  "position": BACKGROUND["position"] if script.portrait_baseline else ""}
+                elif direction.kind == "exit":
+                    cast.pop(direction.character_id, None)
+                elif direction.kind == "enter" or (direction.kind == "position" and direction.character_id in cast):
+                    portrait = portraits[direction.character_id]
+                    cast[direction.character_id] = {
+                        "id": direction.character_id,
+                        "storage": assets[characters[direction.character_id].image_asset_id].filename,
+                        "left": portrait.left(direction.position), "top": portrait.top,
+                        "width": portrait.width, "height": portrait.height,
+                        "z_index": PORTRAIT_Z_INDEX if script.portrait_baseline else 1,
+                    }
+        frame = cg_frames.get(utterance.id)
+    return {"schema_version": 1, "entries": entries}
+
+
+def player_overlay(script: Script, images: dict[str, bytes], script_bytes: bytes) -> dict[str, bytes]:
+    """Everything the viewing screen needs besides script.json, assets and documents.
+
+    The live route regenerates these from a published ZIP's own script and images,
+    so chapters published by an earlier player still open in the current one.
+    """
+    files = {
+        "data/scenario/first.ks": compile_scenario(script, images).encode("utf-8"),
+        # Installed projects may call make.ks during engine initialization.
+        "data/scenario/make.ks": b"[return]\n",
+        "data/others/auto_drama_states.json": canonical_json(entry_states(script, images)),
+    }
+    if script.scene_transitions or script.event_cg_segments:
+        files["data/others/auto_drama_stages.json"] = canonical_json(scene_stage_data(script, images))
+    files.update(player_files(script_bytes))
+    return files
 
 
 def _bundle_files(
@@ -283,18 +289,11 @@ def _bundle_files(
     script = Script.model_validate(script.model_dump(mode="json"))
     if set(assets) != {asset.id for asset in script.assets}:
         raise ValueError("provided asset IDs must exactly match the script manifest")
-    files = {
-        "script.json": canonical_json(script.model_dump(mode="json")),
-        "data/scenario/first.ks": compile_scenario(script, assets).encode("utf-8"),
-        # Installed projects may call make.ks during engine initialization.
-        "data/scenario/make.ks": b"[return]\n",
-        "data/others/auto_drama_backlog.js": BACKLOG_SAFETY,
-    }
-    if script.scene_transitions or script.event_cg_segments:
-        files["data/others/auto_drama_stages.json"] = canonical_json(scene_stage_data(script, assets))
-    files.update(player_files(files["script.json"]))
+    files = {"script.json": canonical_json(script.model_dump(mode="json"))}
+    files.update(player_overlay(script, assets, files["script.json"]))
     for path, content in (documents or {}).items():
-        if path not in {"approval.json", "narrative.json", "chapter-manifest.json"} and not re.fullmatch(
+        if path not in {"approval.json", "narrative.json", "chapter-manifest.json",
+                        "staging-normalization.json"} and not re.fullmatch(
             r"sources/[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}\.txt", path
         ):
             raise ValueError("unsupported public document path")

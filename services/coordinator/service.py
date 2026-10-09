@@ -378,6 +378,21 @@ class Coordinator:
                 from .m3_service import M3Service
 
                 M3Service(self).validate_retry(connection, job)
+            from .llm_settings import RETRY_LLM_JOB_KINDS, execution_settings
+
+            if job["kind"] in RETRY_LLM_JOB_KINDS:
+                payload = json.loads(job["payload"])
+                snapshot = json.loads(job["settings_snapshot"])
+                revision = job["retry_generation"] + 1
+                snapshot.update(execution_settings(self, connection, payload, kind=job["kind"], revision=revision))
+                if job["kind"] == "m3_narrative" and payload.get("workflow_policy") == "script_continuation_v1":
+                    from .m3_service import script_checkpoint_source
+
+                    source = script_checkpoint_source(connection, payload)
+                    if source is not None:
+                        payload["script_checkpoint_source"] = source
+                connection.execute("UPDATE job SET payload=?,settings_snapshot=? WHERE id=?",
+                    (json.dumps(payload, ensure_ascii=False), json.dumps(snapshot, ensure_ascii=False), identifier))
             # An explicit user retry grants one additional attempt and preserves history.
             connection.execute(
                 "UPDATE job SET status='pending',max_attempts=attempt_count+1,error=NULL,"
@@ -478,9 +493,9 @@ class Coordinator:
                 if not TTSService.supports(connection, worker, row["kind"], payload.get("tts_profile")):
                     return False
                 profile = payload.get("profile", {})
-                uses_llm = row["kind"] in {"m2_world", "m2_character", "m2_relationships",
-                                            "m2_image", "m3_narrative", "m3_image", "m3_plan", "m3_music_plan",
-                                            "m3_event_cg_budget", "m3_event_cg_plan"}
+                from .llm_settings import LLM_JOB_KINDS
+
+                uses_llm = row["kind"] in LLM_JOB_KINDS
                 return (not uses_llm
                         or (not profile.get("common_settings_version") and not models)
                         or any(model.supports(profile) for model in models))

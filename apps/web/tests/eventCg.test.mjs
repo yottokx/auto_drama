@@ -54,7 +54,7 @@ const { EventCgSettings } = await import(await moduleUrl('EventCgSettings.tsx', 
   react: hooksUrl, './api': apiUrl, './eventCgState': stateUrl,
 }))
 const productionStateUrl = await moduleUrl('productionState.ts')
-const { EventCgStatus } = await import(await moduleUrl('ProductionPanel.tsx', {
+const { EventCgStatus, EventCgPlanDetails } = await import(await moduleUrl('ProductionPanel.tsx', {
   react: hooksUrl, './api': apiUrl, './eventCgState': stateUrl, './productionState': productionStateUrl,
   './Icons': dataUrl('export const Icon = () => null'), './PlotReview': dataUrl('export const PlotReview = () => null'),
   './GenerationProgress': dataUrl('export const GenerationProgress = () => null'),
@@ -143,6 +143,55 @@ test('failed budget generation shows the omission reason instead of a successful
   assert.doesNotMatch(text(chapter), /最大0件|画像の計画 0枚/)
   assert.equal(state.eventCgBudgetCompleted(value), true, 'an adopted omitted budget still releases subsequent work')
   assert.equal(state.eventCgImagePlanText({ ...value, budget_omission_reason: undefined }, true), '画像の計画 0枚（確定・差分を含む）', 'legacy zero-budget summaries keep their existing behavior')
+})
+
+test('CG display details are absent for legacy summaries and collapsed for new plans', () => {
+  const value = { max_cgs: 3, max_variants_per_cg: 3, planned: 2, generated: 0, omitted: 0 }
+  assert.equal(EventCgPlanDetails({ value }), null)
+  assert.equal(EventCgPlanDetails({ value: { ...value, plans: [], planning_notes: [] } }), null)
+  const plan = {
+    chapter_number: 1, cg_id: 'cafe', planning_version: 2,
+    start_reason: '懇願から約束まで同じ机を囲む。', end_reason: '席を立つ前に通常画面へ戻す。', composition: '机を挟んで向き合う二人。',
+    images: [
+      { id: 'cafe', variant_id: null, utterance_count: 12, character_count: 345, start_utterance_id: 's2-u12', end_utterance_id: 's2-u24', reason: '懇願を受け止めるやり取り。', visual_change: '両手を握り、身を乗り出す。' },
+      { id: 'cafe-relief', variant_id: 'relief', utterance_count: 8, character_count: 210, start_utterance_id: 's2-u24', end_utterance_id: null, reason: '約束を聞いた後に安堵が続く。', visual_change: '肩の緊張が解ける。' },
+    ],
+  }
+  const tree = EventCgPlanDetails({ value: { ...value, plans: [plan] } })
+  assert.equal(tree.type, 'details')
+  assert.equal(tree.props.open, undefined, 'story details are not disclosed until expanded')
+  element(tree, 'summary', 'CGの表示区間・差分の詳細')
+  assert.match(text(tree), /発話数には地の文を含みます/)
+  assert.match(text(tree), /表示時間ではありません/)
+  assert.match(text(tree), /基本画像12発話 · 345文字/)
+  assert.match(text(tree), /差分 18発話 · 210文字/)
+  assert.match(text(tree), /s2-u12 から s2-u24 の直前まで/)
+  assert.match(text(tree), /s2-u24 から シーン末尾まで/)
+  assert.match(text(tree), /選定理由：懇願を受け止めるやり取り/)
+  assert.match(text(tree), /切替理由：約束を聞いた後に安堵が続く/)
+  assert.match(text(tree), /見た目の変化：肩の緊張が解ける/)
+  assert.match(text(tree), /通常画面へ戻る理由席を立つ前に通常画面へ戻す/)
+  assert.doesNotMatch(text(tree), /planning_version|バージョン|基準2/)
+  assert.equal(walk(EventCgStatus({ value: { ...value, plans: [plan] } }), node => node.type === EventCgPlanDetails), null, 'whole-work summary does not duplicate chapter details')
+  assert.ok(walk(EventCgStatus({ value: { ...value, plans: [plan] }, chapter: true }), node => node.type === EventCgPlanDetails))
+})
+
+test('CG planning reductions remain visible when no images survive selection', () => {
+  const value = {
+    max_cgs: 3, max_variants_per_cg: 3, planned: 0, generated: 0, omitted: 0,
+    planning_notes: [
+      { chapter_number: 1, cg_id: 'cafe', variant_id: 'blink', reason: '差分の表示区間が2発話のため削減。' },
+      { chapter_number: 1, cg_id: 'station', variant_id: null, reason: '基本画像を安全に表示できる区間が不足。' },
+      { chapter_number: 1, cg_id: null, variant_id: null, reason: '適した区間が残らなかった。' },
+    ],
+  }
+  const tree = EventCgPlanDetails({ value })
+  assert.ok(tree)
+  assert.match(text(tree), /計画の調整・削減理由/)
+  assert.match(text(tree), /差分cafe \/ blink差分の表示区間が2発話のため削減/)
+  assert.match(text(tree), /基本CGstation基本画像を安全に表示できる区間が不足/)
+  assert.match(text(tree), /CG計画適した区間が残らなかった/)
+  assert.equal(walk(tree, node => node.type === 'ol'), null)
 })
 
 test('zero policy loads without probing settings and unsaved changes block approval', async () => {
@@ -244,4 +293,61 @@ test('image settings distinguish disconnected workers from connected workers wit
       }
     } finally { hooks.dispose() }
   }
+})
+
+test('image settings list memory configurations with their guides and save the chosen one', async () => {
+  const configurations = [
+    { id: 'vram32', label: '32GB：標準', vram_gb: 32, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'native', vae_tiling: false, peak_vram_gib: 22.8, time_ratio: 1, quality: '基準。' },
+    { id: 'vram16_8bit', label: '16GB：8ビット・速度優先', vram_gb: 16, reference_resolution: 768, use_kv_cache: true, transformer_storage: 'fp8', vae_tiling: true, peak_vram_gib: 12.8, time_ratio: 0.8, quality: '8ビット。' },
+  ]
+  const sizes = [{ width: 960, height: 640 }, { width: 1536, height: 1024 }]
+  // A profile saved before the options existed corresponds to the standard configuration.
+  api.respondWith(async () => ({ ...settings, configuration: 'vram32', configurations, sizes }))
+  assert.equal(state.eventCgConfigurationId(settings.profile, configurations), 'vram32')
+  assert.equal(state.eventCgConfigurationId({ ...settings.profile, reference_resolution: 768 }, configurations), null)
+  const originalFetch = globalThis.fetch
+  const writes = []
+  globalThis.fetch = async (path, options) => {
+    writes.push({ path, method: options.method, body: JSON.parse(options.body) })
+    return { ok: true, status: 200, json: async () => ({ ...settings, revision: 3, profile: writes.at(-1).body.profile, configurations, sizes }) }
+  }
+  const h = harness(EventCgSettings, { visible: true, onBusyChange() {} })
+  const radios = tree => {
+    const found = []
+    walk(tree, node => { if (node.type === 'input' && node.props.type === 'radio') found.push(node); return false })
+    return found
+  }
+  try {
+    let tree = await h.settle()
+    assert.match(text(tree), /32GB：標準VRAM 約22\.8GB時間 基準基準。/)
+    assert.match(text(tree), /16GB：8ビット・速度優先VRAM 約12\.8GB時間 基準の約0\.8倍8ビット。/)
+    assert.match(text(tree), /実際の秒数はGPUなどの構成によって変わります/)
+    assert.doesNotMatch(text(tree), /約\d+秒|RTX/)
+    assert.doesNotMatch(text(tree), /CPUオフロード|KVキャッシュ/)
+    assert.deepEqual(radios(tree).map(node => node.props.checked), [true, false])
+    assert.equal(element(tree, 'button', '画像設定を保存').props.disabled, true)
+    radios(tree)[1].props.onChange()
+    tree = await h.settle()
+    walk(element(tree, 'label', '画像サイズ'), node => node.type === 'select').props.onChange({ target: { value: '1536x1024' } })
+    tree = await h.settle()
+    assert.deepEqual(radios(tree).map(node => node.props.checked), [false, true])
+    assert.match(text(tree), /8ビット（fp8）で保持/)
+    element(tree, 'form', '').props.onSubmit({ preventDefault() {} })
+    tree = await h.settle()
+    assert.equal(writes[0].method, 'PUT')
+    assert.deepEqual(writes[0].body, { expected_revision: 2, profile: { ...settings.profile, width: 1536, height: 1024,
+      cpu_offload: true, text_encoder_offload: 'layers', reference_resolution: 768, use_kv_cache: true,
+      transformer_storage: 'fp8', vae_tiling: true } })
+    assert.match(text(tree), /画像設定を保存しました/)
+  } finally { globalThis.fetch = originalFetch; hooks.dispose() }
+})
+
+test('a profile outside the listed configurations is reported instead of silently matched', async () => {
+  const configurations = [{ id: 'vram32', label: '32GB：標準', vram_gb: 32, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'native', vae_tiling: false, peak_vram_gib: 22.8, time_ratio: 1, quality: '基準。' }]
+  api.respondWith(async () => ({ ...settings, profile: { ...settings.profile, transformer_storage: 'fp8' }, configurations }))
+  const h = harness(EventCgSettings, { visible: true, onBusyChange() {} })
+  try {
+    const tree = await h.settle()
+    assert.match(text(tree), /一覧のどの構成とも一致しません/)
+  } finally { hooks.dispose() }
 })

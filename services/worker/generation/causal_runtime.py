@@ -73,13 +73,28 @@ class PersistentUsage:
     to) the enclosed request durations. Time between runner invocations is not charged.
     """
 
-    def __init__(self, work: Path | None, payload: dict, config: dict):
+    def __init__(self, work: Path | None, payload: dict, config: dict, *, previous_executions=()):
+        from .execution_settings import enabled, source_config
+
         self.limits = resource_limits(payload)
         self.chapter = str(payload.get("chapter_number", 1))
-        self.identity = digest({"protocol": generator_protocol("causal", payload.get("workflow_policy")),
+        identity = {"protocol": generator_protocol("causal", payload.get("workflow_policy")),
             "storyline": payload.get("storyline_id"), "approval": payload.get("approval_snapshot"),
             "profile": payload.get("profile"), "profiles": payload.get("profiles"),
-            "config": config, "limits": self.limits})
+            "config": config, "limits": self.limits}
+        if enabled(payload):
+            identity.pop("profile")
+            identity.pop("profiles")
+            identity["config"] = source_config(config)
+        self.identity = digest(identity)
+        self.previous_identities = set()
+        for execution in previous_executions:
+            old_payload, old_config = execution["payload"], execution["generation_config"]
+            old_identity = {"protocol": generator_protocol("causal", old_payload.get("workflow_policy")),
+                "storyline": old_payload.get("storyline_id"), "approval": old_payload.get("approval_snapshot"),
+                "profile": old_payload.get("profile"), "profiles": old_payload.get("profiles"),
+                "config": old_config, "limits": resource_limits(old_payload)}
+            self.previous_identities.add(digest(old_identity))
         self.path = None
         if work is not None:
             work = Path(work)
@@ -92,7 +107,8 @@ class PersistentUsage:
     def reload(self):
         if self.path is not None and self.path.exists():
             value = json.loads(self.path.read_text(encoding="utf-8"))
-            if (value.get("schema_version") != 1 or value.get("identity") != self.identity
+            if (value.get("schema_version") != 1
+                    or value.get("identity") not in {self.identity, *self.previous_identities}
                     or value.get("limits") != self.limits
                     or not isinstance(value.get("requests"), list)
                     or not isinstance(value.get("attempts"), list)):
@@ -127,7 +143,13 @@ class PersistentUsage:
                     r["attempt_id"] not in attempts or attempts[r["attempt_id"]]["chapter"] != r["chapter"])
                     for r in value["requests"]):
                 raise ValueError("Persistent request refers to a different or unknown chapter attempt.")
+            old_identity = value["identity"]
+            if old_identity != self.identity:
+                value.setdefault("execution_identity_history", []).append(old_identity)
+                value["identity"] = self.identity
             self.data = value
+            if old_identity != self.identity:
+                self.save()
 
     def save(self):
         if self.path is not None:
@@ -233,15 +255,33 @@ class CausalRun:
     """Successful stages survive restarts; moving to a new stage cannot reset budgets."""
 
     def __init__(self, llm, payload):
+        from .execution_settings import enabled, previous_executions, source_config, source_payload
+
         self.llm = llm
         self.payload = payload
-        self.signature = digest({
+        identity = {
             "protocol": generator_protocol("causal", payload.get("workflow_policy")), "payload": payload,
             "config": llm.config, "model": getattr(llm, "base", {}),
             "model_registry": (llm.model_configuration_identity()
                                if callable(getattr(llm, "model_configuration_identity", None)) else None),
-        })
+        }
+        self.live_settings = enabled(payload)
+        if self.live_settings:
+            identity = {"protocol": identity["protocol"], "payload": source_payload(payload),
+                        "config": source_config(llm.config)}
+        self.signature = digest(identity)
         output = getattr(llm, "output", None)
+        previous = previous_executions(Path(output).parent if output is not None else None,
+                                       payload, llm.config)
+        self.previous_signatures = set()
+        for execution in previous:
+            old_config, old_payload = execution["generation_config"], execution["payload"]
+            registry = old_config.get("model_configuration_identity")
+            base = old_config.get("llm_base") or (registry or {}).get("generation", {}).get("base", {})
+            self.previous_signatures.add(digest({
+                "protocol": generator_protocol("causal", old_payload.get("workflow_policy")),
+                "payload": old_payload, "config": old_config, "model": base,
+                "model_registry": registry}))
         self.directory = Path(output).parent / "causal-stages" if output is not None else None
         self.state = {"signature": self.signature, "repairs": 0, "calls": 0, "issues": []}
         self.cache = {}
@@ -254,7 +294,7 @@ class CausalRun:
             state_path = self.directory / "budget.json"
             if state_path.exists():
                 state = json.loads(state_path.read_text(encoding="utf-8"))
-                if state.get("signature") != self.signature:
+                if state.get("signature") not in {self.signature, *self.previous_signatures}:
                     raise ValueError("Causal stage directory belongs to different inputs/profile.")
                 if (type(state.get("calls")) is not int or state["calls"] < 0
                         or type(state.get("repairs")) is not int or state["repairs"] < 0
@@ -263,12 +303,17 @@ class CausalRun:
                         or any(not isinstance(issue, dict) or not isinstance(issue.get("key"), str)
                                for issue in state["issues"])):
                     raise ValueError("Invalid persisted causal budget.")
+                old_signature = state["signature"]
+                if old_signature != self.signature:
+                    state.setdefault("execution_identity_history", []).append(old_signature)
+                    state["signature"] = self.signature
                 self.state = state
         limits = payload.get("workflow_limits", {})
         default_repairs = 2 if payload.get("workflow_policy") == "chapter_editor_v1" else 6
         self.max_repairs = self._limit(limits.get("max_repairs", default_repairs), "max_repairs", 1, 30)
         self.max_calls = self._limit(limits.get("max_calls", 160), "max_calls", 1, 1000)
-        self.usage = PersistentUsage(Path(output).parent if output is not None else None, payload, llm.config)
+        self.usage = PersistentUsage(Path(output).parent if output is not None else None,
+                                     payload, llm.config, previous_executions=previous)
         if self.state["calls"] and not any(r["chapter"] == self.usage.chapter for r in self.usage.data["requests"]):
             raise ValueError("Existing causal budget has no resource measurements; use a new protocol experiment.")
 
@@ -370,8 +415,9 @@ class CausalRun:
             "profile": getattr(self.llm, "profile", None),
             "server_context_size": getattr(self.llm, "server_context_size", None)}
         identity = {"run": self.signature, "stage": name, "inputs": inputs,
-                    "schema": model.model_json_schema() if model else None,
-                    "runtime": runtime}
+                    "schema": model.model_json_schema() if model else None}
+        if not self.live_settings:
+            identity["runtime"] = runtime
         if purpose is not None:
             identity["purpose"] = purpose
         key = digest(identity)
@@ -379,9 +425,38 @@ class CausalRun:
         saved = self.cache.get(key)
         if saved is None and path and path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
+        if saved is None and self.live_settings and path and self.previous_signatures:
+            # A legacy node did not store source identity separately. Rebuild its
+            # exact key from validated prior settings and recorded LLM runtimes;
+            # never accept a stage merely because its name matches.
+            runtimes = {digest(runtime): runtime}
+            output = getattr(self.llm, "output", None)
+            if output is not None:
+                for request_path in Path(output).glob("*.json"):
+                    request = json.loads(request_path.read_text(encoding="utf-8"))
+                    old_runtime = request.get("runtime") if isinstance(request, dict) else None
+                    if isinstance(old_runtime, dict):
+                        runtimes[digest(old_runtime)] = old_runtime
+            for signature in sorted(self.previous_signatures):
+                for old_runtime in runtimes.values():
+                    old_identity = {**identity, "run": signature, "runtime": old_runtime}
+                    old_key = digest(old_identity)
+                    old_path = self.directory / f"{name}-{old_key[:20]}.json"
+                    if not old_path.is_file():
+                        continue
+                    candidate = json.loads(old_path.read_text(encoding="utf-8"))
+                    if candidate.get("key") != old_key:
+                        raise ValueError("Causal stage fingerprint mismatch.")
+                    saved = {**candidate, "key": key, "source_identity": identity,
+                             "execution_runtime": old_runtime, "legacy_stage_key": old_key}
+                    break
+                if saved is not None:
+                    break
         if saved is not None:
             if saved.get("key") != key:
                 raise ValueError("Causal stage fingerprint mismatch.")
+            if self.live_settings and saved.get("source_identity") != identity:
+                raise ValueError("Causal stage source identity mismatch.")
             result = model.model_validate(saved["value"]) if model else deepcopy(saved["value"])
             if type(saved.get("requests")) is not int or saved["requests"] < 0:
                 raise ValueError("Invalid cached causal stage request count.")
@@ -389,7 +464,7 @@ class CausalRun:
             # Stage execution changes profiles. Reproduce that transition before
             # identifying the next stage, without changing the process lifetime.
             profile = saved.get("exit_profile")
-            if profile is not None:
+            if profile is not None and not self.live_settings:
                 select = getattr(self.llm, "set_profile", None)
                 if callable(select):
                     select(deepcopy(profile))
@@ -398,6 +473,8 @@ class CausalRun:
             self.llm.requests = getattr(self.llm, "requests", 0) + saved["requests"]
             self.last_chat_identity = saved.get("last_chat_identity")
             self.llm.trace.append({"type": "causal_stage_cache", "stage": name, "key": key})
+            if self.live_settings and path and not path.exists():
+                write_json(path, saved)
             return result
         start = getattr(self.llm, "requests", 0)
         started = time.monotonic()
@@ -418,6 +495,8 @@ class CausalRun:
                  "requests": getattr(self.llm, "requests", 0) - start,
                  "exit_profile": deepcopy(getattr(self.llm, "profile", None)),
                  "last_chat_identity": self.last_chat_identity}
+        if self.live_settings:
+            saved.update(source_identity=identity, execution_runtime=runtime)
         if path:
             write_json(path, saved)
         self.cache[key] = saved

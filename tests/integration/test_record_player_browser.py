@@ -27,7 +27,8 @@ pytestmark = pytest.mark.skipif(os.environ.get("AUTO_DRAMA_RECORD_SMOKE") != "1"
                                 reason="Set AUTO_DRAMA_RECORD_SMOKE=1 to run real browser recording")
 
 
-@pytest.mark.parametrize("mode", ["single", "background_multi", "timeout", "music_mix", "music_transitions"])
+@pytest.mark.parametrize("mode", ["single", "background_multi", "timeout", "music_mix", "music_transitions",
+                                  "stopped_multi"])
 def test_headless_recording_contains_video_and_audio(tmp_path, mode):
     script, assets = demo_content()
     document = script.model_dump(mode="json")
@@ -155,13 +156,49 @@ def test_headless_recording_contains_video_and_audio(tmp_path, mode):
             try:
                 snapshots.append(json.loads((output / "status.json").read_text("utf-8")))
             except (OSError, ValueError):
-                pass
+                continue
+            latest = snapshots[-1]
+            # Stop in the middle of the second chapter, as the GUI's stop button does.
+            if (mode == "stopped_multi" and latest.get("current_chapter") == 2
+                    and latest.get("phase") == "recording" and latest.get("chapter_recorded_seconds", 0) > .6):
+                (output / "stop.request").touch()
 
     watcher = threading.Thread(target=watch_progress, daemon=True)
     watcher.start()
     try:
         url = f"http://127.0.0.1:{server.server_port}/player/first/"
-        if mode == "background_multi":
+        if mode == "stopped_multi":
+            from playwright.sync_api import sync_playwright
+
+            from scripts.record import record_player as recorder
+
+            chosen = ["--text-size", "large", "--typeface", "mincho", "--text-speed", "100",
+                      "--auto-wait", "0.5", "--voice-volume", "60", "--bgm-volume", "30", "--window-opacity", "40"]
+            # The recorder's seeded settings are what the viewing screen actually applies.
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(channel="msedge", headless=True, args=["--mute-audio"])
+                context = browser.new_context()
+                context.add_init_script(recorder.settings_script(
+                    recorder.parser().parse_args(["--url", url, *chosen])))
+                page = context.new_page()
+                page.goto(url)
+                page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=30000)
+                applied = page.evaluate("""() => {
+                  const body = getComputedStyle(document.getElementById('adn-body'));
+                  const root = getComputedStyle(document.documentElement);
+                  return {size: body.fontSize, serif: body.fontFamily.includes('Serif'),
+                    alpha: root.getPropertyValue('--win-a').trim(),
+                    shown: Object.fromEntries([...document.querySelectorAll('#adn-config input[type=range]')]
+                      .map(input => [input.dataset.key, Number(input.value)]))};
+                }""")
+                browser.close()
+            assert applied == {"size": "28px", "serif": True, "alpha": "0.4",
+                               "shown": {"speed": 100, "wait": 5, "voice": 60, "bgm": 30, "alpha": 40}}
+            result = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "scripts/record/record_player.py"),
+                                     "--url", url, "--output-dir", str(output), "--fps", "10", *chosen],
+                                    timeout=150, check=False)
+            assert result.returncode == 0
+        elif mode == "background_multi":
             subprocess.run(["pwsh", "-NoProfile", "-File", str(ROOT / "scripts/record-player.ps1"),
                             "-Url", url, "-OutputDir", str(output), "-Fps", "10"],
                            check=True, timeout=20)
@@ -194,6 +231,22 @@ def test_headless_recording_contains_video_and_audio(tmp_path, mode):
         assert state["status"] == "failed"
         assert (output / "chapter-001/partial.mp4").stat().st_size > 1000
         assert .8 <= state["chapter_recorded_seconds"] <= 1.5, "only a bounded 400ms ending tail is allowed"
+        return
+    if mode == "stopped_multi":
+        # The finished first chapter and the part of the second are kept and joined.
+        assert state["status"] == "stopped" and state["end_reason"] == "stopped", state
+        assert state["viewing_settings"] == {"size": 28, "face": "mincho", "speed": 100, "wait": 5,
+                                             "voice": 60, "bgm": 30, "alpha": 40}
+        assert [Path(chapter["file"]).name for chapter in state["chapters"]] == ["chapter.mp4", "partial.mp4"]
+        assert state["chapters"][1]["recorded_seconds"] > .6
+        probe = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json",
+                                str(output / "recording.mp4")], capture_output=True, check=True)
+        streams = json.loads(probe.stdout)["streams"]
+        assert {item["codec_type"] for item in streams} == {"video", "audio"}
+        video = next(item for item in streams if item["codec_type"] == "video")
+        assert abs(state["recorded_seconds"] - float(video["duration"])) < 0.3
+        assert state["recorded_seconds"] == pytest.approx(sum(
+            chapter["recorded_seconds"] for chapter in state["chapters"]))
         return
     assert state["status"] == "completed", state
     assert len(state["chapters"]) == (2 if mode == "background_multi" else 1)

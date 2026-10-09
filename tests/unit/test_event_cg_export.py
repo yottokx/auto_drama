@@ -61,9 +61,9 @@ def test_hidden_stage_commands_do_not_leak_and_last_cg_line_keeps_click_wait():
     scenario = compile_scenario(script, assets)
     assert '[bg storage="new_background.png"' not in scenario
     assert "[chara_move" not in scenario and "[chara_hide" not in scenario
-    assert scenario.index('[ad_transition cue="cg:line_002"]') < scenario.index(script.utterances[1].display_text)
-    last = scenario.index(script.utterances[2].display_text)
-    assert last < scenario.index("[p]", last) < scenario.index('[ad_transition cue="cg:line_004"]')
+    assert scenario.index('[ad_transition cue="cg:line_002"]') < scenario.index('[ad_say id="line_002"]')
+    last = scenario.index('[ad_say id="line_003"]')
+    assert last < scenario.index("[ad_wait]", last) < scenario.index('[ad_transition cue="cg:line_004"]')
 
 
 def test_scene_entry_cg_uses_one_transition_and_one_music_barrier():

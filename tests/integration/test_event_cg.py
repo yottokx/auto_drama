@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+from unittest.mock import patch
 from zipfile import ZipFile
 
 import pytest
@@ -18,7 +19,8 @@ from tests.integration.test_m3 import complete, production
 from tests.integration.test_project_history import history, restore
 
 
-def setup_story(client, *, enabled=True, max_cgs=1):
+def setup_story(client, *, enabled=True, max_cgs=1, max_variants_per_cg=1, legacy=True):
+    """Existing short-CG cases replay a policy frozen before staging version 2."""
     project, _ = ready(client)
     identifier = project["project"]["id"]
     kinds = (set(M3_KINDS) | set(CG_KINDS)) if enabled else (set(M3_KINDS) - set(CG_KINDS))
@@ -28,10 +30,22 @@ def setup_story(client, *, enabled=True, max_cgs=1):
     report_voice_inventory(client, worker)
     if enabled:
         response = client.put(f"/api/event-cg/projects/{identifier}/policy",
-                              json={"expected_revision": 0, "max_cgs": max_cgs, "max_variants_per_cg": 1})
+                              json={"expected_revision": 0, "max_cgs": max_cgs,
+                                    "max_variants_per_cg": max_variants_per_cg})
         assert response.status_code == 200, response.text
     action(client, project, "approve")
-    complete_and_approve_plan(client, project)
+    if legacy:
+        from services.coordinator.event_cg_settings import EventCgSettings
+
+        freeze = EventCgSettings.freeze
+
+        def legacy_freeze(*args, **kwargs):
+            return freeze(*args, **kwargs).model_copy(update={"planning_version": 1})
+
+        with patch.object(EventCgSettings, "freeze", legacy_freeze):
+            complete_and_approve_plan(client, project)
+    else:
+        complete_and_approve_plan(client, project)
     return identifier, worker
 
 
@@ -487,3 +501,22 @@ def test_approval_requires_current_policy_and_ready_worker_before_starting(tmp_p
         response = client.post(endpoint + "/actions", json=approve)
         assert response.status_code == 200, response.text
         assert production(client, identifier) is not None
+
+
+def test_settings_offer_memory_configurations_and_accept_only_supported_sizes(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        settings = client.get("/api/event-cg/settings").json()
+        assert settings["configuration"] == "vram32"
+        assert [row["id"] for row in settings["configurations"]][:2] == ["vram32", "vram24_fast"]
+        assert all({"label", "peak_vram_gib", "time_ratio", "quality"} <= set(row)
+                   for row in settings["configurations"])
+        assert settings["sizes"] == [{"width": 960, "height": 640}, {"width": 1536, "height": 1024}]
+        chosen = next(row for row in settings["configurations"] if row["id"] == "vram16_8bit")
+        profile = {**settings["profile"], "width": 1536, "height": 1024, "text_encoder_offload": "layers",
+                   **{key: chosen[key] for key in ("reference_resolution", "use_kv_cache",
+                                                   "transformer_storage", "vae_tiling")}}
+        saved = client.put("/api/event-cg/settings", json={"expected_revision": 0, "profile": profile}).json()
+        assert saved["configuration"] == "vram16_8bit" and saved["profile"] == profile
+        assert client.put("/api/event-cg/settings", json={
+            "expected_revision": 1, "profile": {**profile, "height": 640}}).status_code == 422
+        assert client.get("/api/event-cg/settings").json()["profile"]["transformer_storage"] == "fp8"

@@ -17,6 +17,7 @@ from packages.narrative.continuity import narrative_hash
 from .cancellation import GenerationCancelled
 from .causal_runtime import digest
 from .draft_story import _read
+from .execution_settings import enabled, rebind_manifest, semantic_identity
 from .llm import write_json
 from .planning_state import approved_plan_identity, install_plan
 from .script_cast import ScriptOptions
@@ -62,12 +63,18 @@ class ProductionScriptRun(ScriptRun):
         accepted = approved_plan_identity(payload)
         if accepted is not None:
             identity["approved_plan"] = accepted[1]
-        manifest = {**identity, "input_sha256": digest(identity)}
+        if enabled(payload):
+            identity.update(execution_settings_version=1,
+                            execution_settings_revision=payload.get("execution_settings_revision", 0))
+        manifest = {**identity, "input_sha256": digest(
+            semantic_identity(identity) if enabled(payload) else identity)}
         self.inherited = self._history(payload, manifest, number)
         output.mkdir(parents=True, exist_ok=True)
         manifest_path = output / "experiment.json"
         if manifest_path.exists() and _read(manifest_path) != manifest:
-            raise ValueError("Script production input or model configuration changed.")
+            if not enabled(payload):
+                raise ValueError("Script production input or model configuration changed.")
+            manifest = rebind_manifest(output, _read(manifest_path), manifest)
         write_json(manifest_path, manifest)
         journal = output / "draft-state.json"
         if not journal.exists() and number == 1 and accepted is not None:
@@ -135,6 +142,23 @@ class ProductionScriptRun(ScriptRun):
             "storyline_id": payload["storyline_id"], "approval_sha256": digest(payload["approval_snapshot"]),
             "chapter_number": number - 1, "narrative_hash": narrative_hash(previous),
             "generation_identity": manifest["input_sha256"]}
+        if enabled(payload) and not enabled(checkpoint):
+            # Old checkpoints bind model settings into an opaque hash. The
+            # coordinator supplies their recorded source payload for migration;
+            # all source, plan, seed and workflow checks still apply.
+            source = payload.get("script_checkpoint_source")
+            if not isinstance(source, dict):
+                raise ValueError("Legacy script checkpoint requires its recorded source input.")
+            for key in ("storyline_id", "seed", "workflow_policy", "generator_protocol"):
+                if source.get(key) != payload.get(key):
+                    raise ValueError("Script checkpoint source or generation seed was changed.")
+            if (digest(source.get("approval_snapshot")) != digest(payload["approval_snapshot"])
+                    or source.get("workflow_limits", {}) != payload.get("workflow_limits", {})
+                    or ScriptOptions.model_validate(source.get("script_options", {})) !=
+                    ScriptOptions.model_validate(payload.get("script_options", {}))
+                    or approved_plan_identity(source) != approved_plan_identity(payload)):
+                raise ValueError("Script checkpoint source plan or workflow was changed.")
+            expected.pop("generation_identity")
         if "approved_plan" in manifest:
             expected.update(plan_approval_id=manifest["approved_plan"]["approval_id"],
                             plan_sha256=manifest["approved_plan"]["sha256"])
@@ -156,6 +180,17 @@ class ProductionScriptRun(ScriptRun):
             if (not 1 <= note["number"] <= len(chapters)
                     or note["source_sha256"] != chapters[note["number"] - 1]["sha256"]):
                 raise ValueError("Script checkpoint note has no matching source chapter.")
+        if enabled(payload):
+            state = copy.deepcopy(state)
+            cast = state.get("cast_plan")
+            if cast is not None:
+                if (cast.get("input_sha256") != checkpoint.get("generation_identity")
+                        or cast.get("sha256") != digest(cast.get("plan"))
+                        or cast.get("protocol") != manifest["generator_protocol"]):
+                    raise ValueError("Script checkpoint cast provenance was changed.")
+                if cast["input_sha256"] != manifest["input_sha256"]:
+                    cast.setdefault("source_input_sha256", cast["input_sha256"])
+                    cast["input_sha256"] = manifest["input_sha256"]
         return state
 
     @property
@@ -220,6 +255,8 @@ class ProductionScriptRun(ScriptRun):
             "storyline_id": self.storyline_id, "approval_sha256": digest(self.payload["approval_snapshot"]),
             "chapter_number": self.target, "narrative_hash": self.state["chapters"][-1]["narrative_hash"],
             "generation_identity": self.manifest["input_sha256"], "state": state}
+        if enabled(self.payload):
+            value["execution_settings_version"] = 1
         if "approved_plan" in self.manifest:
             value.update(plan_approval_id=self.manifest["approved_plan"]["approval_id"],
                          plan_sha256=self.manifest["approved_plan"]["sha256"])

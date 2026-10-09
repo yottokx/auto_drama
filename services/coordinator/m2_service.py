@@ -517,21 +517,10 @@ class M2Service:
                 value["pendingChanges"] = True
             self._invalidate_relationships(draft)
 
-    def _profile(self) -> dict:
-        from .llm_settings import saved_settings
-        common = saved_settings(self.coordinator)
-        if common is not None:
-            return {**common.profile(), "max_tokens": 3072, "prompt_version": 4}
-        configuration = json.loads((ROOT / "config/m2-generation.json").read_text(encoding="utf-8"))
-        llm = configuration["llm"]
-        return {
-            "provider": "local",
-            "model_id": llm["model_id"],
-            "temperature": llm["temperature"],
-            "max_tokens": llm["max_tokens"],
-            "reasoning_level": llm["reasoning_level"],
-            "prompt_version": 4,
-        }
+    def _profile(self, connection=None) -> dict:
+        from .llm_settings import generation_profile
+
+        return generation_profile(self.coordinator, connection)
 
     def _queue_next(self, connection: sqlite3.Connection, project_id: str, state: dict) -> None:
         if not state["queue"]:
@@ -549,7 +538,7 @@ class M2Service:
             if descriptor["character_id"]
             else None
         )
-        profile = self._profile()
+        profile = self._profile(connection)
         from .tts_settings import VOICE_PURPOSES, TTSService
 
         tts_profile = (TTSService(self.coordinator).profile(connection)
@@ -583,6 +572,10 @@ class M2Service:
             "relationship_inputs": draft["relationshipInputs"],
             "relationships_result": draft["relationships"]["result"],
         }
+        from .llm_settings import execution_settings
+
+        execution = execution_settings(self.coordinator, connection, payload,
+                                       kind=descriptor["kind"], profile=profile)
         if descriptor["kind"] == "m2_image":
             # Freeze the whole portrait stage on its first job. Every following
             # image (and retries/restarts) shares the same converter cache, so
@@ -629,7 +622,7 @@ class M2Service:
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "profile": profile,
+                        **execution,
                         **({"tts_profile": tts_profile} if tts_profile is not None else {}),
                         "base_revision": draft["revision"],
                         "seed": descriptor["seed"],

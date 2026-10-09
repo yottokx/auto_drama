@@ -30,10 +30,10 @@ ENGINE_STYLES = (
     "libs/alertify/alertify.default.css", "libs/remodal/remodal.css",
     "libs/remodal/remodal-default-theme.css", "libs/textillate/assets/animate.css",
 )
+# The viewing screen owns every key and pointer event; the engine's own roles stay unbound.
 KEY_CONFIG = b'''window.__tyrano_key_config = {
-  system_key_event: "true", system_mouse_event: "false",
-  key: {Enter: "next", Escape: "cancel -a", a: "auto"},
-  mouse: {}, gesture: {}, gamepad: {button: {}, stick: {}}
+  system_key_event: "false", system_mouse_event: "false",
+  key: {}, mouse: {}, gesture: {}, gamepad: {button: {}, stick: {}}
 };
 '''
 
@@ -43,7 +43,6 @@ KEY_CONFIG = b'''window.__tyrano_key_config = {
 _DIRECTORY = Path(__file__).parent
 _PLAYER_ASSETS = {
     "data/others/auto_drama_player.js": (_DIRECTORY / "player.js").read_text("utf-8").encode(),
-    "data/others/auto_drama_playback.js": (_DIRECTORY / "playback.js").read_text("utf-8").encode(),
     "data/others/auto_drama_music.js": (_DIRECTORY / "music.js").read_text("utf-8").encode(),
     "data/others/auto_drama_transitions.js": (_DIRECTORY / "transitions.js").read_text("utf-8").encode(),
     "data/others/auto_drama_player.css": (_DIRECTORY / "player.css").read_text("utf-8").encode(),
@@ -55,7 +54,7 @@ def player_config(script_bytes: bytes) -> bytes:
     # cross-revision saves from resuming a different generated chapter.
     # Saved engine state includes portrait coordinates. A presentation revision
     # must not restore coordinates from an earlier portrait layout.
-    fingerprint = hashlib.sha256(b"portrait-layout-v3-player-m4\0" + script_bytes).hexdigest()
+    fingerprint = hashlib.sha256(b"portrait-layout-v3-player-m5\0" + script_bytes).hexdigest()
     window, padding = MESSAGE_WINDOW, MESSAGE_WINDOW["padding"]
     values = {
         "global.config_version": "5.00", "System.title": "AIオートドラマ 鑑賞",
@@ -75,7 +74,7 @@ def player_config(script_bytes: bytes) -> bytes:
         "configSaveOverwrite": "false", "maxBackLogNum": "500", "autoRecordLabel": "false",
         "unReadTextSkip": "false", "alreadyReadTextColor": "0xffffff",
         "numCharacterLayers": "3", "numMessageLayers": "2",
-        "initialMessageLayerVisible": "true", "marginL": str(padding["left"]), "marginT": str(padding["top"]),
+        "initialMessageLayerVisible": "false", "marginL": str(padding["left"]), "marginT": str(padding["top"]),
         "marginR": str(padding["right"]), "marginB": str(padding["bottom"]), "ml": str(window["left"]),
         "mt": str(window["top"]), "mw": str(window["width"]), "mh": str(window["height"]),
         "debugMenu.visible": "false", "frameColor": "0x" + window["background"][1:],
@@ -93,44 +92,33 @@ def player_config(script_bytes: bytes) -> bytes:
     ) + "\n").encode("utf-8")
 
 
+# Earlier screens were served under these same paths as immutable for a year. A revision
+# in the URL keeps a browser from pairing this launcher with a cached older script.
+_REVISION = hashlib.sha256(KEY_CONFIG + b"".join(
+    _PLAYER_ASSETS[name] for name in sorted(_PLAYER_ASSETS))).hexdigest()[:12]
+
+
 def player_html() -> bytes:
     dependencies = [f'<link rel="stylesheet" href="./tyrano/{path}">' for path in ENGINE_STYLES]
-    dependencies.append('<script src="./data/system/KeyConfig.js"></script>')
+    dependencies.append(f'<script src="./data/system/KeyConfig.js?v={_REVISION}"></script>')
     dependencies.extend(f'<script src="./tyrano/{path}"></script>' for path in ENGINE_SCRIPTS)
+    # The viewing screen builds its own window, menu, backlog and settings; only the
+    # engine's containers are declared here.
     return ('''<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>AIオートドラマ 鑑賞</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@500&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
 ''' + "\n".join(dependencies) + '''
-<link rel="stylesheet" href="./data/others/auto_drama_player.css">
-<script defer src="./data/others/auto_drama_playback.js"></script>
-<script defer src="./data/others/auto_drama_music.js"></script>
-<script defer src="./data/others/auto_drama_transitions.js"></script>
-<script defer src="./data/others/auto_drama_player.js"></script></head>
+<link rel="stylesheet" href="./data/others/auto_drama_player.css?v=''' + _REVISION + '''">
+<script defer src="./data/others/auto_drama_music.js?v=''' + _REVISION + '''"></script>
+<script defer src="./data/others/auto_drama_transitions.js?v=''' + _REVISION + '''"></script>
+<script defer src="./data/others/auto_drama_player.js?v=''' + _REVISION + '''"></script></head>
 <body>
-<nav id="ad-toolbar" aria-label="鑑賞操作">
-<button id="ad-auto" aria-pressed="false" disabled>オート</button>
-<button id="ad-save" disabled>途中保存</button><button id="ad-load" disabled>続きから</button>
-<button id="ad-backlog" disabled>バックログ</button>
-<label>文字 <select id="ad-font" disabled><option value="20">小</option>
-<option value="24" selected>標準</option><option value="28">大</option></select></label>
-<label>音声 <input id="ad-volume" type="range" min="0" max="100" value="100" disabled></label>
-<label>BGM <input id="ad-bgm-volume" type="range" min="0" max="100" value="100" disabled></label>
-<span id="ad-status" role="status"></span></nav>
 <div id="tyrano_base" class="tyrano_base" style="overflow:hidden"></div>
 <div id="vchat_base" class="vchat_base" style="overflow:hidden"></div>
-<section id="ad-start" aria-label="再生開始"><div><h1>鑑賞をはじめる</h1>
-<p>音声が流れます。メッセージ欄のクリックまたは Enter で全文表示、もう一度で次へ進みます。</p>
-<button id="ad-start-button" disabled>読み込み中…</button>
-<button id="ad-resume-button" hidden disabled>保存した位置から再開</button>
-<p>「途中保存」はこのブラウザーに保存します。</p></div></section>
-<section id="ad-chapter-end" aria-label="章の終了" hidden>
-<p id="ad-next-status" role="status"></p>
-<button id="ad-next-button" hidden>次の章へ進む</button>
-</section>
-<div id="ad-chapter-transition" aria-hidden="true" hidden></div>
-<dialog id="ad-log" aria-labelledby="ad-log-title"><button id="ad-log-close">閉じる</button>
-<h2 id="ad-log-title">バックログ</h2><p>表示済みの本文を確認し、台詞を聴き直せます。閉じると再開します。</p><div id="ad-log-items"></div></dialog>
 <div class="remodal-bg"></div><div class="remodal" data-remodal-id="modal"
 data-remodal-options="hashTracking:false,closeOnEscape:false,closeOnOutsideClick:false">
 <h1 class="remodal_title"></h1><p class="remodal_txt"></p>

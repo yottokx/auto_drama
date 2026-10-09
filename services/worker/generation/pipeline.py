@@ -17,6 +17,8 @@ from . import image_session, llm_session, music_session, voice_session
 from .brief_requirements import _original_inputs, applied_instructions, ensure_brief_requirements
 from .cancellation import check_cancelled
 from .context_budget import OutputTokenPolicy
+from .execution_settings import bind_job_request
+from .execution_settings import enabled as execution_settings_enabled
 from .llm import LocalLLM, write_json
 from .processes import gpu_lock, run_process
 from .schemas import (
@@ -1190,32 +1192,37 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
         config = select_config(config, payload, ROOT)
     work = Path(work_dir).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {"kind": kind, "payload": payload},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    request_path = work / "job-request.json"
-    if request_path.exists():
-        previous = json.loads(request_path.read_text(encoding="utf-8"))
-        if previous.get("fingerprint") != fingerprint:
-            raise ValueError("Generation work directory belongs to another input snapshot.")
-        # A local profile edit between attempts must not silently change an
-        # existing job's inference parameters. New jobs take the latest config.
-        config = previous.get("generation_config", config)
+    execution_history = []
+    if execution_settings_enabled(payload):
+        config, fingerprint, execution_history = bind_job_request(
+            work, kind, payload, config, job.get("retry_generation", 0))
     else:
-        write_json(
-            request_path,
-            {
-                "fingerprint": fingerprint,
-                "kind": kind,
-                "payload": payload,
-                "generation_config": config,
-            },
-        )
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {"kind": kind, "payload": payload},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        request_path = work / "job-request.json"
+        if request_path.exists():
+            previous = json.loads(request_path.read_text(encoding="utf-8"))
+            if previous.get("fingerprint") != fingerprint:
+                raise ValueError("Generation work directory belongs to another input snapshot.")
+            # Automatic retries keep the original snapshot; explicit retries
+            # opt into execution_settings above without changing legacy jobs.
+            config = previous.get("generation_config", config)
+        else:
+            write_json(
+                request_path,
+                {
+                    "fingerprint": fingerprint,
+                    "kind": kind,
+                    "payload": payload,
+                    "generation_config": config,
+                },
+            )
     cache = work / "result.zip"
     if cache.is_file():
         return cache.read_bytes()
@@ -1233,6 +1240,8 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
         if voice_session.current_session() is not None and kind in voice_session.VOICE_KINDS
         else "serialized; owned subprocess exits release contexts",
     }
+    if execution_history:
+        provenance["execution_settings_history"] = execution_history
     prepared = prepare_portrait_prompt(payload, work, config) if kind == "m2_image" else None
     if prepared is not None:
         prompt, trace, provenance["llm"] = prepared["prompt"], prepared["trace"], prepared["llm"]

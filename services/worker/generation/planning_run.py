@@ -13,6 +13,7 @@ from packages.contracts.script import Contract
 from .cancellation import GenerationCancelled, check_cancelled
 from .causal_runtime import digest
 from .draft_story import _read
+from .execution_settings import enabled, rebind_manifest, semantic_identity
 from .llm import write_json
 from .planning_state import install_plan
 from .script_cast import CastConnection, ScriptOptions
@@ -48,11 +49,17 @@ class CommonPlanRun(ScriptRun):
             self._validate_revision_request(payload, self.source)
             identity.update(source_plan_sha256=digest(self.source), revision={key: payload.get(key)
                             for key in ("target", "character_id", "chapter_number", "instruction")})
-        manifest = {**identity, "input_sha256": digest(identity)}
+        if enabled(payload):
+            identity.update(execution_settings_version=1,
+                            execution_settings_revision=payload.get("execution_settings_revision", 0))
+        manifest = {**identity, "input_sha256": digest(
+            semantic_identity(identity) if enabled(payload) else identity)}
         output.mkdir(parents=True, exist_ok=True)
         manifest_path = output / "experiment.json"
         if manifest_path.exists() and _read(manifest_path) != manifest:
-            raise ValueError("Common planning input or model configuration changed.")
+            if not enabled(payload):
+                raise ValueError("Common planning input or model configuration changed.")
+            manifest = rebind_manifest(output, _read(manifest_path), manifest)
         write_json(manifest_path, manifest)
         journal = output / "draft-state.json"
         if self.source is not None and not journal.exists():

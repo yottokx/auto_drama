@@ -469,7 +469,7 @@ def test_failed_retry_same_seed_and_new_intent_supersedes_failed_history(tmp_pat
         assert detail(client, project)["jobs"][0]["status"] == "failed"
         assert client.post(f"/api/jobs/{job['id']}/retry").status_code == 200
         retry = claim(client, worker_id)
-        assert retry["payload"] == job["payload"]
+        assert retry["payload"] == {**job["payload"], "execution_settings_revision": 1}
         client.post(
             f"/api/jobs/{job['id']}/fail",
             json={"worker_id": worker_id, "lease_id": retry["lease_id"], "error": "failed again"},

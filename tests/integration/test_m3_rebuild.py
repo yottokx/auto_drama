@@ -64,8 +64,10 @@ def test_rebuild_preserves_old_build_content_and_jobs_and_is_idempotent(tmp_path
             assert left.namelist() == right.namelist()
             changed = {name for name in left.namelist() if left.read(name) != right.read(name)}
             assert changed == {"manifest.json", "data/others/auto_drama_player.css"}
+            # The stored ZIP keeps the screen it was published with, but the live route
+            # serves every chapter with the running code's screen.
             assert client.get(old["player_url"] + "data/others/auto_drama_player.css").content == (
-                left.read("data/others/auto_drama_player.css")
+                right.read("data/others/auto_drama_player.css")
             )
             assert client.get(new["player_url"] + "data/others/auto_drama_player.css").content == (
                 right.read("data/others/auto_drama_player.css")

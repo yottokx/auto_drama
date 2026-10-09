@@ -163,6 +163,19 @@ def _story_context(narrative: dict, approval: dict | None, sources: dict,
             "truncated": list(dict.fromkeys(truncated))}
 
 
+def _cast_appearance(narrative: dict, approval: dict | None) -> dict:
+    """Approved looks by character ID, kept beside the story context for image experiments."""
+    rows = list((approval or {}).get("characters") or [])
+    rows += list(narrative.get("supporting_characters") or [])
+    result = {}
+    for row in rows:
+        character = row.get("result", row) if isinstance(row, dict) else None
+        if (isinstance(character, dict) and character.get("id")
+                and isinstance(character.get("appearance"), str)):
+            result.setdefault(str(character["id"]), character["appearance"][:600])
+    return result
+
+
 def fetch_bytes(url: str, timeout: float = 20) -> bytes:
     try:
         with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=timeout) as response:
@@ -364,6 +377,7 @@ class CoordinatorCatalog:
                     "published_build_id": (row.get("build") or {}).get("id"),
                     "history_frozen": bool(production.get("history_frozen")),
                     "story_context": story_context,
+                    "cast_appearance": _cast_appearance(narrative, chapter_approval),
                 }
                 preview = "\n".join([
                     f"場所: {place} / {location.get('time_of_day', '')}",

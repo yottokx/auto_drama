@@ -377,6 +377,11 @@ class AdjustmentService:
             "profile": settings.get("profile", {}), "tts_profile": settings.get("tts_profile"),
             "adjustment": {"draft_id": draft["id"], "revision": draft["revision"], "purpose": purpose,
                            "character_id": cid, "apply_id": apply_id}, **(material or {})}
+        from .llm_settings import execution_settings
+
+        settings.pop("execution_settings_version", None)
+        settings.pop("execution_settings_revision", None)
+        settings.update(execution_settings(self.coordinator, connection, payload, kind=kind))
         project = required(connection, "project", root["project_id"])
         connection.execute("INSERT INTO generation_run(id,project_id,settings_version,story_revision_id,policy,status,created_at) "
             "VALUES (?,?,?,?,?,'pending',?)", (run_id, root["project_id"], project["settings_version"],
@@ -576,21 +581,42 @@ class AdjustmentService:
 
     def _refresh_player(self, connection, chapter, build):
         from packages.contracts import Script
+        from packages.narrative.staging import normalize_directions
         from packages.tyrano_export import compile_bundle
 
+        from .service import encode_json
+
         script = Script.model_validate_json(self.store.read(required(connection, "artifact", build["script_artifact_id"])))
+        source_directions = script.model_dump(mode="json")["directions"]
+        directions, report = normalize_directions(source_directions)
+        normalized = directions != source_directions
+        if normalized:
+            script = Script.model_validate({**script.model_dump(mode="json"), "directions": directions})
         assets = {asset.id: self.store.read(required(connection, "artifact", asset.artifact_id)) for asset in script.assets}
         original = self.store.read(required(connection, "artifact", build["export_artifact_id"]))
         with zipfile.ZipFile(io.BytesIO(original)) as archive:
             documents = {name: archive.read(name) for name in archive.namelist()
-                         if name in {"approval.json", "narrative.json", "chapter-manifest.json"}
+                         if name in {"approval.json", "narrative.json", "chapter-manifest.json", "staging-normalization.json"}
                          or name.startswith("sources/")}
+        updated = dict(build)
+        if normalized:
+            audit = json.loads(documents["staging-normalization.json"]) if "staging-normalization.json" in documents else {
+                "schema_version": 1, "reports": [],
+            }
+            audit = {**audit, "reports": [*audit["reports"], report]}
+            documents["staging-normalization.json"] = encode_json(audit)
+            validation = json.loads(build["validation"])
+            updated["validation"] = json.dumps({**validation, "staging_normalization": audit})
         bundle = compile_bundle(script, assets, documents=documents)
         if bundle == original:
             return self._clone_build(connection, build)
+        if normalized:
+            record = self.m3._artifact(connection, chapter, script.id, "script", "script.json",
+                                       encode_json(script.model_dump(mode="json")))
+            updated["script_artifact_id"] = record["id"]
         record = self.m3._artifact(connection, chapter, "export-" + chapter["id"],
                                   "tyrano_export", "tyrano-source.zip", bundle)
-        return self._clone_build(connection, {**build, "export_artifact_id": record["id"]})
+        return self._clone_build(connection, {**updated, "export_artifact_id": record["id"]})
 
     def _clone_build(self, connection, build):
         value = dict(build)

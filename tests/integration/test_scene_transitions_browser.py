@@ -130,33 +130,36 @@ def test_scene_continuity_cold_preload_and_one_advance_in_real_browser(transitio
         })();""")
         try:
             page.goto(url)
-            page.locator("#ad-start-button").click(timeout=20000)
+            page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=20000)
+            page.locator("#adn-begin").click()
+            state = "window.AutoDramaPlayer.state()"
 
             def stable_line(identifier):
-                page.wait_for_function("""id => {
-                  const k = window.TYRANO?.kag;
-                  return k?.ftag?.array_tag[k.ftag.current_order_index]?.name === 'p' &&
-                    !k.stat.is_adding_text && !k.tmp.auto_drama_transition &&
-                    document.querySelector('.message_inner')?.textContent.includes(id);
-                }""", arg=identifier, timeout=20000)
+                page.wait_for_function(
+                    "id => { const s = " + state + "; return s.line === id && s.tag === 'wait' && !s.busy; }",
+                    arg=identifier, timeout=20000)
+                assert page.locator("#adn-body").text_content().startswith(identifier)
 
             stable_line("line_001")
             page.evaluate("window.testPortrait = document.querySelector('.tyrano_chara')")
             first = page.evaluate("window.testMusic.snapshot()")
-            page.locator(".layer_event_click").click(force=True)
+            page.keyboard.press("Enter")
             stable_line("line_002")
             second = page.evaluate("window.testMusic.snapshot()")
             assert second["cue_id"] == first["cue_id"] == "music_1"
             assert second["position_seconds"] > first["position_seconds"]
             assert page.evaluate("window.testPortrait === document.querySelector('.tyrano_chara')")
-            page.locator(".layer_event_click").click(force=True)
-            page.wait_for_function("window.TYRANO.kag.tmp.auto_drama_transition === true")
+            page.keyboard.press("Enter")
+            page.wait_for_function(state + ".busy && " + state + ".line === 'line_003'")
             while_loading = page.evaluate("window.testMusic.snapshot()")
             assert while_loading["cue_id"] == "music_1", "Cold preload must retain old music"
             assert while_loading["position_seconds"] >= second["position_seconds"]
-            page.wait_for_function("document.querySelector('#ad-save').disabled")
-            # A second click while waiting must not skip the next line.
+            # Clicks, saves and the backlog are ignored while the scene is changing.
             page.keyboard.press("Enter")
+            page.locator("#adn-m-save").click(force=True)
+            page.keyboard.press("ArrowUp")
+            assert not page.evaluate(state + ".log")
+            assert page.evaluate("document.getElementById('adn-toast').textContent") == ""
             release_music.set()
             page.wait_for_selector(".ad-stage-transition")
             stable_line("line_003")
@@ -166,14 +169,17 @@ def test_scene_continuity_cold_preload_and_one_advance_in_real_browser(transitio
             assert page.locator(".ad-stage-transition").count() == 0
             assert page.evaluate("window.TYRANO.kag.layer.getLayer('base','fore')[0].style.backgroundImage.includes('second_station.png')")
             assert page.locator(".tyrano_chara").count() == 1
-            page.locator("#ad-save").click()
-            page.wait_for_function("document.querySelector('#ad-status').textContent.includes('保存しました')")
-            page.locator(".layer_event_click").click(force=True)
+            page.locator("#adn-m-save").click()
+            page.wait_for_function("document.getElementById('adn-toast').textContent === 'セーブしました'")
+            page.keyboard.press("Enter")
             stable_line("line_004")
             assert page.evaluate("window.testMusic.snapshot()") is None
-            page.locator("#ad-load").click()
+            # Loading re-enters line_003 from the scene before it, replaying its transition and music.
+            page.locator("#adn-m-load").click()
             stable_line("line_003")
             page.wait_for_function("window.testMusic.snapshot()?.cue_id === 'music_3'")
+            assert page.evaluate("window.TYRANO.kag.layer.getLayer('base','fore')[0].style.backgroundImage.includes('second_station.png')")
+            assert page.locator(".tyrano_chara").count() == 1
             assert not errors, errors
         finally:
             browser.close()

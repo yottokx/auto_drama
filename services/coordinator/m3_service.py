@@ -31,7 +31,6 @@ from packages.tyrano_export import compile_bundle
 from services.worker.generation.workflow_version import generator_protocol
 
 from .m2_bundle import validate_png, validate_wav
-from .m2_service import ROOT as GENERATION_ROOT
 from .m2_service import M2Service
 from .m3_bundle import validate_background, validate_bundle
 from .m4_service import ChapterProduction
@@ -46,6 +45,21 @@ def stable_id(prefix: str, value: str) -> str:
 def _checkpoint_digest(value: dict) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def script_checkpoint_source(connection, payload):
+    """Supply trusted semantic inputs for checkpoints made before live settings."""
+    predecessor = payload.get("previous_narrative_artifact_id")
+    if not predecessor:
+        return None
+    artifact = required(connection, "artifact", predecessor)
+    if not artifact["source_job_id"]:
+        return None
+    source = json.loads(required(connection, "job", artifact["source_job_id"])["payload"])
+    return {key: source[key] for key in (
+        "approval_snapshot", "storyline_id", "seed", "workflow_limits", "script_options",
+        "story_workflow_version", "workflow_policy", "generator_protocol", "approved_plan",
+    ) if key in source}
 
 
 def _validate_script_checkpoint(payload, narrative, provenance):
@@ -255,15 +269,10 @@ class M3Service(ChapterProduction):
         ).fetchone()
         approved_plan = self._approved_plan(connection, production)
         plan_generation = approved_plan.get("generation", {}) if approved_plan else {}
-        profile = (
-            json.loads(profile_job["settings_snapshot"])["profile"]
-            if profile_job
-            else plan_generation.get("profile", M2Service(self.coordinator)._profile())
-        )
+        profile = M2Service(self.coordinator)._profile(connection)
         from .tts_settings import TTSService
 
-        # The first narrative fixes both voice models for the entire production,
-        # including asset jobs and every later chapter.
+        # Voice models stay fixed for voice continuity across all chapters.
         if profile_job:
             tts_profile = json.loads(profile_job["settings_snapshot"]).get("tts_profile")
         else:
@@ -280,15 +289,6 @@ class M3Service(ChapterProduction):
             ) if key in pinned}
             if pinned.get("workflow_policy") == "script_continuation_v1":
                 workflow["seed"] = pinned["seed"]
-        if kind == "m3_narrative" and descriptor.get("workflow_policy") == "script_continuation_v1":
-            # The generation route owns its per-purpose output budget. M2's
-            # uniform response limit would otherwise replace every script budget.
-            profile = {key: value for key, value in profile.items()
-                       if key not in {"max_tokens", "prompt_version"}}
-            settings = json.loads((GENERATION_ROOT / "config/m2-generation.json").read_text(
-                encoding="utf-8"))["llm"]
-            if not profile.get("common_settings_version"):
-                profile.update(reasoning_level="none", context_size=settings.get("context_size", 16384))
         payload = {
             "schema_version": 1,
             "production_id": production["id"],
@@ -305,6 +305,13 @@ class M3Service(ChapterProduction):
         if approved_plan:
             payload["approved_plan"] = {key: approved_plan[key] for key in ("content", "approval_id", "sha256")}
             payload["approved_plan"]["planning_protocol"] = plan_generation["planning_protocol"]
+        from .llm_settings import execution_settings
+
+        execution = execution_settings(self.coordinator, connection, payload, kind=kind, profile=profile)
+        if kind == "m3_narrative" and payload.get("workflow_policy") == "script_continuation_v1":
+            source = script_checkpoint_source(connection, payload)
+            if source is not None:
+                payload["script_checkpoint_source"] = source
         if kind == "m3_event_cg":
             payload["input_sha256"] = image_input_sha256(payload)
         if kind == "m3_image":
@@ -344,7 +351,7 @@ class M3Service(ChapterProduction):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "profile": profile,
+                        **execution,
                         **({"tts_profile": tts_profile} if tts_profile is not None else {}),
                         "approval_artifact_id": production["approval_artifact_id"],
                         "seed": payload["seed"],
@@ -1099,10 +1106,12 @@ class M3Service(ChapterProduction):
             references[(item["kind"], item["target_id"])] = reference
             content[identifier] = data
         portrait_record, portrait_settings = self._portrait_settings(connection, production)
+        staging_reports = []
         script = narrative_to_script(
             narrative, snapshot, references, script_id="chapter-" + production["id"],
             portrait_settings=portrait_settings,
             omitted_portraits=omitted_portraits,
+            normalization_reports=staging_reports,
         )
         from .music_service import add_to_script
 
@@ -1135,6 +1144,9 @@ class M3Service(ChapterProduction):
             "approval.json": encode_json(public_approval),
             "narrative.json": encode_json(narrative.model_dump(mode="json")),
         }
+        if staging_reports:
+            documents["staging-normalization.json"] = encode_json({
+                "schema_version": 1, "reports": staging_reports})
         from packages.narrative.validation import story_state_hash
 
         continuity = {
@@ -1193,6 +1205,8 @@ class M3Service(ChapterProduction):
         }
         if narrative.workflow_policy == "script_continuation_v1":
             validation["content_review_status"] = "not_evaluated"
+        if staging_reports:
+            validation["staging_normalization"] = {"schema_version": 1, "reports": staging_reports}
         if portrait_record:
             validation["portrait_settings_artifact_id"] = portrait_record["id"]
         identifier = uuid4().hex

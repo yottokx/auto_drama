@@ -48,7 +48,7 @@ def test_chapter_end_or_partial_stop_captures_one_bounded_fade_tail(tmp_path, mo
             assert event == "click"
 
         def evaluate(self, _expression):
-            assert self.selector == "#ad-chapter-end"
+            assert self.selector == "#adn-end"
             return ending == "chapter" and probe.now >= .55
 
     class Page:
@@ -90,6 +90,9 @@ def test_chapter_end_or_partial_stop_captures_one_bounded_fade_tail(tmp_path, mo
             probe.now += milliseconds / 1000
 
     class Context:
+        def add_init_script(self, script):
+            probe.events.append(("settings", script))
+
         def new_page(self):
             return Page()
 
@@ -120,8 +123,11 @@ def test_chapter_end_or_partial_stop_captures_one_bounded_fade_tail(tmp_path, mo
 
     monkeypatch.setattr(recorder.subprocess, "Popen", Encoder)
     monkeypatch.setattr(recorder, "encode", lambda command, _log: recorder.Path(command[-1]).write_bytes(b"mp4"))
-    args = SimpleNamespace(width=1280, height=720, fps=10, ffmpeg="fake-ffmpeg", output_dir=tmp_path,
-                           max_seconds=.8 if ending == "limit" else 10, keep_raw=True)
+    args = recorder.parser().parse_args(["--url", "http://localhost/player/fixture/", "--fps", "10",
+                                         "--ffmpeg", "fake-ffmpeg", "--output-dir", str(tmp_path),
+                                         "--max-seconds", ".8" if ending == "limit" else "10", "--keep-raw",
+                                         "--text-size", "large", "--typeface", "mincho", "--auto-wait", "2.5",
+                                         "--bgm-volume", "40"])
     if ending == "stop":
         (tmp_path / "stop.request").touch()
     states = []
@@ -130,9 +136,10 @@ def test_chapter_end_or_partial_stop_captures_one_bounded_fade_tail(tmp_path, mo
                                          args, lambda **state: states.append(state))
         assert result.name == "chapter.mp4"
     else:
-        with pytest.raises(RuntimeError, match="途中の録画"):
+        with pytest.raises(RuntimeError, match="途中の録画") as raised:
             recorder.record_chapter(Browser(), "http://localhost/player/fixture/", tmp_path / "chapter",
                                     args, lambda **state: states.append(state))
+        outcome = raised.value
         assert (tmp_path / "chapter/partial.mp4").exists()
     assert len(probe.fade_at) == 1
     # Audio remains active while frame capture advances through the ramp.
@@ -142,3 +149,13 @@ def test_chapter_end_or_partial_stop_captures_one_bounded_fade_tail(tmp_path, mo
     assert probe.fade_at[0] - probe.started_at + .4 <= recorded <= probe.fade_at[0] - probe.started_at + .51
     assert any(state.get("finishing") and state["fade_tail_seconds"] == .4 for state in states)
     assert "audio-finished" in probe.events and probe.events[-1] == "context-closed"
+    # The chosen viewing settings are seeded before the page's own scripts run.
+    seeded = next(event[1] for event in probe.events if isinstance(event, tuple))
+    assert '"adn_settings_v1"' in seeded
+    assert recorder.viewing_settings(args) == {"size": 28, "face": "mincho", "speed": 62, "wait": 25,
+                                               "voice": 100, "bgm": 40, "alpha": 80}
+    assert seeded == recorder.settings_script(args)
+    assert recorder.json.dumps(recorder.json.dumps(recorder.viewing_settings(args))) in seeded
+    # Only an explicit stop is reported as a stop; the time limit stays a failure.
+    if ending != "chapter":
+        assert isinstance(outcome, recorder.RecordingStopped) is (ending == "stop")
