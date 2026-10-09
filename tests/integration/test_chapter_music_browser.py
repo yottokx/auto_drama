@@ -126,22 +126,24 @@ def observe_music(page):
     })();""")
 
 
+STATE = "window.AutoDramaPlayer.state()"
+
+
 def reach_chapter_end(page, url):
     page.goto(url)
-    page.locator("#ad-start-button").click(timeout=20000)
-    for identifier in ("first_line_001", "first_line_002"):
-        page.wait_for_function("""id => {
-          const k = window.TYRANO?.kag;
-          return k?.ftag?.array_tag[k.ftag.current_order_index]?.name === 'p' &&
-            !k.stat.is_adding_text && !k.tmp.auto_drama_transition &&
-            document.querySelector('.message_inner')?.textContent.includes(id);
-        }""", arg=identifier, timeout=15000)
+    page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=20000)
+    page.locator("#adn-begin").click()
+    for identifier in ("line_001", "line_002"):
+        page.wait_for_function(
+            "id => { const s = " + STATE + "; return s.line === id && s.tag === 'wait' && !s.busy; }",
+            arg=identifier, timeout=15000)
+        assert page.locator("#adn-body").text_content().startswith("first_" + identifier)
         page.keyboard.press("Enter")
-    page.wait_for_function("!document.querySelector('#ad-chapter-end').hidden")
-    page.locator("#ad-next-button").wait_for(state="visible")
+    page.wait_for_function(STATE + ".ended")
+    page.locator("#adn-next").wait_for(state="visible")
 
 
-def test_end_music_is_saved_and_restored_then_fades_only_on_next_click(chapter_site, tmp_path):
+def test_end_music_keeps_playing_then_fades_only_on_next_click(chapter_site, tmp_path):
     from playwright.sync_api import sync_playwright
 
     url, _state, _requests = chapter_site
@@ -155,51 +157,40 @@ def test_end_music_is_saved_and_restored_then_fades_only_on_next_click(chapter_s
             reach_chapter_end(page, url)
             before = page.evaluate("window.testMusic.snapshot()")
             assert before and before["cue_id"] == "music_first" and not before["paused"]
+            # The backlog stays available at the chapter end and never interrupts the music.
+            page.locator("#adn-m-log").click()
+            page.wait_for_function(STATE + ".log")
             page.wait_for_timeout(300)
-            after = page.evaluate("window.testMusic.snapshot()")
-            assert after["position_seconds"] != before["position_seconds"]
-            page.locator("#ad-backlog").click()
-            assert page.evaluate("window.testMusic.snapshot().paused")
-            page.locator("#ad-log-close").click()
-            page.wait_for_function("window.testMusic.snapshot()?.paused === false")
-            page.locator("#ad-save").click()
-            page.reload()
-            page.locator("#ad-resume-button").click(timeout=20000)
-            page.wait_for_function("!document.querySelector('#ad-chapter-end').hidden && window.testMusic.snapshot()?.paused === false")
-            page.locator("#ad-next-button").wait_for(state="visible")
-            assert page.evaluate("window.testMusic.snapshot().cue_id") == "music_first"
+            during = page.evaluate("window.testMusic.snapshot()")
+            assert not during["paused"] and during["position_seconds"] != before["position_seconds"]
+            page.locator("#adn-log-close").click()
+            page.wait_for_function("!" + STATE + ".log")
             page.screenshot(path=str(tmp_path / "chapter-end-music.png"))
-            # Native UI click is synchronous here, allowing observation during
-            # the brief fade before navigation commits.
+            # Two synchronous clicks: the second must not start another transition.
             clicked_at = time.monotonic()
             immediate = page.evaluate("""() => {
-              document.querySelector('#ad-next-button').click();
-              document.querySelector('#ad-next-button').click();
-              return {overlay:!document.querySelector('#ad-chapter-transition').hidden,
-                busy:!!window.TYRANO.kag.tmp.auto_drama_transition,
-                disabled:document.querySelector('#ad-next-button').disabled,
-                pathname:location.pathname};
+              document.querySelector('#adn-next').click();
+              document.querySelector('#adn-next').click();
+              return {disabled: document.querySelector('#adn-next').disabled, pathname: location.pathname};
             }""")
-            assert immediate == {"overlay": True, "busy": True, "disabled": True, "pathname": "/player/first/"}
+            assert immediate == {"disabled": True, "pathname": "/player/first/"}
             page.wait_for_url("**/player/second/", timeout=15000)
             assert time.monotonic() - clicked_at >= 0.35, "Navigation must wait for the audible fade"
             # A chapter entered from Next may start itself; if the browser denies
             # autoplay its normal explicit start control remains usable.
-            page.wait_for_function("document.querySelector('#ad-start').hidden || document.querySelector('#ad-start-button')?.disabled === false")
-            # Auto-entry may hide Start between readiness and a scheduled click.
-            # The same synchronous owned handler is idempotent in either case.
+            page.wait_for_function(
+                "window.AutoDramaPlayer?.state().started || document.getElementById('adn-begin')?.disabled === false")
             page.evaluate("""() => {
-              if (!document.querySelector('#ad-start').hidden && !document.querySelector('#ad-start-button').disabled)
-                document.querySelector('#ad-start-button').click();
+              if (!window.AutoDramaPlayer.state().started) document.getElementById('adn-begin').click();
             }""")
             page.wait_for_function("window.testMusic.snapshot()?.cue_id === 'music_second'")
+            assert page.locator("#adn-chapter").text_content() == "第 2 章"
+            # Returning offers the furthest position of the first chapter again.
             page.go_back()
-            page.wait_for_function("window.testMusic")
-            if page.locator("#ad-start").is_visible():
-                page.locator("#ad-resume-button").click(timeout=20000)
-            page.wait_for_function("!document.querySelector('#ad-chapter-end').hidden && window.testMusic.snapshot()?.paused === false")
-            assert page.evaluate("window.testMusic.snapshot().cue_id") == "music_first"
-            assert page.locator("#ad-chapter-transition").is_hidden()
+            page.wait_for_function("document.getElementById('adn-begin')?.disabled === false", timeout=20000)
+            page.locator("#adn-resume").click()
+            page.wait_for_function(STATE + ".line === 'line_002' && window.testMusic.snapshot()?.cue_id === 'music_first'")
+            assert not page.evaluate("window.testMusic.snapshot().paused")
             assert not errors, errors
         finally:
             browser.close()
@@ -218,12 +209,18 @@ def test_failed_next_chapter_restores_visible_waiting_scene_and_music(chapter_si
         try:
             reach_chapter_end(page, url)
             state["fail_next"] = True
-            page.locator("#ad-next-button").click()
-            page.wait_for_function("document.querySelector('#ad-next-status').textContent.includes('進めませんでした')")
-            page.wait_for_function("window.testMusic.snapshot()?.paused === false && !window.TYRANO.kag.tmp.auto_drama_transition")
+            page.locator("#adn-next").click()
+            page.wait_for_function("document.querySelector('#adn-end-note').textContent.includes('進めませんでした')")
+            page.wait_for_function(
+                "window.testMusic.snapshot()?.paused === false && "
+                "document.getElementById('adn-cover').style.opacity === '0' && "
+                "!document.getElementById('adn-next').disabled")
             assert page.url == url
             assert page.evaluate("window.testMusic.snapshot().cue_id") == "music_first"
-            assert page.locator("#ad-chapter-transition").is_hidden()
+            # Once the successor answers again, the same button completes the move.
+            state["fail_next"] = False
+            page.locator("#adn-next").click()
+            page.wait_for_url("**/player/second/", timeout=15000)
             assert not errors, errors
         finally:
             browser.close()

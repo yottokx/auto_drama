@@ -56,9 +56,10 @@ def test_publication_conversion_matches_the_pre_extraction_output():
         "e9e35ce081fab8825ff395d5aadf844122ff9aa66c9cab1dc6999fe6b5fe25e1")
     # Player code may be upgraded without changing this conversion's story,
     # staging, or adopted media. Pin those outputs independently of the runtime.
+    # (Re-pinned when lines moved from engine text tags to the viewing screen's tags.)
     scenario = compile_scenario(script, assets).encode("utf-8")
     assert hashlib.sha256(scenario).hexdigest() == (
-        "3bb5dce3ed88445976b9337b23cf05929a19c760b7db36a046fdbd728a64a61a")
+        "86353fc02904637f629097bde8495d221d7d30ea38755cf82200ca8d0cf73720")
     with ZipFile(io.BytesIO(compile_bundle(script, assets))) as archive:
         assert archive.read("script.json") == canonical_json(script.model_dump(mode="json"))
         assert archive.read("data/scenario/first.ks") == scenario

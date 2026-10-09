@@ -11,13 +11,16 @@ from packages.contracts.event_cg import (
     BUDGET_ALLOCATION_VERSION,
     CG_KINDS,
     CG_LLM_KINDS,
+    MIN_IMAGE_UTTERANCES,
     MODEL_REVISION,
+    STAGING_RULES_VERSION,
     EventCgBudget,
     EventCgPlan,
     EventCgPolicy,
     EventCgProfile,
     EventCgResult,
     image_input_sha256,
+    image_spans,
     validate_budget,
     validate_plan,
 )
@@ -25,6 +28,7 @@ from packages.contracts.m3 import GenerationEnvelope
 
 from . import (
     event_cg_session,
+    event_cg_staging,
     event_cg_visuals,
     image_session,
     llm_session,
@@ -34,6 +38,8 @@ from . import (
 )
 from .cancellation import check_cancelled
 from .event_cg_session import EventCgGenerationError
+from .execution_settings import bind_job_request
+from .execution_settings import enabled as execution_settings_enabled
 from .llm import ContextBudgetError, LocalLLM, write_json
 from .model_routing import model_configuration_identity
 from .processes import gpu_lock
@@ -188,9 +194,18 @@ def _normalize_selection(answer, payload):
     return value.model_dump(mode="json")["cgs"]
 
 
-def _select(payload, llm, scenes, stage):
+def _select(payload, llm, scenes, stage, planning_notes=None):
     policy = EventCgPolicy.model_validate(payload["policy"])
     limit = min(policy.max_cgs, payload["chapter_budget"])
+    if policy.planning_version >= STAGING_RULES_VERSION:
+        selected, notes = event_cg_staging.select(payload, llm, stage,
+            {"maximum": limit, "max_variants": policy.max_variants_per_cg,
+                "minimum_utterances_per_image": MIN_IMAGE_UTTERANCES,
+                "references": payload["references"], "world": _visual_context(payload),
+                "scenes": [_scene_source(scene, payload) for scene in scenes]})
+        if planning_notes is not None:
+            planning_notes.extend(notes)
+        return selected
     return _structured(llm, stage, (
         "Select exceptional moments for optional visual-novel event CGs AFTER the text is final. "
         "Do not change dialogue or force use of the allowance. Return at most the supplied maximum, including zero. "
@@ -206,20 +221,28 @@ def _select(payload, llm, scenes, stage):
         _selection_schema(limit, policy.max_variants_per_cg), lambda value: _normalize_selection(value, payload))
 
 
-def _select_with_context_limit(payload, llm):
+def _select_with_context_limit(payload, llm, planning_notes=None):
     scenes = payload["context"]["narrative"]["scenes"]
     try:
-        return _select(payload, llm, scenes, "select-chapter")
+        return _select(payload, llm, scenes, "select-chapter", planning_notes)
     except ContextBudgetError:
         if len(scenes) < 2:
             raise
     candidates = []
     for index, scene in enumerate(scenes):
-        candidates.extend(_select(payload, llm, [scene], f"select-scene-{index + 1}"))
-    for index, cg in enumerate(candidates, 1):
-        cg["id"] = f"cg_{index:03d}"
-        for number, variant in enumerate(cg["variants"], 1):
-            variant["id"] = f"cg_{index:03d}_v{number:02d}"
+        try:
+            candidates.extend(_select(payload, llm, [scene], f"select-scene-{index + 1}", planning_notes))
+        except (InvalidCgPlan, ContextBudgetError) as exc:
+            if payload["policy"].get("planning_version", 1) < STAGING_RULES_VERSION:
+                raise
+            if planning_notes is not None:
+                planning_notes.append({"cg_id": f"select_scene_{index + 1}_cg_001", "variant_id": None,
+                    "reason": (f"場面 {scene['id']} の選定を確定できないため、この場面の候補のみ省略: {exc}")[:4000]})
+    if payload["policy"].get("planning_version", 1) < STAGING_RULES_VERSION:
+        for index, cg in enumerate(candidates, 1):
+            cg["id"] = f"cg_{index:03d}"
+            for number, variant in enumerate(cg["variants"], 1):
+                variant["id"] = f"cg_{index:03d}_v{number:02d}"
     limit = min(payload["policy"]["max_cgs"], payload["chapter_budget"])
     if len(candidates) <= limit:
         return candidates
@@ -228,13 +251,24 @@ def _select_with_context_limit(payload, llm):
         if len(ids) > limit or len(set(ids)) != len(ids) or not set(ids) <= {cg["id"] for cg in candidates}:
             raise ValueError("Selected CG IDs must be unique existing candidates.")
         return [cg for cg in candidates if cg["id"] in ids]
-    return _structured(llm, "select-final", "Choose the most valuable optional CG candidates for this chapter. "
-        "Use at most the allowance; do not change candidates or story. Return selected existing IDs only.",
-        {"maximum": limit, "candidates": candidates},
-        _object({"selected_ids": _array({"type": "string"}, limit)}), validate_choice)
+    try:
+        return _structured(llm, "select-final", "Choose the most valuable optional CG candidates for this chapter. "
+            "Use at most the allowance; do not change candidates or story. Return selected existing IDs only.",
+            {"maximum": limit, "candidates": candidates},
+            _object({"selected_ids": _array({"type": "string"}, limit)}), validate_choice)
+    except (InvalidCgPlan, ContextBudgetError):
+        if payload["policy"].get("planning_version", 1) < STAGING_RULES_VERSION:
+            raise
+        retained = candidates[:limit]
+        if planning_notes is not None:
+            planning_notes.extend({"cg_id": item["id"], "variant_id": None,
+                "reason": "章全体の候補の絞り込みに失敗したため、検証済み候補を場面順で上限内に保持。"}
+                for item in retained)
+        return retained
 
 
 def _visual_prompts(cg, payload, llm):
+    staged = payload["policy"].get("planning_version", 1) >= STAGING_RULES_VERSION
     scenes = payload["context"]["narrative"]["scenes"]
     scene = next(row for row in scenes if row["id"] == cg["scene_id"])
     rows = scene["utterances"]
@@ -251,16 +285,25 @@ def _visual_prompts(cg, payload, llm):
 
     def validate(answer):
         images = event_cg_visuals.compile_images(answer, cg["character_ids"], expected)
-        llm.trace.append({"type": "event_cg_visual_directions", "version": event_cg_visuals.VERSION,
+        llm.trace.append({"type": "event_cg_visual_directions", "version": version,
             "cg_id": cg["id"], "character_ids_in_reference_order": cg["character_ids"],
             "images": answer["images"]})
         return images
 
-    images = _structured(llm, f"prompt-v{event_cg_visuals.VERSION}-" + cg["id"], event_cg_visuals.SYSTEM,
-        {"scene": source, "world": _visual_context(payload), "cg": cg,
-            "characters": characters}, visual_schema, validate)
-    result = {**cg, "prompt": images[0]["prompt"], "interpretation": images[0]["interpretation"]}
-    result["variants"] = [{**variant, "prompt": image["prompt"], "interpretation": image["interpretation"]}
+    visual_source = {"scene": source, "world": _visual_context(payload), "cg": cg, "characters": characters}
+    system = event_cg_visuals.SYSTEM
+    version = event_cg_visuals.VERSION
+    if staged:
+        visual_source.update(common_composition=cg["composition"],
+            image_intervals=event_cg_staging.image_context(cg, payload))
+        system += event_cg_visuals.STAGING_SYSTEM
+        version = event_cg_visuals.STAGING_VERSION
+    images = _structured(llm, f"prompt-v{version}-" + cg["id"], system,
+        visual_source, visual_schema, validate)
+    result = {**cg, "prompt": images[0]["prompt"],
+        "interpretation": cg["interpretation"] if staged else images[0]["interpretation"]}
+    result["variants"] = [{**variant, "prompt": image["prompt"],
+        "interpretation": variant["interpretation"] if staged else image["interpretation"]}
         for variant, image in zip(cg["variants"], images[1:], strict=True)]
     return result
 
@@ -269,25 +312,33 @@ def plan_cgs(payload: dict, llm) -> dict:
     # Validate trusted inputs before the bounded model-error omission boundary.
     policy = EventCgPolicy.model_validate(payload["policy"])
     context = payload["context"]
-    validate_plan({"source_sha256": context["source_sha256"], "cgs": []}, payload)
+    validate_plan(event_cg_staging.plan_value(payload, []), payload)
     if policy.max_cgs == 0 or payload["chapter_budget"] == 0:
-        return EventCgPlan(source_sha256=context["source_sha256"]).model_dump(mode="json")
+        return EventCgPlan(**event_cg_staging.plan_value(payload, [])).model_dump(mode="json")
+    planning_notes = []
     try:
-        selected = _select_with_context_limit(payload, llm)
+        selected = _select_with_context_limit(payload, llm, planning_notes)
         cgs, omissions = [], []
         for cg in selected:
             try:
                 cgs.append(_visual_prompts(cg, payload, llm))
             except (InvalidCgPlan, ContextBudgetError) as exc:
                 omissions.append({"cg_id": cg["id"], "reason": str(exc)[:4000]})
-        result = validate_plan({"source_sha256": context["source_sha256"], "cgs": cgs,
-            "prompt_omissions": omissions,
-            "omission_reason": "; ".join(item["reason"] for item in omissions)[:4000] if not cgs else ""}, payload)
+        result = validate_plan(event_cg_staging.plan_value(payload, cgs,
+            planning_notes=planning_notes,
+            prompt_omissions=omissions,
+            omission_reason="; ".join(item["reason"] for item in [*omissions, *planning_notes])[:4000]
+                if not cgs else ""), payload)
         # Keep individual omissions visible even when other CGs survive.
         if omissions:
             llm.trace.append({"type": "event_cg_prompt_omissions", "reasons": omissions})
     except (InvalidCgPlan, ContextBudgetError) as exc:
-        result = EventCgPlan(source_sha256=context["source_sha256"], omission_reason=str(exc)[:4000])
+        result = EventCgPlan(**event_cg_staging.plan_value(payload, [],
+            planning_notes=planning_notes, omission_reason=str(exc)[:4000]))
+    if policy.planning_version >= STAGING_RULES_VERSION:
+        llm.trace.append({"type": "event_cg_image_intervals", "planning_version": policy.planning_version,
+            "minimum_utterances_per_image": MIN_IMAGE_UTTERANCES,
+            "cgs": [{"id": item.id, "images": image_spans(item, context["narrative"])} for item in result.cgs]})
     return result.model_dump(mode="json")
 
 
@@ -315,8 +366,10 @@ def _image_request(payload, work, settings):
         raise ValueError("CG requires a frozen visual prompt.")
     return {"schema_version": 1, "mode": "scene", "references": refs,
         "prompt": payload["prompt"], "model_path": settings["model_path"],
-        **{key: profile[key] for key in ("width", "height", "steps", "dtype", "cpu_offload", "use_kv_cache")},
-        "reference_resolution": 1024, "transparent": False, "seed": payload["seed"]}
+        **{key: profile[key] for key in (
+            "width", "height", "steps", "dtype", "cpu_offload", "use_kv_cache", "reference_resolution",
+            "text_encoder_offload", "transformer_storage", "vae_tiling")},
+        "transparent": False, "seed": payload["seed"]}
 
 
 def generate_job(job: dict, work_dir: Path) -> bytes:
@@ -330,16 +383,18 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         session.prepare_job(kind)
     work = Path(work_dir).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    fingerprint = hashlib.sha256(json.dumps({"kind": kind, "payload": payload}, ensure_ascii=False,
-        sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    live_settings = kind in CG_LLM_KINDS and execution_settings_enabled(payload)
     request_path = work / "job-request.json"
-    if request_path.exists():
-        saved = json.loads(request_path.read_text(encoding="utf-8"))
-        if saved["fingerprint"] != fingerprint:
-            raise ValueError("CG work directory belongs to a different frozen request.")
-        if (work / "result.zip").is_file():
-            check_cancelled()
-            return (work / "result.zip").read_bytes()
+    if not live_settings:
+        fingerprint = hashlib.sha256(json.dumps({"kind": kind, "payload": payload}, ensure_ascii=False,
+            sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        if request_path.exists():
+            saved = json.loads(request_path.read_text(encoding="utf-8"))
+            if saved["fingerprint"] != fingerprint:
+                raise ValueError("CG work directory belongs to a different frozen request.")
+            if (work / "result.zip").is_file():
+                check_cancelled()
+                return (work / "result.zip").read_bytes()
     config = pipeline.load_config()
     from ..model_config import select_config
 
@@ -350,19 +405,34 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     else:
         settings = runtime_settings(config, pipeline.ROOT)
         identity = model_identity(settings, pipeline.ROOT)
-    if request_path.exists():
-        if saved["model_identity"] != identity:
-            raise ValueError("CG model configuration changed within an existing request.")
+    execution_history = []
+    if live_settings:
+        config, fingerprint, execution_history = bind_job_request(
+            work, kind, payload, {**config, "model_configuration_identity": identity},
+            job.get("retry_generation", 0))
+        identity = config.get("model_configuration_identity", identity)
+        if (work / "result.zip").is_file():
+            check_cancelled()
+            return (work / "result.zip").read_bytes()
     else:
-        write_json(request_path, {"fingerprint": fingerprint, "model_identity": identity,
-            "kind": kind, "payload": payload})
+        if request_path.exists():
+            if saved["model_identity"] != identity:
+                raise ValueError("CG model configuration changed within an existing request.")
+        else:
+            write_json(request_path, {"fingerprint": fingerprint, "model_identity": identity,
+                "kind": kind, "payload": payload})
     trace, assets = [], {}
     provenance = {"provider": "local", "event_cg_protocol_version": PROTOCOL_VERSION,
         "seed": payload["seed"], "input_sha256": fingerprint, "model_configuration_identity": identity}
+    if execution_history:
+        provenance["execution_settings_history"] = execution_history
     if kind == "m3_event_cg_budget":
         provenance["budget_allocation_version"] = BUDGET_ALLOCATION_VERSION
     if kind == "m3_event_cg_plan":
-        provenance["visual_prompt_version"] = event_cg_visuals.VERSION
+        planning_version = payload["policy"].get("planning_version", 1)
+        provenance["planning_version"] = planning_version
+        provenance["visual_prompt_version"] = (event_cg_visuals.STAGING_VERSION
+            if planning_version >= STAGING_RULES_VERSION else event_cg_visuals.VERSION)
     lease = gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"])
     stage = "event_cg_budget" if kind == "m3_event_cg_budget" else "event_cg_plan"
     if kind in CG_LLM_KINDS:

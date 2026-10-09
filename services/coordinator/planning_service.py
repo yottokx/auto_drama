@@ -105,7 +105,7 @@ class PlanningService:
     def _enqueue(self, connection, row, *, body=None):
         from services.worker.generation.workflow_version import generator_protocol
 
-        from .m3_service import GENERATION_ROOT
+        from .llm_settings import execution_settings
         from .tts_settings import TTSService
 
         first = connection.execute(
@@ -118,12 +118,7 @@ class PlanningService:
                 "story_workflow_version", "workflow_policy", "generator_protocol", "planning_protocol",
             ) if key in frozen}
         else:
-            profile = {key: value for key, value in M2Service(self.coordinator)._profile().items()
-                       if key not in {"max_tokens", "prompt_version"}}
-            settings = json.loads((GENERATION_ROOT / "config/m2-generation.json").read_text(encoding="utf-8"))["llm"]
-            if not profile.get("common_settings_version"):
-                profile.update(reasoning_level="none", context_size=settings.get("context_size", 16384))
-            generation = {"profile": profile, "tts_profile": TTSService(self.coordinator).profile(connection),
+            generation = {"tts_profile": TTSService(self.coordinator).profile(connection),
                 "seed": int(uuid4().hex[:8], 16) & 0x7FFFFFFF, "story_workflow_version": 2,
                 "workflow_policy": "script_continuation_v1",
                 "generator_protocol": generator_protocol("causal", "script_continuation_v1"),
@@ -131,6 +126,8 @@ class PlanningService:
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
             "planning_revision": row["revision"], "approval_snapshot": self._snapshot(connection, row),
             **generation}
+        generation.update(execution_settings(self.coordinator, connection, payload,
+                          kind="m3_plan", profile=M2Service(self.coordinator)._profile(connection)))
         if body and body.action == "revise":
             payload.update(plan_content=json.loads(row["content"]), target=body.target,
                            character_id=body.character_id, chapter_number=body.chapter_number,

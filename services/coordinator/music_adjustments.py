@@ -84,6 +84,11 @@ class MusicAdjustmentService(AdjustmentService):
                    "production_id": chapter["id"], "chapter_number": chapter["chapter_number"],
                    "profile": settings.get("profile", {}), "seed": int(identifier[:8], 16) & 0x7fffffff,
                    "adjustment": {"music": True, "draft_id": draft["id"], "revision": draft["revision"]}, **material}
+        from .llm_settings import execution_settings
+
+        settings.pop("execution_settings_version", None)
+        settings.pop("execution_settings_revision", None)
+        settings.update(execution_settings(self.coordinator, connection, payload, kind=kind))
         project = required(connection, "project", root["project_id"])
         connection.execute("INSERT INTO generation_run(id,project_id,settings_version,story_revision_id,policy,status,created_at) "
                            "VALUES (?,?,?,?,?,'pending',?)", (run_id, root["project_id"], project["settings_version"], draft["id"],

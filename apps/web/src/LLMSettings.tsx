@@ -42,7 +42,7 @@ export function LLMSettingsContent({ onBusyChange }: { onBusyChange?: (busy: boo
     finally { setBusy(false) }
   }
   return <>
-    <p>世界観・人物設定・台本などの生成に使う共通設定です。保存後の新しいジョブに適用します。制作中の本編とその続きは開始時の設定を引き継ぎます。</p>
+    <p>世界観・人物設定・台本などの生成に使う共通設定です。新しい生成や「再試行」では現在の設定を使います。制作中の物語も、次の章から変更が反映されます。実行中の処理とその自動再試行は、処理開始時の設定で続けます。</p>
     {error && <p role="alert" className="m2-error">{error}</p>}
     {!value ? <p>設定を読み込んでいます。</p> : <form onSubmit={event => { event.preventDefault(); void save() }}>
       <fieldset className="llm-settings-fields" disabled={busy}>

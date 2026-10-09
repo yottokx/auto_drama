@@ -29,8 +29,9 @@ from .draft_story import (
     _run_text_experiment,
     _text,
 )
+from .execution_settings import enabled
 from .llm import ContextBudgetError, write_json
-from .model_routing import RoutedLLM
+from .model_routing import RoutedLLM, resolve_purpose_profile
 from .processes import gpu_lock
 from .progress import report_progress
 from .script_budget import scene_output_budget
@@ -357,6 +358,7 @@ class ScriptRun(DraftRun):
         report["script_examples"] = self.manifest.get("script_examples", {})
         report["chapter_boundary_corrections"] = self.state.get("chapter_boundary_corrections", {})
         report["chapter_plan_normalizations"] = self.state.get("chapter_plan_normalizations", {})
+        report["staging_normalizations"] = self.state.get("staging_normalizations", {})
         report["cast_connection_repair"] = self.state.get("cast_connection_repair")
         report["content_metrics"] = {
             "chapters": [{"number": row["number"], **script_metrics(row["text"]),
@@ -748,9 +750,39 @@ class ScriptRun(DraftRun):
         records = self.state.setdefault("scene_budgets", {})
         if scope in records:
             record = records[scope]
-            if record["input_hash"] != identity or digest(record["budget"]) != record["sha256"]:
+            if digest(record["budget"]) != record["sha256"]:
                 raise ValueError("Saved scene output budget belongs to changed material.")
-            return record["budget"]
+            if record["input_hash"] == identity:
+                return record["budget"]
+            if not enabled(self.payload):
+                raise ValueError("Saved scene output budget belongs to changed material.")
+            # Verify the original material with its recorded profile before
+            # replacing a reservation. Settings changes never authorize edits
+            # to the scene, speakers or token-estimation policy.
+            candidates = [record["profile"]] if "profile" in record else []
+            for key in (scope + "-text", scope + "-continue"):
+                step = self.state["steps"].get(key, {})
+                candidates.extend(row["profile"] for row in
+                                  [*step.get("attempts", []), *step.get("preflight_failures", [])]
+                                  if "profile" in row)
+            for previous in self.manifest.get("execution_history", []):
+                _, old_profile = resolve_purpose_profile(previous["generation_config"],
+                    {**self.payload, "profile": previous.get("profile", {}),
+                     "profiles": previous.get("profiles", {})}, "script-scene")
+                candidates.append(old_profile)
+            if not any(record["input_hash"] == digest({"scene_size": size.model_dump(),
+                    "character_ids": character_ids, "profile": old_profile,
+                    "policy": self.options.scene_tokens.model_dump(),
+                    "model_output_limit": OutputTokenPolicy.resolve(old_profile, old_profile).base_limit})
+                    for old_profile in candidates):
+                raise ValueError("Saved scene output budget belongs to changed material.")
+            if self.saved_source_attempt(scope + "-text") is not None:
+                # A valid raw source may only be waiting for speech/staging.
+                # Keep its original reservation and grammar so it is reused.
+                return record["budget"]
+            history = self.state.setdefault("scene_budget_history", {}).setdefault(scope, [])
+            if not history or history[-1] != record:
+                history.append(copy.deepcopy(record))
         # Completion usage includes reasoning. Do not learn a larger BODY baseline
         # from that total and then add a second reasoning allowance on top of it.
         samples = ([] if policy.extension_tokens and profile.get("reasoning_level", "none") != "none"
@@ -759,8 +791,16 @@ class ScriptRun(DraftRun):
             min(profile["max_tokens"], policy.base_limit), samples,
             extension_tokens=policy.extension_tokens)
         records[scope] = {"input_hash": identity, "budget": budget, "sha256": digest(budget)}
+        if enabled(self.payload):
+            records[scope]["profile"] = copy.deepcopy(profile)
         self.persist()
         return budget
+
+    def saved_source_attempt(self, key):
+        step = self.state["steps"].get(key, {"attempts": []})
+        return next((row for row in reversed(self._current_attempts(step))
+                     if row["status"] == "completed" and not row.get("validation_error")
+                     and row.get("reply", {}).get("_finish_reason") in {"stop", "length"}), None)
 
     def writer_samples(self, model_id, *, excluding=None):
         samples = []
@@ -806,8 +846,10 @@ class ScriptRun(DraftRun):
                 "scene_starts": self.scene_offsets(saved_scenes)}]
         prompt = SCENE_INSTRUCTION
         budget = self.output_budget(scope, size, plan.character_ids)
+        saved_source = self.saved_source_attempt(scope + "-text") if enabled(self.payload) else None
+        source_profile = saved_source["profile"] if saved_source else self.llm.profile
         reply = self.call(scope + "-text", "script-scene", number, prompt, scene_context,
-                          extra={**narrative._source_options(self.llm.profile, plan),
+                          extra={**narrative._source_options(source_profile, plan),
                                  "max_tokens": budget["max_tokens"]},
                           allow_length=True, output_budget=budget)
         writer_replies = [(scope + "-text", reply)]
@@ -816,14 +858,23 @@ class ScriptRun(DraftRun):
         if reply["_finish_reason"] == "length":
             anchor = raw[-min(160, len(raw)):]
             continuation_context = {**scene_context, "continuation": raw}
+            saved_continuation = (self.saved_source_attempt(scope + "-continue")
+                                  if enabled(self.payload) else None)
+            continuation_profile = (saved_continuation["profile"] if saved_continuation
+                                    else self.llm.profile)
+            continuation_budget = budget
+            if enabled(self.payload):
+                continuation_budget = (saved_continuation.get("output_budget") or budget
+                                       if saved_continuation else self.output_budget(
+                                           scope + "-continuation", size, plan.character_ids))
             reply = self.call(scope + "-continue", "script-scene", number,
                               prompt + "\n出力上限で切れた現在の場面の続筆です。次の接続文字列を"
                               "先頭に一字も変えず復唱し、その直後から場面を完結させてください。"
                               "それ以外の既出部分は再掲しません。\n接続文字列:\n" + anchor,
                               continuation_context,
-                              extra={**narrative._source_options(self.llm.profile, plan, raw),
-                                     "max_tokens": budget["max_tokens"]},
-                              allow_length=True, output_budget=budget)
+                              extra={**narrative._source_options(continuation_profile, plan, raw),
+                                     "max_tokens": continuation_budget["max_tokens"]},
+                              allow_length=True, output_budget=continuation_budget)
             writer_replies.append((scope + "-continue", reply))
             if not reply["content"].startswith(anchor):
                 error = DraftExecutionError("Script continuation did not match its original source anchor.")
@@ -869,8 +920,13 @@ class ScriptRun(DraftRun):
         utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
             "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None})
             for u, a in zip(utterances, staging.emotions, strict=True)]
+        normalizations = []
+        directions = narrative._directions(plan, utterances, staging, trace=normalizations)
+        if normalizations:
+            self.llm.trace.extend(normalizations)
+            self.state.setdefault("staging_normalizations", {})[scope] = normalizations
         scene = NarrativeScene(id=plan.id, plan=plan, raw_text=separation.raw_text,
-            utterances=utterances, directions=narrative._directions(plan, utterances, staging),
+            utterances=utterances, directions=directions,
             review=SceneReview(policy="not_evaluated", passed=False, issues=[], events=[]))
         data = scene.model_dump(mode="json")
         committed[scope] = {"input_hash": identity, "scene": data, "sha256": digest(data)}

@@ -60,7 +60,7 @@ def test_compiler_waits_on_one_scene_tag_before_speaker_voice_and_body():
         assert start < boundary < scenario.index("[chara_ptext", boundary)
     assert "[bg " not in scenario and "[chara_show" not in scenario and "[chara_hide" not in scenario
     assert '[chara_move name="ad_ren"' in scenario
-    assert '[wait time="450"]' in scenario
+    assert '[ad_pause time="450"]' in scenario and "[wait " not in scenario
     assert scenario.count("[mask ") == 1 and '[mask color="0x000000" time="300"]' in scenario
 
 

@@ -171,9 +171,13 @@ def test_two_chapters_keep_speakers_staging_and_tyrano_source_without_semantic_r
         assert (exported / "sources" / "s1.txt").read_text(encoding="utf-8") == raw
         with zipfile.ZipFile(exported / "tyrano-source.zip") as archive:
             scenario = archive.read("data/scenario/first.ks").decode("utf-8")
-            assert "[chara_show " in scenario and "[bg " in scenario and "[wait time=\"300\"]" in scenario
+            assert "[chara_show " in scenario and "[bg " in scenario and "[ad_pause time=\"300\"]" in scenario
             assert "[mask color=" in scenario and "[playse " not in scenario
-            assert all(row.display_text in scenario for row in parsed)
+            # Prose is shown from script.json; the scenario only names each line.
+            assert all(f'[ad_say id="{row["id"]}"]' in scenario for row in script["utterances"])
+            assert all(row.display_text not in scenario for row in parsed)
+            shown = json.loads(archive.read("script.json"))["utterances"]
+            assert [row.display_text for row in parsed] == [row["display_text"] for row in shown]
         requirements = read_json(exported / "asset-requirements.json")
         assert requirements["placeholder_assets_are_production_assets"] is False
 

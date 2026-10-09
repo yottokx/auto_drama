@@ -568,7 +568,7 @@ def test_scene_llm_uses_root_runner_and_frozen_script_source(app, monkeypatch, t
     app.scenes[0]["context"]["script"] = "changed script"
     assert request["references"][0]["source"]["original_path"] != "later-change"
     assert request["scene"]["context"]["script"] != "changed script"
-    assert len(app.tabs.tabs()) == 5
+    assert len(app.tabs.tabs()) == 6
 
 
 def test_scene_llm_completion_uses_visual_prompt_and_records_provenance(app, monkeypatch, tmp_path):

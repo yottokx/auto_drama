@@ -1,4 +1,9 @@
-"""Serve immutable chapter ZIPs over a separately installed, read-only Tyrano engine."""
+"""Serve immutable chapter ZIPs over a separately installed, read-only Tyrano engine.
+
+A ZIP's script and assets are served as published. The viewing screen itself is
+regenerated from them by the running code, so chapters published by an earlier
+player open in the current one without rewriting any stored artifact.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +20,8 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
+from packages.contracts import Script
+from packages.tyrano_export.compiler import ASSET_FOLDERS, player_overlay
 from packages.tyrano_export.player import ENGINE_SCRIPTS, ENGINE_STYLES
 
 from .service import Coordinator, ServiceError
@@ -107,6 +114,28 @@ def bundle_member(data: bytes, relative: str) -> bytes:
         raise ServiceError(503, "公開章の整合性を確認できません。保存済みの章を確認してください。") from exc
 
 
+_PLAYERS: dict[str, dict[str, bytes]] = {}
+
+
+def current_player(digest: str, data: bytes) -> dict[str, bytes]:
+    """The running code's viewing screen for one published ZIP, from its own script and images."""
+    files = _PLAYERS.get(digest)
+    if files is None:
+        script_bytes = bundle_member(data, "script.json")
+        try:
+            script = Script.model_validate(json.loads(script_bytes))
+            images = {asset.id: bundle_member(data, f"data/{ASSET_FOLDERS[asset.kind]}/{asset.filename}")
+                      for asset in script.assets if asset.kind in {"background", "character"}}
+            files = player_overlay(script, images, script_bytes)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ServiceError(503, "公開章の整合性を確認できません。保存済みの章を確認してください。") from exc
+        # Keyed by content hash, so an entry never goes stale while this process runs.
+        while len(_PLAYERS) >= 8:
+            _PLAYERS.pop(next(iter(_PLAYERS)))
+        _PLAYERS[digest] = files
+    return files
+
+
 def byte_range(value: str | None, size: int) -> tuple[int, int, bool]:
     if value is None:
         return 0, size - 1, False
@@ -144,6 +173,7 @@ def install_player_routes(
             raise ServiceError(404, "この章はまだ公開されていません。")
         relative = clean_path(resource)
         is_engine = relative.startswith("tyrano/")
+        owned = False
         if relative == "player-context.json":
             # This immutable identity is deliberately separate from the source
             # ZIP. An extracted ZIP has an explicit static end, while the live
@@ -161,12 +191,16 @@ def install_player_routes(
         else:
             if relative == "index.html":
                 engine.validate()
-            _, data = service.artifact(build["export_artifact_id"])
-            content = bundle_member(data, relative)
+            record, data = service.artifact(build["export_artifact_id"])
+            content = current_player(record["sha256"], data).get(relative)
+            owned = content is not None
+            if content is None:
+                content = bundle_member(data, relative)
         headers = {
             "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer", "Cross-Origin-Resource-Policy": "same-origin",
-            "Cache-Control": "no-store" if is_engine else "private, max-age=31536000, immutable",
+            # Only the published script, assets and documents are immutable per build.
+            "Cache-Control": "no-store" if is_engine or owned else "private, max-age=31536000, immutable",
             "ETag": '"' + hashlib.sha256(content).hexdigest() + '"',
         }
         try:

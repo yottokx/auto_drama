@@ -297,7 +297,8 @@ export function chapterGenerationProgress(chapter: ProductionChapter): Generatio
   const supportingCount = plan?.chapter_number === chapter.chapter_number ? plan.supporting_character_count : 0
   const visibleAssets = assets.filter(item => !['m3_image', 'm3_voice'].includes(item.id)
     || (item.total === null ? supportingCount > 0 : item.total > 0))
-  const mediaPlans = visibleAssets.filter(item => ['m3_music_plan', 'm3_event_cg_budget', 'm3_event_cg_plan'].includes(item.id))
+  const mediaPlans = ['m3_event_cg_budget', 'm3_music_plan', 'm3_event_cg_plan']
+    .flatMap(id => visibleAssets.filter(item => item.id === id))
   const budget = mediaPlans.find(item => item.id === 'm3_event_cg_budget')
   const chapterPlans = mediaPlans.filter(item => item !== budget)
   if (chapterPlans.length) {

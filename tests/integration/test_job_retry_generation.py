@@ -62,7 +62,7 @@ def test_stop_resume_compensates_attempt_without_granting_retry_generation(tmp_p
         assert resumed["payload"] == original["payload"]
 
 
-def test_narrative_retry_preserves_story_model_profile_and_seed(tmp_path):
+def test_narrative_retry_preserves_story_and_voice_and_starts_new_execution(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         _, worker = approve(client)
         original = claim(client, worker)
@@ -78,8 +78,12 @@ def test_narrative_retry_preserves_story_model_profile_and_seed(tmp_path):
         retried = claim(client, worker)
         assert retried["id"] == original["id"]
         assert retried["retry_generation"] == 1
-        assert retried["payload"] == original["payload"]
-        assert retried["settings_snapshot"] == original["settings_snapshot"]
+        changed = {"profile", "execution_settings_revision"}
+        assert {key: value for key, value in retried["payload"].items() if key not in changed} == {
+            key: value for key, value in original["payload"].items() if key not in changed}
+        assert retried["payload"]["execution_settings_revision"] == 1
+        assert retried["settings_snapshot"]["profile"] == retried["payload"]["profile"]
+        assert retried["settings_snapshot"]["tts_profile"] == original["settings_snapshot"]["tts_profile"]
 
 
 def test_migration_gives_existing_failed_jobs_zero_retry_generation(tmp_path):

@@ -41,9 +41,10 @@ def test_export_preserves_script_staging_sources_and_a_valid_tyrano_bundle(tmp_p
         assert not any(name.startswith("data/sound/") for name in archive.namelist())
         scenario = archive.read("data/scenario/first.ks").decode("utf-8")
         assert all(tag in scenario for tag in (
-            "[chara_show", "[chara_hide", "[chara_move", "[chara_ptext", "[bg ", "[wait ", "[mask "))
+            "[chara_show", "[chara_hide", "[chara_move", "[chara_ptext", "[bg ", "[ad_pause ", "[mask "))
         assert "[playse " not in scenario and "[wse]" not in scenario
-        assert script.utterances[0].display_text in scenario
+        assert f'[ad_say id="{script.utterances[0].id}"]' in scenario
+        assert script.utterances[0].display_text not in scenario  # Prose stays in script.json.
         assert archive.read("sources/s1.txt") == source
         assets = {asset.id: archive.read(
             f"data/{'fgimage' if asset.kind == 'character' else 'bgimage'}/{asset.filename}")

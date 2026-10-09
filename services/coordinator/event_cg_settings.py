@@ -6,7 +6,15 @@ import json
 from fastapi import APIRouter
 from pydantic import Field
 
-from packages.contracts.event_cg import CG_KINDS, EventCgPolicy, EventCgProfile
+from packages.contracts.event_cg import (
+    CG_CONFIGURATIONS,
+    CG_KINDS,
+    CG_SIZES,
+    STAGING_RULES_VERSION,
+    EventCgPolicy,
+    EventCgProfile,
+    configuration_id,
+)
 from packages.contracts.script import Contract
 
 from .service import ServiceError, required
@@ -46,18 +54,22 @@ class EventCgSettings:
                        (self.coordinator.clock() - 90,))]
         workers.sort(key=lambda worker: not worker["ready"])
         return {"profile": profile.model_dump(mode="json"), "revision": row["revision"] if row else 0,
-                "ready": any(worker["ready"] for worker in workers), "workers": workers}
+                "ready": any(worker["ready"] for worker in workers), "workers": workers,
+                "configuration": configuration_id(profile),
+                "configurations": [dict(value) for value in CG_CONFIGURATIONS],
+                "sizes": [{"width": width, "height": height} for width, height in CG_SIZES]}
 
     def freeze(self, connection, project_id, *, expected_revision=None):
         policy = self.policy(connection, project_id)
         if expected_revision is not None and expected_revision != policy["revision"]:
             raise ServiceError(409, "イベントCG設定が更新されました。最新の設定を確認してください。")
         if policy["max_cgs"] == 0:
-            return EventCgPolicy(max_variants_per_cg=policy["max_variants_per_cg"])
+            return EventCgPolicy(planning_version=STAGING_RULES_VERSION,
+                                 max_variants_per_cg=policy["max_variants_per_cg"])
         settings = self.settings(connection)
         if not settings["ready"]:
             raise ServiceError(409, "イベントCGを使うにはQwenの準備済みWorkerを起動してください。CG上限0なら準備不要です。")
-        return EventCgPolicy(max_cgs=policy["max_cgs"],
+        return EventCgPolicy(planning_version=STAGING_RULES_VERSION, max_cgs=policy["max_cgs"],
                              max_variants_per_cg=policy["max_variants_per_cg"],
                              generation_profile=settings["profile"])
 

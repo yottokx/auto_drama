@@ -10,6 +10,7 @@ import re
 from scripts.audio.prompts import _clean_llm_content
 
 VERSION = 2
+STAGING_VERSION = 3
 _JAPANESE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 _REFERENCE = re.compile(r"\breference\b|\bimage\s*#?\s*\d+", re.IGNORECASE)
 
@@ -52,6 +53,21 @@ SYSTEM = (
     "Each variant starts from the SAME base scene. Keep the base background, camera, character positions, "
     "clothing and body proportions. Change only its specified expressions, gazes and small gestures. "
     "Keep important faces above the lower message box. Do not invent extra people."
+)
+
+
+STAGING_SYSTEM = (
+    " The supplied image_intervals assign a separate display interval and established visual_state "
+    "to EACH image ID. Use common_composition unchanged for every image. For each image depict ONLY "
+    "its own visual_state, supported by its evidence; its display_utterances provide tone, not permission "
+    "to depict an action before its start. future_states_do_not_depict and "
+    "following_utterance_for_boundary_only are prohibitions/context, NEVER visual directions for that "
+    "image. Never move a later embrace, release, tears, prop reveal or resolution into an earlier image. "
+    "The base must work for its entire display interval. Each variant may change ONLY its staged change, "
+    "with every other visible state retained; do not add a new camera, major pose or contact change. "
+    "Keep environment, lighting, framing and character positions identical to the base unless an "
+    "explicit small gesture requires a local change. The supplied selection_reason and staging.reason "
+    "explain timing and must not be rewritten by your short visual interpretation."
 )
 
 

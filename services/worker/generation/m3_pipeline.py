@@ -14,6 +14,7 @@ from packages.contracts.m3 import EMOTION_TAGS, M3_KINDS, GenerationEnvelope, Lo
 from . import image_session, llm_session, music_session, pipeline
 from .cancellation import check_cancelled
 from .causal_runtime import digest
+from .execution_settings import bind_job_request, enabled
 from .llm import LocalLLM, write_json
 from .model_routing import RoutedLLM, model_configuration_identity
 from .narrative import (
@@ -171,19 +172,24 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     causal = kind in {"m3_plan", "m3_narrative"} and payload.get("story_workflow_version") == 2
     if causal:
         config = {**config, "model_configuration_identity": model_configuration_identity(pipeline.ROOT, config)}
-    fingerprint = hashlib.sha256(json.dumps({"kind": kind, "payload": payload},
-        ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    request_path = work / "job-request.json"
-    if request_path.exists():
-        previous = json.loads(request_path.read_text(encoding="utf-8"))
-        if previous.get("fingerprint") != fingerprint:
-            raise ValueError("Generation work directory belongs to another input snapshot.")
-        if causal and previous["generation_config"].get("model_configuration_identity") != config["model_configuration_identity"]:
-            raise ValueError("Narrative model configuration changed; use a new experiment.")
-        config = previous["generation_config"]
+    execution_history = []
+    if enabled(payload):
+        config, fingerprint, execution_history = bind_job_request(
+            work, kind, payload, config, job.get("retry_generation", 0))
     else:
-        write_json(request_path, {"fingerprint": fingerprint, "kind": kind, "payload": payload,
-                                  "generation_config": config})
+        fingerprint = hashlib.sha256(json.dumps({"kind": kind, "payload": payload},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        request_path = work / "job-request.json"
+        if request_path.exists():
+            previous = json.loads(request_path.read_text(encoding="utf-8"))
+            if previous.get("fingerprint") != fingerprint:
+                raise ValueError("Generation work directory belongs to another input snapshot.")
+            if causal and previous["generation_config"].get("model_configuration_identity") != config["model_configuration_identity"]:
+                raise ValueError("Narrative model configuration changed; use a new experiment.")
+            config = previous["generation_config"]
+        else:
+            write_json(request_path, {"fingerprint": fingerprint, "kind": kind, "payload": payload,
+                                      "generation_config": config})
     cache = work / "result.zip"
     if cache.exists():
         check_cancelled()
@@ -196,6 +202,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
                   "prompt_version": narrative_version if kind == "m3_narrative" else 1,
                   "input_sha256": fingerprint, "profile": payload.get("profile", {}),
                   "purpose": "story_planning" if plan else "story_narrative" if kind == "m3_narrative" else "background_image"}
+    if enabled(payload):
+        provenance["execution_settings"] = {"version": 1,
+            "revision": payload.get("execution_settings_revision", 0),
+            "profile": payload.get("profile", {}), "history": execution_history}
     if kind in {"m3_plan", "m3_narrative"}:
         provenance["generator_protocol"] = {
             **generator_protocol("causal" if causal else "legacy", payload.get("workflow_policy")),

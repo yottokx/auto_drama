@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from scripts.image_edit.catalog import CoordinatorImageCatalog
+from scripts.image_edit.cg_tab import CG_TRANSITIONS, CgProposalTab
 from scripts.image_edit.common import (
     MODEL_DIR,
     MODEL_ID,
@@ -43,8 +44,21 @@ RATING_FIELDS = {
     "separation": "人物の混同なし",
     "art_style": "画風の一致",
     "anatomy": "手足・人数の自然さ",
+    "composition": "構図の適合",
+    "impact": "印象の強さ",
 }
 MODES = ("portrait", "scene")
+# (reference resolution, KV cache, text encoder layer by layer, 8-bit transformer, tiled
+# decode); measured with three references at 1536x1024. See docs/setup/qwen-image-edit.md.
+VRAM_PRESETS = {
+    "32GB: 参照1024・再利用あり（標準）": ("1024", True, True, False, False),
+    "24GB: 参照768・再利用あり": ("768", True, True, False, False),
+    "24GB: 参照1024・再利用なし（約2倍の時間）": ("1024", False, True, False, False),
+    "24GB: 8ビット・参照1024・再利用あり": ("1024", True, True, True, True),
+    "16GB: 8ビット・参照768・再利用あり": ("768", True, True, True, True),
+    "16GB: 8ビット・参照1024・再利用なし（約2倍の時間）": ("1024", False, True, True, True),
+    "12GB: 8ビット・参照768・再利用なし": ("768", False, True, True, True),
+}
 TRANSPARENCY_INSTRUCTION = (
     "This is an RGBA image with transparency. The image has an alpha channel "
     "and the background is transparent."
@@ -83,7 +97,7 @@ def checker_preview(path: Path, size: tuple[int, int]):
     return Image.alpha_composite(background, picture).convert("RGB")
 
 
-class ImageEditTestApp:
+class ImageEditTestApp(CgProposalTab):
     def __init__(self, root: Tk, *, auto_refresh: bool = True):
         self.root = root
         root.title("Qwen Image 2.1 • キャラクター画像テスト")
@@ -122,6 +136,10 @@ class ImageEditTestApp:
         self.use_kv_cache = BooleanVar(value=True)
         self.dtype = StringVar(value="bfloat16")
         self.reference_resolution = StringVar(value="1024")
+        self.text_encoder_layers = BooleanVar(value=True)
+        self.transformer_fp8 = BooleanVar(value=False)
+        self.vae_tiling = BooleanVar(value=False)
+        self.vram_preset = StringVar(value=next(iter(VRAM_PRESETS)))
         self.widths = {"portrait": StringVar(value="768"), "scene": StringVar(value="1024")}
         self.heights = {"portrait": StringVar(value="1152"), "scene": StringVar(value="576")}
         self.transparent = {"portrait": BooleanVar(value=True), "scene": BooleanVar(value=False)}
@@ -145,6 +163,7 @@ class ImageEditTestApp:
         self.review_target = StringVar(value="全体")
         self.review_note = StringVar()
         self.ratings = {key: StringVar(value="未評価") for key in RATING_FIELDS}
+        self._cg_init()
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(150, self.poll)
@@ -183,6 +202,9 @@ class ImageEditTestApp:
             self.tabs.add(frame, text=title)
             self.mode_frames[mode] = frame
             self._generation_tab(frame, mode)
+        self.cg_frame = ttk.Frame(self.tabs, padding=10)
+        self.tabs.add(self.cg_frame, text="印象的な一枚（LLM任せ）")
+        self._cg_tab(self.cg_frame)
         self.comparison_tab = ttk.Frame(self.tabs, padding=10)
         self.environment_tab = ttk.Frame(self.tabs, padding=12)
         self.llm_tab = ttk.Frame(self.tabs, padding=12)
@@ -440,8 +462,19 @@ class ImageEditTestApp:
         ttk.Button(actions, text="元の参照を拡大", command=self.enlarge_original).pack(
             side="left", padx=4
         )
+        playback = ttk.Frame(previews)
+        playback.grid(row=4, column=0, columnspan=2, pady=(0, 5))
+        ttk.Button(playback, text="ティラノで場面を再生", command=self.preview_cg).pack(
+            side="left", padx=4
+        )
+        ttk.Label(playback, text="CGの切り替え").pack(side="left", padx=(10, 2))
+        ttk.Combobox(playback, textvariable=self.cg_transition, values=list(CG_TRANSITIONS),
+                     state="readonly", width=24).pack(side="left")
+        ttk.Combobox(playback, textvariable=self.cg_transition_ms,
+                     values=["300", "500", "800", "1200"], width=6).pack(side="left", padx=4)
+        ttk.Label(playback, text="ミリ秒").pack(side="left")
         ttk.Label(previews, textvariable=self.metrics, wraplength=720).grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=6
+            row=5, column=0, columnspan=2, sticky="w", pady=6
         )
         review = ttk.LabelFrame(frame, text="一致の評価（1:低い ～ 5:高い）", padding=8)
         review.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
@@ -461,13 +494,13 @@ class ImageEditTestApp:
                 state="readonly",
                 width=8,
             ).grid(row=row, column=col + 1, padx=6)
-        ttk.Label(review, text="メモ").grid(row=4, column=0)
+        ttk.Label(review, text="メモ").grid(row=5, column=0)
         ttk.Entry(review, textvariable=self.review_note).grid(
-            row=4, column=1, columnspan=4, sticky="ew", padx=6
+            row=5, column=1, columnspan=4, sticky="ew", padx=6
         )
         review.columnconfigure(3, weight=1)
         ttk.Button(review, text="この対象の評価を保存", command=self.save_review).grid(
-            row=4, column=5
+            row=5, column=5
         )
 
     def _environment_tab(self, frame):
@@ -523,11 +556,37 @@ class ImageEditTestApp:
             state="readonly",
             width=12,
         ).grid(row=3, column=1)
+        ttk.Checkbutton(
+            options, text="テキストエンコーダーを層ごとに処理（VRAM節約）",
+            variable=self.text_encoder_layers,
+        ).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(
+            options, text="描画本体を8ビット（fp8）で保持（VRAM約6.6GB減）",
+            variable=self.transformer_fp8,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            options, text="仕上げを分割して処理（8ビット時のピークを下げる）",
+            variable=self.vae_tiling,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(options, text="VRAMの目安から設定").grid(row=7, column=0, pady=8)
+        preset = ttk.Combobox(options, textvariable=self.vram_preset, values=list(VRAM_PRESETS),
+                              state="readonly", width=48)
+        preset.grid(row=7, column=1, sticky="w")
+        preset.bind("<<ComboboxSelected>>", lambda _: self.apply_vram_preset())
         ttk.Label(
             frame,
             text="生成ごとに専用プロセスを起動し、本体と共通のGPUロックで順番に実行します。\n環境準備中の終了はインストール完了を待ちます。生成・モデル取得は停止できます。",
             wraplength=1000,
         ).grid(row=7, column=0, columnspan=3, sticky="w")
+
+    def apply_vram_preset(self):
+        resolution, cache, layers, fp8, tiling = VRAM_PRESETS[self.vram_preset.get()]
+        self.reference_resolution.set(resolution)
+        self.use_kv_cache.set(cache)
+        self.text_encoder_layers.set(layers)
+        self.transformer_fp8.set(fp8)
+        self.vae_tiling.set(tiling)
+        self.cpu_offload.set(True)
 
     def active_mode(self):
         selected = self.tabs.select()
@@ -561,6 +620,7 @@ class ImageEditTestApp:
             box.set("")
             box["values"] = []
         self.scene_changed()
+        self._cg_set_chapters()
         self.catalog_status.set("作品一覧を取得中…")
         self.catalog = CoordinatorImageCatalog(self.server.get().strip())
         self._async("projects", self.catalog_revision, self.catalog.projects)
@@ -577,6 +637,7 @@ class ImageEditTestApp:
             box.set("")
             box["values"] = []
         self.scene_changed()
+        self._cg_set_chapters()
         catalog = CoordinatorImageCatalog(self.server.get().strip())
         self.catalog = catalog
         self._async("portraits", revision, lambda: catalog.portraits(project_id))
@@ -982,6 +1043,9 @@ class ImageEditTestApp:
             "cpu_offload": self.cpu_offload.get(),
             "use_kv_cache": self.use_kv_cache.get(),
             "reference_resolution": int(self.reference_resolution.get()),
+            "text_encoder_offload": "layers" if self.text_encoder_layers.get() else "model",
+            "transformer_storage": "fp8" if self.transformer_fp8.get() else "native",
+            "vae_tiling": self.vae_tiling.get(),
             "transparent": self.transparent[mode].get(),
             "context": context,
         }
@@ -1023,6 +1087,10 @@ class ImageEditTestApp:
             raise ValueError("環境準備用Pythonが見つかりません。")
         return str(python)
 
+    def _busy_buttons(self):
+        return (self.generate_button, self.setup_button, self.prepare_button,
+                self.scene_prompt_button, self.cg_propose_button, self.cg_all_button)
+
     def _start_process(self, command, run_dir, kind, request=None):
         if self.process is not None:
             raise ValueError("現在の処理が終わるまでお待ちください。")
@@ -1050,21 +1118,19 @@ class ImageEditTestApp:
         self.run_dir, self.run_kind = run_dir, kind
         self.started_at = time.monotonic()
         self.stop_at = self.terminate_at = None
-        for button in (
-            self.generate_button,
-            self.setup_button,
-            self.prepare_button,
-            self.scene_prompt_button,
-        ):
+        for button in self._busy_buttons():
             button.configure(state="disabled")
         self.stop_button.configure(state="normal" if kind != "setup" else "disabled")
         self.progress.configure(mode="indeterminate")
         self.progress.start(12)
 
     def generate(self):
+        if self.tabs.select() == str(self.cg_frame):
+            self.generate_cg()
+            return
         mode = self.active_mode()
         if mode is None:
-            self.status.set("立ち絵の差分または場面の一枚絵タブを選んでください。")
+            self.status.set("立ち絵の差分・場面の一枚絵・印象的な一枚のタブを選んでください。")
             return
         try:
             self.prepare_final_prompt(mode)
@@ -1142,6 +1208,14 @@ class ImageEditTestApp:
     def poll(self):
         while not self.events.empty():
             kind, revision, value, error = self.events.get()
+            if kind == "cg_preview":
+                if revision == self.cg_preview_revision:
+                    self._cg_preview_ready(value, error)
+                continue
+            if kind == "cg_references":
+                if revision == (self.catalog_revision, self.cg_revision):
+                    self._cg_references_ready(value, error)
+                continue
             if kind.startswith("reference:"):
                 mode = kind.split(":", 1)[1]
                 if revision != (self.catalog_revision, self.reference_revision[mode]):
@@ -1169,6 +1243,7 @@ class ImageEditTestApp:
                 )
             elif kind == "portraits":
                 self.portraits = value
+                self.cg_scene_changed()
                 self.portrait_box["values"] = [row["name"] for row in value]
                 if value:
                     self.portrait_box.current(0)
@@ -1179,6 +1254,7 @@ class ImageEditTestApp:
                 if value:
                     self.chapter_box.current(0)
                 self.chapter_changed()
+                self._cg_set_chapters()
         if self.process is not None:
             state = read_json(self.run_dir / "status.json")
             elapsed = time.monotonic() - self.started_at
@@ -1219,17 +1295,16 @@ class ImageEditTestApp:
         self.process = None
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
-        for button in (
-            self.generate_button,
-            self.setup_button,
-            self.prepare_button,
-            self.scene_prompt_button,
-        ):
+        for button in self._busy_buttons():
             button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         if self.run_kind == "prompt":
             self._finish_scene_prompt(code, result)
             return
+        if self.run_kind == "cg_proposals":
+            self._finish_cg_proposals(code, result)
+            return
+        queued, self.cg_queue = self.cg_queue, []
         if self.stop_at is not None or result.get("cancelled"):
             self._add_result(self.run_dir, result)
             self.status.set(
@@ -1238,6 +1313,10 @@ class ImageEditTestApp:
         elif code == 0 and result.get("ok"):
             if self.run_kind == "generate":
                 self._add_result(self.run_dir, result)
+                if queued:
+                    self.cg_queue = queued
+                    self._cg_next()
+                    return
                 self.tabs.select(self.comparison_tab)
                 self.status.set("生成完了。元の参照と比較し、一致を評価できます。")
             else:
@@ -1364,6 +1443,12 @@ class ImageEditTestApp:
             else "アルファ情報なし"
         )
         warnings = " / ".join(output.get("warnings", []))
+        proposal = (selected["request"].get("context") or {}).get("cg_proposal") or {}
+        if proposal:
+            row = proposal["proposal"]
+            edited = " / 指示を手修正" if proposal.get("manually_edited") else ""
+            warnings = (f"案{proposal['index'] + 1}: {row['shot']} / {row['angle']}{edited} / "
+                        f"{row['moment']}" + (" / " + warnings if warnings else ""))
         self.metrics.set(
             f"Seed {output.get('seed', '?')} / {output.get('width', selected['request'].get('width', '?'))}×{output.get('height', selected['request'].get('height', '?'))} / {selected['request'].get('steps', '?')} steps / {data.get('elapsed_seconds', output.get('elapsed_seconds', '?'))}秒 / {alpha}\n{warnings + chr(10) if warnings else ''}{selected['path']}"
         )
@@ -1510,6 +1595,7 @@ class ImageEditTestApp:
                 self.stop()
             return
         self._save_settings()
+        self.cg_preview_server.close()
         self.root.destroy()
 
 
@@ -1523,7 +1609,7 @@ def main(argv=None):
     app = ImageEditTestApp(root, auto_refresh=not args.smoke_test)
     if args.smoke_test:
         root.update_idletasks()
-        assert len(app.tabs.tabs()) == 5
+        assert len(app.tabs.tabs()) == 6
         assert app.cpu_offload.get()
         root.destroy()
         print("Qwen Image test GUI smoke test passed")

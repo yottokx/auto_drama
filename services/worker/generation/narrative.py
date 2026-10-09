@@ -29,6 +29,7 @@ from packages.contracts.m3 import (
 from packages.contracts.script import Contract, Identifier
 from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.speech import parenthetical_candidates, separate_stage_directions
+from packages.narrative.staging import normalize_directions
 from packages.narrative.validation import approved_characters, story_state_hash
 
 from .cancellation import check_cancelled
@@ -522,7 +523,8 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
     return SceneStaging(emotions=emotions, directions=directions)
 
 
-def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Staging | SceneStaging):
+def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Staging | SceneStaging,
+                *, trace: list[dict] | None = None):
     directions = []
     positions = ("left", "right", "center") if len(plan.character_ids) > 1 else ("center",)
     for index, character_id in enumerate(plan.character_ids):
@@ -545,7 +547,10 @@ def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Sta
             character_id=direction.character_id if direction.kind == "focus" else None,
             position=None, duration_ms=direction.duration_ms,
         ))
-    return directions
+    normalized, report = normalize_directions([row.model_dump(mode="json") for row in directions])
+    if report["changes"] and trace is not None:
+        trace.append({"type": "staging_normalization", "scene_id": plan.id, **report})
+    return [NarrativeDirection.model_validate(row) for row in normalized]
 
 
 def _outline(llm: LocalLLM, context: str, count: int) -> StoryOutline:
@@ -890,7 +895,7 @@ def generate_narrative(payload: dict, llm: LocalLLM) -> dict:
                                   "attempt": attempt + 1, "reason": str(error)})
                 continue
             candidate = NarrativeScene(id=plan.id, plan=plan, raw_text=raw,
-                utterances=utterances, directions=_directions(plan, utterances, staging),
+                utterances=utterances, directions=_directions(plan, utterances, staging, trace=llm.trace),
                 review=review)
             # Publication still verifies every original source/category constraint.
             probe = NarrativeResult(schema_version=1, chapter_number=1,

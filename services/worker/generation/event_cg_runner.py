@@ -115,7 +115,10 @@ class QwenRuntime:
                 "width": generated.width, "height": generated.height,
                 "original_sha256": engine.digest(output / "original.png"),
                 "image_sha256": engine.digest(output / "image.png"),
-                "quantization": "none", "dtype": validated["dtype"]}}
+                "quantization": "fp8" if validated["transformer_storage"] == "fp8" else "none",
+                "reference_resolution": validated["reference_resolution"],
+                "text_encoder_offload": validated["text_encoder_offload"],
+                "vae_tiling": validated["vae_tiling"], "dtype": validated["dtype"]}}
         write_json(output / "result.json", report)
         return report
 

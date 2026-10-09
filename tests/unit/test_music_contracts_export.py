@@ -107,7 +107,8 @@ def test_music_bundle_contains_only_adopted_mp3_cues_and_owned_player_code():
         assert adopted["music_cues"][0]["loop_start_seconds"] == 12.5
         assert adopted["music_cues"][0]["volume"] == 0.35
         assert "data/others/auto_drama_music.js" in archive.namelist()
-        assert b'id="ad-bgm-volume"' in archive.read("index.html")
+        assert b"auto_drama_music.js" in archive.read("index.html")
+        assert b'data-key="bgm"' in archive.read("data/others/auto_drama_player.js")
         assert not any("output-float" in path or "request.json" in path for path in archive.namelist())
         assert archive.read("data/scenario/first.ks").count(b'[ad_music cue="scene_music_start"]') == 1
 
@@ -117,7 +118,7 @@ def test_music_compiler_uses_cue_ids_and_retains_the_last_track_at_chapter_end()
     scenario = compile_scenario(script, assets)
     anchor = scenario.index("*utterance_" + script.music_cues[0].utterance_id)
     cue = scenario.index('[ad_music cue="scene_music_start"]')
-    assert anchor < cue < scenario.index("[p]", cue)
+    assert anchor < cue < scenario.index("[ad_say ", cue)
     assert scenario.endswith("[s]\n")
     assert "[ad_music_stop" not in scenario
     assert "scene_music.mp3" not in scenario

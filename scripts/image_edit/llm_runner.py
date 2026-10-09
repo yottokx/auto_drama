@@ -16,6 +16,8 @@ if __package__ in {None, ""}:
 from scripts.audio.engine import utc_timestamp
 from scripts.audio.json_io import write_json
 from scripts.audio.resources import cancellation_watcher, music_gpu_scope
+from scripts.image_edit.cg_proposals import normalize_proposals, request_proposals, utterance_count
+from scripts.image_edit.cg_proposals import schema as proposal_schema
 from scripts.image_edit.llm_prompts import normalize_scene_prompt, request_scene_prompt
 
 
@@ -52,14 +54,43 @@ def run_request(request_path: Path, output_dir: Path) -> int:
         backend = data.get("backend", "llama_cpp")
         if backend not in {"llama_cpp", "ollama", "openai"}:
             raise ValueError("LLMの実行方法を選択してください。")
-        scene, references = data["scene"], data["references"]
-        instruction = data.get("instruction", "")
+        task = data.get("task", "scene_prompt")
+        if task not in {"scene_prompt", "cg_proposals"}:
+            raise ValueError("LLMの依頼の種類が正しくありません。")
+        scene, instruction = data["scene"], data.get("instruction", "")
         base_url, model = data.get("base_url", ""), data.get("model", "")
         local_model = data.get("local_model", "")
         options = {"api_key": data.get("api_key"), "timeout": data.get("timeout", 120)}
         request_options = data.get("request_options") or {}
         if not isinstance(request_options, dict):
             raise TypeError("LLMの追加設定はJSONオブジェクトで指定してください。")
+        if task == "cg_proposals":
+            candidates = data["candidates"]
+            tags = [row["tag"] for row in candidates]
+            choices = {"allow_extras": data.get("allow_extras", True),
+                       "count": data.get("count", 3), "utterances": utterance_count(scene)}
+
+            def ask(url, name, extra):
+                if backend == "llama_cpp":
+                    extra = {**extra, "response_format": {"type": "json_schema", "json_schema": {
+                        "name": "cg_proposals", "strict": True,
+                        "schema": proposal_schema(tags, choices["count"],
+                                                  choices["utterances"])}}}
+                return {"proposals": request_proposals(
+                    scene, candidates, data.get("unreferenced", []), instruction, url, name,
+                    **choices, **options, request_options=extra)}
+
+            def publish(value):
+                return {"proposals": normalize_proposals(value, tags, **choices)}
+        else:
+            references = data["references"]
+
+            def ask(url, name, extra):
+                return request_scene_prompt(scene, references, instruction, url, name,
+                                            **options, request_options=extra)
+
+            def publish(value):
+                return normalize_scene_prompt(value, len(references))
         with cancellation_watcher(output_dir, worker_helpers=True) as token:
             token.check()
             if backend == "llama_cpp":
@@ -79,11 +110,8 @@ def run_request(request_path: Path, output_dir: Path) -> int:
                     token.check()
                     status({"phase": "prompt", "message": "ローカルLLMで場面と構図を解釈しています。"})
                     try:
-                        details = request_scene_prompt(
-                            scene, references, instruction, local_url, local_alias, **options,
-                            request_options={**request_options,
-                                             "chat_template_kwargs": {"enable_thinking": False}},
-                        )
+                        details = ask(local_url, local_alias, {
+                            **request_options, "chat_template_kwargs": {"enable_thinking": False}})
                     except Exception as exc:  # noqa: BLE001 - publish failures after confirming release
                         prompt_error = exc
                 released = True
@@ -96,10 +124,8 @@ def run_request(request_path: Path, output_dir: Path) -> int:
                     try:
                         token.check()
                         status({"phase": "prompt", "message": "Ollamaで場面と構図を解釈しています。"})
-                        details = request_scene_prompt(
-                            scene, references, instruction, base_url, model, **options,
-                            request_options={**request_options, "reasoning_effort": "none"},
-                        )
+                        details = ask(base_url, model,
+                                      {**request_options, "reasoning_effort": "none"})
                     finally:
                         try:
                             status({"phase": "releasing", "message": "Ollamaの指定モデルを解放しています。"})
@@ -108,10 +134,9 @@ def run_request(request_path: Path, output_dir: Path) -> int:
                             released = True
             else:
                 status({"phase": "prompt", "message": "外部LLMで場面と構図を解釈しています。"})
-                details = request_scene_prompt(scene, references, instruction, base_url, model,
-                                               **options, request_options=request_options)
+                details = ask(base_url, model, request_options)
             token.check()
-            details = normalize_scene_prompt(details, len(references))
+            details = publish(details)
         write_json(result_path, {
             "ok": True, **details, "backend": backend, "local_model": local_model,
             "llm_released": released, "elapsed_seconds": round(time.monotonic() - started, 3),

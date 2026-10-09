@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from packages.contracts import Script
 from packages.tyrano_export import compile_bundle, compile_scenario, demo_content, validate_bundle
-from packages.tyrano_export.compiler import BACKLOG_SAFETY
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -181,12 +180,17 @@ def test_all_directions_and_audio_compile():
         "[chara_hide ",
         "[mask ",
         "[mask_off ",
-        "[playse ",
-        "[wse]",
+        "[ad_pause ",
+        '[ad_say id="line_002"]',
+        "[ad_wait]",
     ):
         assert tag in scenario
-    assert 'stop="true"' not in scenario  # Would block the audio tag's nextOrder in Tyrano.
-    assert scenario.index("[mask ") > scenario.index(script.utterances[-1].display_text)
+    # The viewing screen plays voices itself and reads prose from script.json by ID.
+    assert "[playse " not in scenario and "[wse]" not in scenario and "[wait " not in scenario
+    assert all(line.display_text not in scenario for line in script.utterances)
+    # Directions after a line run between its text and its click wait.
+    last = scenario.index(f'[ad_say id="{script.utterances[-1].id}"]')
+    assert last < scenario.index("[mask ") < scenario.index("[ad_wait]", last)
     validate_bundle(compile_bundle(script, assets), script, assets)
 
 
@@ -232,7 +236,7 @@ def _node(source: str, value: dict, *args: str):
     return json.loads(result.stdout)
 
 
-def test_native_tyrano_parser_preserves_author_text_and_blocks_tag_injection():
+def test_native_tyrano_parser_never_sees_author_text():
     parser_path = ROOT / "tyranoscript/tyrano/plugins/kag/kag.parser.js"
     if not parser_path.is_file():
         pytest.skip(
@@ -258,6 +262,7 @@ def test_native_tyrano_parser_preserves_author_text_and_blocks_tag_injection():
             ],
         }
     )
+    scenario = compile_scenario(script, {})
     parsed = _node(
         r"""
 const fs = require('fs');
@@ -271,56 +276,21 @@ parser.kag = {config: {KeepSpaceInParameterValue: '3'}, stat: {current_scenario:
   convertLang() {}, warning(message) {throw Error(message)}, error(message) {throw Error(message)}};
 process.stdout.write(JSON.stringify(parser.parseScenario(input.scenario).array_s));
 """,
-        {"scenario": compile_scenario(script, {})},
+        {"scenario": scenario},
         str(parser_path),
     )
-    tags = {item["name"] for item in parsed}
-    assert tags <= {
-        "loadjs",
-        "chara_config",
-        "position",
-        "layopt",
-        "deffont",
-        "text",
-        "r",
-        "p",
-        "cm",
-        "label",
-        "chara_ptext",
-        "s",
-    }
-    prose = [item["pm"]["val"] for item in parsed if item["name"] == "text"]
-    assert prose == [
-        title,
-        name,
-        *[line for line in body.split("\n") if line],
-        "この章はここまでです。",
+    # Title, speaker name and prose stay in script.json; the scenario carries IDs only.
+    assert [item["name"] for item in parsed] == [
+        "eval", "chara_config", "layopt", "ad_gate", "label", "ad_line", "chara_ptext",
+        "ad_say", "ad_wait", "label", "ad_end", "s",
     ]
-    assert sum(item["name"] == "r" for item in parsed) == len(body.split("\n")) + 2
-
-
-def test_backlog_html_escaping_is_static_and_idempotent():
-    result = _node(
-        r"""
-const fs = require('fs');
-const vm = require('vm');
-const input = JSON.parse(fs.readFileSync(0, 'utf8'));
-const captured = [];
-const tag = {pushTextToBackLog(name, text) {captured.push([name, text]);}};
-const context = {tyrano: {plugin: {kag: {tag: {text: tag}}}}};
-vm.createContext(context);
-vm.runInContext(input.source, context);
-vm.runInContext(input.source, context);
-tag.pushTextToBackLog(input.name, input.text);
-process.stdout.write(JSON.stringify(captured));
-""",
-        {
-            "source": BACKLOG_SAFETY.decode("utf-8"),
-            "name": '<"actor">',
-            "text": "<img src=x onerror='bad'>&",
-        },
-    )
-    assert result == [["", "&lt;img src=x onerror=&#39;bad&#39;&gt;&amp;"]]
+    by_name = {item["name"]: item["pm"] for item in parsed}
+    assert by_name["ad_line"]["id"] == by_name["ad_say"]["id"] == "line"
+    assert by_name["chara_ptext"]["name"] == ""  # No portrait: nobody is focused.
+    # The only script in the scenario is the compiler's fixed reload guard for stale launchers.
+    assert by_name["eval"]["exp"].startswith("window.AutoDramaPlayer||") and "reload()" in by_name["eval"]["exp"]
+    for fragment in (title, name, *[line for line in body.split("\n") if line], "evil", "iscript"):
+        assert fragment not in scenario
 
 
 def test_native_tyrano_demo_tag_and_asset_smoke():
@@ -339,7 +309,7 @@ const vm = require('vm');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const state = {charas: {}, jcharas: {}, current_speaker: '', chara_talk_anim: 'none',
   chara_talk_focus: 'none', chara_brightness_value: '60', log_join: 'false'};
-const log = [], focus = [], clicks = [], timers = [], preloads = [];
+const log = [], focus = [], clicks = [], timers = [], preloads = [];  // log/clicks/timers must stay unused
 let next = 0, strong = false, weak = false;
 const query = value => ({
   find() {return this}, css() {return this}, updatePText() {return this},
@@ -372,25 +342,27 @@ const kag = {stat: state, config: {KeepSpaceInParameterValue: '3'}, tmp: {},
 const parser = context.tyrano.plugin.kag.parser;
 parser.kag = kag;
 const parsed = parser.parseScenario(input.scenario).array_s;
-// Native tags inherit their definitions before the scenario's loadjs executes.
 const instances = Object.fromEntries(Object.entries(tags).map(([name, definition]) =>
   [name, Object.assign(Object.create(definition), {kag})]));
-query.getScript = (url, callback) => {
-  if (!input.paths.includes(url.split('?')[0].replace(/^\.\//, ''))) throw Error('Missing script');
-  vm.runInContext(input.safety, context); callback();
-};
-const shown = [];
+// Tags owned by the viewing screen are registered by its script, not by the engine.
+const owned = {ad_gate: 0, ad_line: 0, ad_say: 0, ad_wait: 0, ad_end: 0, ad_pause: 0};
+const shown = [], pauses = [], guards = [];
 for (const tag of parsed) {
+  if (tag.name === 'eval') { guards.push(tag.pm.exp); continue; }  // kag.tag_system.js is not loaded here
+  if (tag.name in owned) {
+    owned[tag.name]++;
+    if (tag.name === 'ad_pause') pauses.push(Number(tag.pm.time));
+    if (['ad_line', 'ad_say'].includes(tag.name) && !input.lines.includes(tag.pm.id)) throw Error('Unknown line');
+    continue;
+  }
   if (!instances[tag.name]) throw Error('Unknown tag: ' + tag.name);
   const handler = instances[tag.name];
   const pm = {...JSON.parse(JSON.stringify(handler.pm || {})), ...tag.pm};
   for (const required of handler.vital || []) {
     if (!pm[required]) throw Error('Missing required parameter: ' + tag.name + '.' + required);
   }
-  if (['loadjs', 'chara_config', 'chara_new', 'chara_ptext', 'wait', 'p', 's'].includes(tag.name)) {
+  if (['chara_config', 'chara_new', 'chara_ptext', 's'].includes(tag.name)) {
     handler.start(pm);
-  } else if (tag.name === 'text') {
-    instances.text.pushTextToBackLog(state.current_speaker, pm.val);
   } else if (tag.name === 'chara_show') {
     if (!state.charas[pm.name]) throw Error('Undefined character');
     // Transparent padding and lower body may extend beyond the stage by design.
@@ -399,23 +371,25 @@ for (const tag of parsed) {
     shown.push(pm.name);
   } else if (tag.name === 'bg' && !input.paths.includes('data/bgimage/' + pm.storage)) {
     throw Error('Missing background');
-  } else if (tag.name === 'position' && (+pm.top + +pm.height > 720 || +pm.left + +pm.width > 1280)) {
-    throw Error('Message window outside the screen');
+  } else if (tag.name === 'layopt' && (pm.layer !== 'message0' || pm.visible !== 'false')) {
+    throw Error('The engine message layer must stay hidden');
   }
 }
-process.stdout.write(JSON.stringify({clicks, timers, focus, shown, log, preloads, strong, weak, next}));
+process.stdout.write(JSON.stringify({owned, pauses, guards, focus, shown, preloads, strong, weak,
+  names: parsed.map(tag => tag.name)}));
 """,
         {"scenario": compile_scenario(script, assets), "paths": paths,
-         "safety": BACKLOG_SAFETY.decode()},
+         "lines": [line.id for line in script.utterances]},
         str(engine),
     )
-    assert result["clicks"] == ["p"] * (len(script.utterances) + 1)
-    assert result["timers"] == [450]
+    count = len(script.utterances)
+    assert result["owned"] == {"ad_gate": 1, "ad_line": count, "ad_say": count, "ad_wait": count,
+                               "ad_end": 1, "ad_pause": 1}
+    assert result["pauses"] == [450]
+    assert len(result["guards"]) == 1 and result["names"][0] == "eval"
     assert result["shown"] == ["ad_aki", "ad_ren"]
     assert result["focus"] == ["ad_ren", "ad_aki", "ad_ren"]
     assert len(result["preloads"]) == 2
     assert result["strong"] and result["weak"]  # The explicit final [s] stops playback.
-    assert all("ad_" not in line for line in result["log"])
-    assert all(
-        any(character.name in line for line in result["log"]) for character in script.characters
-    )
+    # Nothing reaches the engine's text renderer, click waits or backlog.
+    assert not {"text", "p", "l", "r", "cm", "playse", "wse", "wait", "loadjs"} & set(result["names"])

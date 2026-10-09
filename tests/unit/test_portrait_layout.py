@@ -385,7 +385,7 @@ def test_player_storage_namespace_changes_for_physical_height_layout_revision():
     script_bytes = b'{"id":"unchanged-chapter"}'
     config = player_config(script_bytes).decode()
     old = hashlib.sha256(b"portrait-layout-v2\0" + script_bytes).hexdigest()
-    current = hashlib.sha256(b"portrait-layout-v3-player-m4\0" + script_bytes).hexdigest()
+    current = hashlib.sha256(b"portrait-layout-v3-player-m5\0" + script_bytes).hexdigest()
 
     assert f"auto_drama_{current}" in config
     assert old not in config

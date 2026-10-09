@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 
 from packages.contracts import Script
-from packages.contracts.m3 import NarrativeResult, PortraitSetting
+from packages.contracts.m3 import NarrativeDirection, NarrativeResult, PortraitSetting
 
+from .staging import normalize_directions
 from .validation import script_character_id
 
 
@@ -17,7 +18,8 @@ def stable_id(prefix: str, value: str) -> str:
 def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: dict, *,
                         script_id: str, portrait_settings: dict | None = None,
                         allow_missing_audio: bool = False,
-                        omitted_portraits: set[str] | None = None) -> Script:
+                        omitted_portraits: set[str] | None = None,
+                        normalization_reports: list[dict] | None = None) -> Script:
     """Use already-resolved assets without DB access, generation, or prose rewriting.
 
     Reference keys are the production requirement's ``(kind, target_id)`` pairs.
@@ -76,7 +78,12 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                                "voice_emotion": utterance.voice_emotion,
                                "delivery": utterance.delivery,
                                "audio_asset_id": audio["id"] if audio else None})
-        for direction in scene.directions:
+        normalized, report = normalize_directions([
+            row.model_dump(mode="json") for row in scene.directions])
+        if report["changes"] and normalization_reports is not None:
+            normalization_reports.append({"scene_id": scene.id, **report})
+        for raw_direction in normalized:
+            direction = NarrativeDirection.model_validate(raw_direction)
             if direction.character_id in omitted_portraits:
                 continue
             value = {"id": direction.id, "kind": direction.kind,

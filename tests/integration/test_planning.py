@@ -138,7 +138,7 @@ def test_failed_revision_preserves_plan_and_retries_same_frozen_instruction(tmp_
         response = client.post(f"/api/jobs/{job['id']}/retry")
         assert response.status_code == 200, response.text
         retry = claim(client, worker)
-        assert retry["payload"] == job["payload"]
+        assert retry["payload"] == {**job["payload"], "execution_settings_revision": 1}
         assert retry["payload"]["profile"] == original_job["payload"]["profile"]
         repaired = copy.deepcopy(original)
         repaired["plot"]["chapters"][0]["role"] = "会話と交流を描く。"
@@ -199,14 +199,16 @@ def test_invalid_save_or_wrong_protocol_preserves_valid_plan(tmp_path):
         assert planning(client, project)["content"] == original["content"]
 
 
-def test_plan_generation_freezes_profiles_before_step5(tmp_path, monkeypatch):
+def test_plan_approval_uses_current_profile_and_preserves_voice_and_seed(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path)) as client:
         project, _, job = reviewed(client)
         monkeypatch.setattr(M2Service, "_profile", lambda *_: {"provider": "local", "model_id": "changed"})
         plan_action(client, project, "approve")
         response = client.get(f"/api/m3/projects/{project['project']['id']}").json()
         narrative = next(row for row in response["production"]["jobs"] if row["kind"] == "m3_narrative")
-        assert narrative["payload"]["profile"] == job["payload"]["profile"]
+        assert narrative["payload"]["profile"]["model_id"] == "changed"
+        assert narrative["payload"]["execution_settings_version"] == 1
+        assert "max_tokens" not in narrative["payload"]["profile"]
         assert narrative["payload"]["tts_profile"] == job["payload"]["tts_profile"]
         assert narrative["payload"]["seed"] == job["payload"]["seed"]
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorMessage, request } from './api'
-import { putEventCg, type EventCgProfile, type EventCgSettings as Settings } from './eventCgState'
+import { applyEventCgConfiguration, eventCgConfigurationId, putEventCg, type EventCgProfile, type EventCgSettings as Settings } from './eventCgState'
 import './event-cg.css'
 
 export function EventCgSettings({ visible, onBusyChange }: { visible: boolean; onBusyChange: (busy: boolean) => void }) {
@@ -19,6 +19,9 @@ export function EventCgSettings({ visible, onBusyChange }: { visible: boolean; o
   const stepCount = steps.trim() ? Number(steps) : NaN
   const invalid = !Number.isInteger(stepCount) || stepCount < 1 || stepCount > 100
   const dirty = Boolean(settings && profile && (JSON.stringify(profile) !== JSON.stringify(settings.profile) || stepCount !== settings.profile.steps))
+  const configurations = settings?.configurations ?? []
+  const sizes = settings?.sizes ?? (profile ? [{ width: profile.width, height: profile.height }] : [])
+  const selected = profile ? eventCgConfigurationId(profile, configurations) : null
 
   useEffect(() => {
     mounted.current = true
@@ -66,13 +69,25 @@ export function EventCgSettings({ visible, onBusyChange }: { visible: boolean; o
     {loading && <p role="status">画像設定と実行環境を確認中…</p>}
     {settings && profile && <>
       <h3>Qwen-Image-2.1</h3>
-      <dl><dt>精度</dt><dd>BF16（量子化なし）</dd><dt>画像サイズ</dt><dd>{profile.width} × {profile.height}</dd><dt>モデルの版</dt><dd><code>{profile.model_revision}</code></dd></dl>
+      <dl><dt>精度</dt><dd>{profile.transformer_storage === 'fp8' ? '8ビット（fp8）で保持し、BF16で計算' : 'BF16（量子化なし）'}</dd><dt>モデルの版</dt><dd><code>{profile.model_revision}</code></dd></dl>
       <form onSubmit={event => { event.preventDefault(); void save() }}>
         <fieldset className="event-cg-fields" disabled={saving || conflict}>
-          <label>CPUオフロード<select value={profile.cpu_offload ? 'on' : 'off'} onChange={event => { setProfile({ ...profile, cpu_offload: event.target.value === 'on' }); setNotice('') }}><option value="on">有効</option><option value="off">無効</option></select><small>有効にするとCPUメモリへ一部を移し、VRAM使用量を抑えます。</small></label>
+          <label>画像サイズ<select value={`${profile.width}x${profile.height}`} onChange={event => { const [width, height] = event.target.value.split('x').map(Number); setProfile({ ...profile, width, height }); setNotice('') }}>{sizes.map(size => <option key={`${size.width}x${size.height}`} value={`${size.width}x${size.height}`}>{size.width} × {size.height}{size.width === 960 ? '（標準）' : '（高精細）'}</option>)}</select><small>鑑賞画面は960×640です。1536×1024は高解像度の画面で細部まで表示され、1枚の生成時間は約1.6倍になります。</small></label>
           <label>推論ステップ数<input type="number" min={1} max={100} step={1} value={steps} onChange={event => { setSteps(event.target.value); setNotice('') }}/><small>初期値40。変更すると画質・所要時間に影響します。</small></label>
-          <label>KVキャッシュ<select value={profile.use_kv_cache ? 'on' : 'off'} onChange={event => { setProfile({ ...profile, use_kv_cache: event.target.value === 'on' }); setNotice('') }}><option value="on">有効</option><option value="off">無効</option></select><small>初期値は有効です。</small></label>
         </fieldset>
+        {configurations.length > 0 && <fieldset className="event-cg-configurations" disabled={saving || conflict}>
+          <legend>メモリーの構成</legend>
+          <p>ワーカーのGPUのVRAMに合う構成を選びます。上にあるものほど基準の画質に近く、下にあるものほど少ないVRAMで動きます。</p>
+          <ul>{configurations.map(item => <li key={item.id}><label>
+            <input type="radio" name="event-cg-configuration" checked={selected === item.id} onChange={() => { setProfile(applyEventCgConfiguration(profile, item)); setNotice('') }}/>
+            <strong>{item.label}</strong>
+            <span>VRAM 約{item.peak_vram_gib}GB</span>
+            <span>{item.time_ratio === 1 ? '時間 基準' : `時間 基準の約${item.time_ratio}倍`}</span>
+            <small>{item.quality}</small>
+          </label></li>)}</ul>
+          {!selected && <p className="event-cg-warning" role="status">現在の設定は一覧のどの構成とも一致しません。構成を選ぶと、その内容に置き換わります。</p>}
+          <p><small>VRAMは、3人を参照した1536×1024の画像を生成したときの最大使用量の実測です。このほかに3〜4GBの空きが必要です。参照する人物が2人以下なら1〜2GBずつ軽くなります。時間は「32GB：標準」を基準にした比で、実際の秒数はGPUなどの構成によって変わります。画質の説明は少数の画像を見比べた目安です。</small></p>
+        </fieldset>}
         {invalid && <p className="tts-error" role="alert">推論ステップ数は1〜100の整数で指定してください。</p>}
         <p>保存した設定は、次に開始する制作版で固定されます。</p>
         <div className="tts-settings-actions"><button type="submit" disabled={saving || !dirty || invalid || conflict}>{saving ? '保存中…' : '画像設定を保存'}</button></div>

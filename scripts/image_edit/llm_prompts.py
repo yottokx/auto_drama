@@ -140,6 +140,20 @@ def _extract_details(content: object, reference_count: int) -> dict[str, str]:
     )
 
 
+def post_chat(base_url: str, payload: dict, headers: dict, timeout: float) -> bytes:
+    """One chat completion; transport failures are reported, never retried."""
+    request = Request(base_url.rstrip("/") + "/chat/completions",
+                      data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                      headers=headers, method="POST")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.read(1024 * 1024 + 1)
+    except HTTPError as exc:
+        raise ValueError(f"プロンプト生成LLMがHTTP {exc.code}を返しました。") from exc
+    except (URLError, OSError) as exc:
+        raise ValueError(f"プロンプト生成LLMに接続できません: {exc}") from exc
+
+
 def request_scene_prompt(scene: dict, references: list[dict], instruction: str,
                          base_url: str, model: str, *, api_key: str | None = None,
                          timeout: float = 120, request_options: dict | None = None) -> dict[str, str]:
@@ -179,16 +193,7 @@ def request_scene_prompt(scene: dict, references: list[dict], instruction: str,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError("LLMのプロンプト作成が制限時間を超えました。")
-        request = Request(base_url.rstrip("/") + "/chat/completions",
-                          data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                          headers=headers, method="POST")
-        try:
-            with urlopen(request, timeout=remaining) as response:
-                raw = response.read(1024 * 1024 + 1)
-        except HTTPError as exc:
-            raise ValueError(f"プロンプト生成LLMがHTTP {exc.code}を返しました。") from exc
-        except (URLError, OSError) as exc:
-            raise ValueError(f"プロンプト生成LLMに接続できません: {exc}") from exc
+        raw = post_chat(base_url, payload, headers, remaining)
         try:
             if len(raw) > 1024 * 1024:
                 raise ValueError("LLMの応答が1MiBを超えています。")

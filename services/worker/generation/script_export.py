@@ -86,8 +86,9 @@ def export_debug_chapter(narrative: NarrativeResult, snapshot: dict, output: Pat
                                      "resolution": "not_generated"})
     narrative_bytes = canonical_json(narrative.model_dump(mode="json"))
     script_id = f"debug-chapter-{narrative.chapter_number:03d}-{_hash(narrative_bytes)[:24]}"
+    staging_reports = []
     script = narrative_to_script(narrative, snapshot, references, script_id=script_id,
-                                 allow_missing_audio=True)
+                                 allow_missing_audio=True, normalization_reports=staging_reports)
     public_approval = {"schema_version": 1, "approval_id": snapshot.get("id"),
                        "world": snapshot["world"]["result"],
                        "characters": [row["result"] for row in snapshot["characters"]],
@@ -95,6 +96,9 @@ def export_debug_chapter(narrative: NarrativeResult, snapshot: dict, output: Pat
     documents = {"approval.json": canonical_json(public_approval), "narrative.json": narrative_bytes,
                  **{f"sources/{scene.id}.txt": scene.raw_text.encode("utf-8")
                     for scene in narrative.scenes}}
+    if staging_reports:
+        documents["staging-normalization.json"] = canonical_json({
+            "schema_version": 1, "reports": staging_reports})
     bundle = compile_bundle(script, assets, documents=documents)
     manifest = validate_bundle(bundle, script, assets, documents=documents)
     bundle_hash = _hash(bundle)
@@ -113,6 +117,7 @@ def export_debug_chapter(narrative: NarrativeResult, snapshot: dict, output: Pat
     return {"schema_version": 1, "execution_mode": "text_only",
             "chapter_number": narrative.chapter_number, "script_id": script.id,
             "quality_acceptance": "not_evaluated", "engine_included": False,
+            "staging_normalizations": staging_reports,
             "script_path": "script.json", "bundle_path": "tyrano-source.zip",
             "player_directory": player_directory,
             "player_entrypoint": f"{player_directory}/index.html",

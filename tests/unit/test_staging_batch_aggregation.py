@@ -26,8 +26,8 @@ def scene_annotations():
     batches = []
     for start, count in zip(range(0, len(utterances), 10), (4, 50, 1, 1), strict=True):
         batch = utterances[start:start + 10]
-        # Repeated annotations are deliberately retained; deduplication would
-        # be a separate semantic policy, not the batch/aggregate limit fix.
+        # Batch aggregation preserves raw annotations; the separate adoption
+        # policy normalizes their playback effects and records the original data.
         ids = ([batch[0].id] * 25 + [batch[1].id] * 24 + [batch[2].id]
                if count == 50 else [batch[index % len(batch)].id for index in range(count)])
         batches.append({
@@ -61,7 +61,11 @@ def test_valid_batches_keep_all_annotations_and_the_per_request_limit():
         schema = extra["response_format"]["json_schema"]["schema"]
         assert schema["title"] == "Staging"
         assert schema["properties"]["directions"]["maxItems"] == 50
-    assert len(narrative._directions(plan, utterances, result)) == 58  # Includes two entrances.
+    trace = []
+    adopted = narrative._directions(plan, utterances, result, trace=trace)
+    assert len(adopted) == 11  # Nine distinct pauses plus two entrances.
+    assert trace[0]["removed_count"] == 47
+    assert len(trace[0]["original_directions"]) == 58
     assert [raw[row.source_start:row.source_end] for row in utterances] == [
         row.display_text for row in utterances]
 
@@ -138,9 +142,13 @@ def test_explicit_retry_of_old_aggregate_failure_reuses_source_and_valid_batches
     scene = envelope["result"]["scenes"][0]
     assert scene["raw_text"] == raw
     assert len(scene["utterances"]) == 31
-    assert len(scene["directions"]) == 58
+    assert len(scene["directions"]) == 11
+    utterances = parse_scene_text(raw, "s1", set(scene["plan"]["character_ids"]))
     assert [row["utterance_id"] for row in scene["directions"][2:]] == [
-        row["utterance_id"] for batch in batches for row in batch["directions"]]
+        utterances[index].id for index in (0, 1, 2, 3, 10, 11, 12, 20, 30)]
+    audit = read_json(tmp_path / "script/report.json")["staging_normalizations"]["c001-s1"][0]
+    assert audit["removed_count"] == 47
+    assert len(audit["original_directions"]) == 58
     after = read_json(state_path)
     for key in ("outline", "plan-001", "c001-s1-text", *staging_keys[:-1]):
         assert after["steps"][key] == before["steps"][key]
