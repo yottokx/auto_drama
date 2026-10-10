@@ -8,7 +8,11 @@ export type M2Character = {
   imagePendingChanges?: boolean; voicePendingChanges?: boolean
   imageArtifactId: string | null; voiceArtifactId: string | null
   imageUrl: string | null; voiceUrl: string | null
-  voiceReferenceText?: string | null; voiceTests?: VoiceTest[]
+  voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]
+}
+export type M2Outfit = {
+  id: string; name: string; description?: string; occasion?: string; generatedDescription?: string | null
+  imageArtifactId?: string | null; baseImageArtifactId?: string | null; imagePendingChanges?: boolean; imageUrl?: string | null
 }
 export type VoiceTest = { id: string; text: string; artifactId: string; url: string; sourceVoiceArtifactId: string; createdAt: string }
 export type RelationshipInput = { characterIds: [string, string]; instruction: string }

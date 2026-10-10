@@ -216,6 +216,14 @@
           "minimum": 0.1,
           "title": "Scale",
           "type": "number"
+        },
+        "outfits": {
+          "items": {
+            "$ref": "#/$defs/CharacterOutfit"
+          },
+          "maxItems": 20,
+          "title": "Outfits",
+          "type": "array"
         }
       },
       "required": [
@@ -223,6 +231,53 @@
         "name"
       ],
       "title": "Character",
+      "type": "object"
+    },
+    "CharacterOutfit": {
+      "additionalProperties": false,
+      "description": "An alternate portrait of the same character, shown by an entrance that names it.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "image_asset_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Image Asset Id",
+          "type": "string"
+        },
+        "body_bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortraitBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "offset_y": {
+          "default": 0,
+          "maximum": 640,
+          "minimum": -640,
+          "title": "Offset Y",
+          "type": "number"
+        },
+        "scale": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0.1,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "image_asset_id"
+      ],
+      "title": "CharacterOutfit",
       "type": "object"
     },
     "EnterDirection": {
@@ -274,6 +329,19 @@
           "minimum": 0,
           "title": "Duration Ms",
           "type": "integer"
+        },
+        "outfit_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outfit Id"
         }
       },
       "required": [
@@ -533,6 +601,63 @@
         "action"
       ],
       "title": "MusicCue",
+      "type": "object"
+    },
+    "OutfitDirection": {
+      "additionalProperties": false,
+      "description": "Change a character's portrait in place; ``default`` returns to the base image.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "outfit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "character_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "outfit_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Outfit Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "character_id",
+        "outfit_id"
+      ],
+      "title": "OutfitDirection",
       "type": "object"
     },
     "PauseDirection": {
@@ -961,6 +1086,7 @@
             "enter": "#/$defs/EnterDirection",
             "exit": "#/$defs/ExitDirection",
             "focus": "#/$defs/FocusDirection",
+            "outfit": "#/$defs/OutfitDirection",
             "pause": "#/$defs/PauseDirection",
             "position": "#/$defs/PositionDirection"
           },
@@ -978,6 +1104,9 @@
           },
           {
             "$ref": "#/$defs/PositionDirection"
+          },
+          {
+            "$ref": "#/$defs/OutfitDirection"
           },
           {
             "$ref": "#/$defs/FocusDirection"

@@ -19,7 +19,13 @@ from .planning_state import install_plan
 from .script_cast import CastConnection, ScriptOptions
 from .script_continuation import POLICY, ScriptRun
 from .script_examples import example_catalog_identity
-from .script_plot import DetailedPlot, PlotChapter, bind_core_cast
+from .script_plot import (
+    OUTFIT_ALLOCATION,
+    DetailedPlot,
+    PlotChapter,
+    add_outfit_appearances,
+    bind_core_cast,
+)
 from .script_production import ProductionScriptRun, _generation_identity_config
 from .workflow_version import generator_protocol
 
@@ -114,6 +120,9 @@ class CommonPlanRun(ScriptRun):
         main = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
         if target in {"all", "plot"} and not number:
             bind_core_cast(schema, main, core="PlotCore", character="PlotCharacter")
+        outfits = self.outfits if target in {"all", "plot"} else {}
+        if outfits:
+            add_outfit_appearances(schema, outfits)
         context = {"setting": {"approved_setting": self.setting(planned=True), "current_common_plan": source},
                    "outline": "", "brief": self.payload["instruction"], "chapters": [], "notes": [],
                    "optional_example": None}
@@ -149,6 +158,8 @@ class CommonPlanRun(ScriptRun):
         def check_revision(row):
             combine(row)
 
+        if outfits:
+            scope += OUTFIT_ALLOCATION + "current_common_planのoutfit_appearancesは、指示で変えない限り維持します。"
         value = self.structured("common-plan-revision", "script-outline", 1, instruction + scope,
                                 context, model, check_revision, schema)
         return combine(value)

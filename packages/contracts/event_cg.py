@@ -8,11 +8,15 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
+from .outfits import look_timeline
 from .script import Contract, Identifier
 
 MODEL_REVISION = "d26bb61231c349cf6b7896fa83353113880e1ba3"
 BUDGET_ALLOCATION_VERSION = 2
 STAGING_RULES_VERSION = 2
+# Version 3 asks only for a first and last line and fits the answer to the script;
+# it has no evidence, minimum-length or safe-end rules to reject a plan with.
+LENIENT_RULES_VERSION = 3
 # These values belong to planning version 2. Change the version for new rules.
 MIN_IMAGE_UTTERANCES = 5
 TARGET_CG_UTTERANCES = (12, 30)
@@ -86,7 +90,7 @@ def configuration_id(profile: dict | EventCgProfile) -> str | None:
 
 
 class EventCgPolicy(Contract):
-    planning_version: Literal[1, 2] = 1
+    planning_version: Literal[1, 2, 3] = 1
     max_cgs: int = Field(default=0, ge=0, le=100, strict=True)
     max_variants_per_cg: int = Field(default=0, ge=0, le=10, strict=True)
     generation_profile: EventCgProfile = Field(default_factory=EventCgProfile)
@@ -149,7 +153,7 @@ class EventCgPlanningNote(Contract):
 
 class EventCgPlan(Contract):
     schema_version: Literal[1] = 1
-    planning_version: Literal[1, 2] = 1
+    planning_version: Literal[1, 2, 3] = 1
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     cgs: list[EventCgPlannedImage] = Field(default_factory=list, max_length=100)
     omission_reason: str = Field(default="", max_length=4000)
@@ -213,6 +217,7 @@ def validate_plan(value: dict | EventCgPlan, payload: dict) -> EventCgPlan:
     utterances = [(scene["id"], row["id"]) for scene in scenes for row in scene["utterances"]]
     order = {uid: index for index, (_, uid) in enumerate(utterances)}
     known = {row["character_id"] for row in payload["references"]}
+    looks = look_timeline(scenes)
     if (result.source_sha256 != context["source_sha256"]
             or len(result.cgs) + len(result.prompt_omissions) > min(policy.max_cgs, payload["chapter_budget"])):
         raise ValueError("CG plan differs from the frozen narrative or chapter allowance.")
@@ -241,7 +246,14 @@ def validate_plan(value: dict | EventCgPlan, payload: dict) -> EventCgPlan:
         anchors = [order.get(variant.start_utterance_id, -1) for variant in cg.variants]
         if anchors != sorted(set(anchors)) or any(not start < anchor < end for anchor in anchors):
             raise ValueError("CG variants require distinct, ordered anchors strictly inside the interval.")
-        if policy.planning_version >= STAGING_RULES_VERSION:
+        # One reference portrait serves the whole CG, so its people keep one look throughout.
+        for cid in cg.character_ids if looks else ():
+            first = looks[utterances[start][1]].get(cid)
+            changed = next((uid for _, uid in utterances[start:end] if looks[uid].get(cid) != first), None)
+            if changed:
+                raise ValueError(f"{cg.id}: {cid} changes outfit/form at {changed}. A CG keeps one look: "
+                                 f"end it before {changed} or start it at {changed}.")
+        if policy.planning_version == STAGING_RULES_VERSION:
             _validate_staging(cg, utterances, order, start, end, anchors)
         intervals.append((start, end))
     intervals.sort()

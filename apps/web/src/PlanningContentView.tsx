@@ -1,4 +1,4 @@
-import type { CastLife, PlanningContent, PlanningTab, PlotRoute } from './planningState'
+import type { CastLife, OutfitNames, PlanningContent, PlanningTab, PlotRoute } from './planningState'
 import type { CharacterBrief } from './wizardState'
 
 const routeLabels: Record<keyof PlotRoute, string> = {
@@ -19,8 +19,8 @@ function EverydayContext({ life }: { life: CastLife }) {
   </div>
 }
 
-export function PlanningContentView({ content, mainCharacters, tab }: {
-  content: PlanningContent; mainCharacters: CharacterBrief[]; tab: PlanningTab
+export function PlanningContentView({ content, mainCharacters, tab, outfitNames = {} }: {
+  content: PlanningContent; mainCharacters: CharacterBrief[]; tab: PlanningTab; outfitNames?: OutfitNames
 }) {
   const { cast_plan: cast, plot } = content
   const names = new Map([...mainCharacters, ...cast.supporting_characters].map(character => [character.id, character.name]))
@@ -60,6 +60,7 @@ export function PlanningContentView({ content, mainCharacters, tab }: {
         <header><span className="planning-read-kicker">第{chapter.number}章</span><h3>{chapter.title}</h3><p className="planning-read-role">{chapter.role}</p></header>
         {chapter.events?.length ? <div className="planning-read-events">{chapter.events.map((event, eventIndex) => <section className="planning-read-event" key={eventIndex}><h4>出来事 {eventIndex + 1}</h4><p className="planning-read-event-start">{event.start_condition}</p><ol className="planning-read-timeline">{event.steps.map((step, stepIndex) => <li key={stepIndex}><span className="planning-read-person">{name(step.character_id)}</span><p>{step.action}</p><div className="planning-read-result"><span aria-hidden="true">→</span><p>{step.result}</p></div></li>)}</ol></section>)}</div> : <div className="planning-read-route">{(Object.keys(routeLabels) as (keyof PlotRoute)[]).map(key => <ReadingBlock title={routeLabels[key]} text={chapter.route[key]} key={key}/>)}</div>}
         {Boolean(chapter.conversation_topics?.length) && <section className="planning-read-section"><h4>会話の材料</h4><div className="planning-read-topics">{chapter.conversation_topics?.map((topic, index) => <article key={index}><span>{topic.character_ids.map(name).join('・')}</span><h5>{topic.topic}</h5><p>{topic.exchange}</p></article>)}</div></section>}
+        {Boolean(chapter.outfit_appearances?.length) && <section className="planning-read-section"><h4>この章で登場する別バージョン</h4><div className="planning-read-topics">{chapter.outfit_appearances?.map((look, index) => <article key={index}><span>{name(look.character_id)}</span><h5>{outfitNames[look.character_id]?.[look.outfit_id] || look.outfit_id}</h5><p>{look.occasion}</p></article>)}</div></section>}
       </article>)}
     </section>
     <section className="planning-card"><h3>伏線 <span>{plot.core.foreshadowing.length}件</span></h3>{plot.core.foreshadowing.length ? <ul className="planning-read-foreshadowing">{plot.core.foreshadowing.map((item, index) => <li key={index}><div><span>第{item.setup_chapter}章で提示</span><span aria-hidden="true">→</span><span>第{item.payoff_chapter}章で回収</span></div><p>{item.detail}</p></li>)}</ul> : <p className="planning-read-muted">伏線は設定されていません。</p>}</section>

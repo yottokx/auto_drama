@@ -5,6 +5,7 @@ import { Dialog } from './PreviewComponents'
 import {
   canApprovePlanning, cancelPlanningTab, initialPlanningEditor, planningAction, planningActivity, planningDirty, planningTabDirty, receivePlanning,
   type PlanningContent, type PlanningEditorState, type PlanningResponse, type PlanningTab, type RevisionTarget,
+  type OutfitNames,
 } from './planningState'
 import { PlanningContentEditor } from './PlanningContentEditor'
 import { PlanningContentView } from './PlanningContentView'
@@ -15,8 +16,8 @@ import { llmProgressItems } from './productionState'
 import type { CharacterBrief, WizardStep } from './wizardState'
 import './planning.css'
 
-export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId, setupApproved, serverStep, onRefresh, onReloadSetup, onPendingChange, onApproved, onBack, onProduction }: {
-  projectId: string; mainCharacters: CharacterBrief[]; onPendingChange: (pending: boolean) => void
+export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, mainApprovalId, setupApproved, serverStep, onRefresh, onReloadSetup, onPendingChange, onApproved, onBack, onProduction }: {
+  projectId: string; mainCharacters: CharacterBrief[]; outfitNames?: OutfitNames; onPendingChange: (pending: boolean) => void
   mainApprovalId: string | null; setupApproved: boolean; serverStep: WizardStep
   onRefresh: () => Promise<void>; onReloadSetup: () => void
   onApproved: () => Promise<void>; onBack: () => void; onProduction: () => void
@@ -218,8 +219,8 @@ export function PlanningReviewPanel({ projectId, mainCharacters, mainApprovalId,
         }}>{item === 'plot' ? 'プロット' : 'サブキャラ'}{planningTabDirty(state, item) && <span className="planning-tab-unsaved">（未保存）</span>}</button>)}</div>
         {(['plot', 'cast'] as const).map(item => <section key={item} className="planning-tabpanel" role="tabpanel" id={`${panelId}-panel-${item}`} aria-labelledby={`${panelId}-tab-${item}`} hidden={tab !== item} tabIndex={0}>{tab === item && <>
           <div className="planning-toolbar"><p>{editing ? `${item === 'plot' ? 'プロット' : 'サブキャラ'}を直接編集中です。タブを切り替えても入力は保持されます。` : '内容を確認し、変更したいときは直接編集できます。'}</p>{!editing && <button className="button button-light" disabled={busy || state.conflict || setupInvalidated} onClick={beginEditing}>直接編集</button>}</div>
-          {editing ? <PlanningContentEditor content={state.content!} mainCharacters={setupSource.current.characters} tab={item} disabled={busy || state.conflict || setupInvalidated} onChange={content => { commit(previous => ({ ...previous, content })); setNotice('') }}/>
-            : <PlanningContentView content={state.content!} mainCharacters={setupSource.current.characters} tab={item}/>}
+          {editing ? <PlanningContentEditor content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item} disabled={busy || state.conflict || setupInvalidated} onChange={content => { commit(previous => ({ ...previous, content })); setNotice('') }}/>
+            : <PlanningContentView content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item}/>}
           {editing && <div className="planning-save"><p>{dirty ? '未保存の変更があります。保存すると、両方のタブで編集した内容をまとめて記録します。' : '保存したあとは、内容を読みやすい表示に戻します。'}</p><div><button className="button button-light" disabled={busy} onClick={cancelEditing}>編集を取り消す</button><button className="button button-primary" disabled={!dirty || busy || state.conflict || setupInvalidated} onClick={() => void mutate('save')}><Icon name="check" size={15}/>変更を保存する</button></div></div>}
         </>}</section>)}
         <section className="planning-revision" aria-label="AIへの修正指示"><div className="planning-revision-toggle"><button className="button button-light" aria-expanded={revisionOpen} aria-controls={`${panelId}-revision`} onClick={() => setRevisionOpen(previous => !previous)}><Icon name="spark" size={15}/>{revisionOpen ? '修正指示を閉じる' : 'AIに修正を指示'}</button>{!revisionOpen && state.instruction.trim() && <span>送信前の指示を保持しています。</span>}</div><div id={`${panelId}-revision`} hidden={!revisionOpen}>{revisionOpen && <><h3>AIに修正を指示する</h3><fieldset disabled={busy || state.conflict || setupInvalidated}>

@@ -9,7 +9,12 @@ from collections.abc import Mapping
 from dataclasses import asdict
 
 from packages.contracts import Script
-from packages.contracts.script import PortraitBaseline, PortraitBounds, PortraitTransform
+from packages.contracts.script import (
+    PortraitBaseline,
+    PortraitBounds,
+    PortraitTransform,
+    portrait_key,
+)
 
 from .portrait import (
     DEFAULT_HUMANOID_HEIGHT_CM,
@@ -109,9 +114,15 @@ def stage_geometry(sources: Mapping[str, PortraitSource], baseline: dict | None 
 
 
 def script_portrait_sources(script: Script, images: dict[str, bytes]) -> dict[str, PortraitSource]:
-    return {character.id: PortraitSource(images[character.image_asset_id], character.framing, character.height_cm,
-                                         character.body_bounds.model_dump() if character.body_bounds else None)
-            for character in script.characters if character.image_asset_id}
+    sources = {character.id: PortraitSource(images[character.image_asset_id], character.framing, character.height_cm,
+                                            character.body_bounds.model_dump() if character.body_bounds else None)
+               for character in script.characters if character.image_asset_id}
+    # An alternate outfit has its own silhouette; the body rectangle belongs to the base image.
+    sources.update({portrait_key(character.id, outfit.id): PortraitSource(
+        images[outfit.image_asset_id], character.framing, character.height_cm,
+        outfit.body_bounds.model_dump() if outfit.body_bounds else None)
+        for character in script.characters for outfit in character.outfits})
+    return sources
 
 
 def script_portrait_layouts(script: Script, images: dict[str, bytes]) -> dict[str, PortraitLayout]:
@@ -126,6 +137,8 @@ def script_portrait_layouts(script: Script, images: dict[str, bytes]) -> dict[st
                 raise ValueError("portrait baseline differs from the selected image or body bounds")
     adjustments = {character.id: {"offset_y": character.offset_y, "scale": character.scale}
                    for character in script.characters}
+    adjustments.update({portrait_key(character.id, outfit.id): {"offset_y": outfit.offset_y, "scale": outfit.scale}
+                        for character in script.characters for outfit in character.outfits})
     return {key: resolved_portrait_layout(defaults["layouts"][key], adjustments[key]) for key in sources}
 
 
@@ -135,4 +148,7 @@ def apply_portrait_presentation(script: Script, baseline: dict, adjustments: dic
     adjustments = adjustments or {}
     for character in values["characters"]:
         character.update(PortraitTransform.model_validate(adjustments.get(character["id"], {})).model_dump(mode="json"))
+        for outfit in character.get("outfits", []):
+            outfit.update(PortraitTransform.model_validate(
+                adjustments.get(portrait_key(character["id"], outfit["id"]), {})).model_dump(mode="json"))
     return Script.model_validate(values)

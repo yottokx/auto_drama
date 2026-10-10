@@ -1,5 +1,6 @@
 """M2 wizard API; M1 owns shared jobs, leases, workers and artifact downloads."""
 
+import json
 from collections.abc import Callable
 
 from fastapi import APIRouter, Query, Request
@@ -57,8 +58,19 @@ def router(coordinator: Callable[[], Coordinator]) -> APIRouter:
             content.extend(chunk)
             if len(content) > MAX_BUNDLE_BYTES:
                 raise ServiceError(413, "M2の出力は32MiB以内にしてください。")
+        current = service()
+        with current.db.transaction() as connection:
+            from .service import required
+
+            adjusted = json.loads(required(connection, "job", job_id)["payload"]).get("adjustment")
+        if adjusted:
+            # A finished work regenerates an alternate look with the same job kind as STEP3.
+            from .adjustment_service import AdjustmentService
+
+            return await run_in_threadpool(
+                AdjustmentService(current.coordinator).complete, job_id, worker_id, lease_id, bytes(content))
         return await run_in_threadpool(
-            service().complete, job_id, worker_id, lease_id, bytes(content)
+            current.complete, job_id, worker_id, lease_id, bytes(content)
         )
 
     return routes

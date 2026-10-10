@@ -23,6 +23,26 @@ def scene_material(number, plan, context, following_plans):
         {key: row[key] for key in ("id", "name", "role") if key in row}
         for row in setting["characters"]]
     setting["locations"] = [row for row in setting["locations"] if row["id"] == plan.location_id]
+    if "character_outfits" in setting:
+        # The writer sees the looks of this scene, not the wardrobe to choose from.
+        chosen = {row.character_id: row for row in plan.outfits}
+        looks = []
+        for entry in setting.pop("character_outfits"):
+            if entry["character_id"] not in active:
+                continue
+            by_id = {row["id"]: {key: row[key] for key in ("name", "description") if row.get(key)}
+                     for row in entry["outfits"]}
+            choice = chosen.get(entry["character_id"])
+            look = {"character_id": entry["character_id"],
+                    "at_scene_start": by_id[choice.outfit_id if choice else "default"]}
+            if choice and choice.change_to:
+                look["changes_during_scene_to"] = by_id[choice.change_to]
+            looks.append(look)
+        # Naming the others' single look keeps a shared outing from changing everyone's clothes.
+        listed = {look["character_id"] for look in looks}
+        looks.extend({"character_id": cid, "at_scene_start": {"name": "いつもの姿（この人物の姿は1種類で、変わらない）"}}
+                     for cid in plan.character_ids if cid not in listed)
+        setting["scene_outfits"] = looks
     relationships = setting.get("relationships", {})
     if isinstance(relationships, dict) and "pairs" in relationships:
         result["material_selection"]["excluded_relationship_pairs"] = [row["characterIds"]
@@ -45,6 +65,6 @@ def scene_material(number, plan, context, following_plans):
     if result.get("future"):
         for row in result["future"]["routes"]:
             if row["number"] == number:
-                for key in ("events", "route", "conversation_topics"):
+                for key in ("events", "route", "conversation_topics", "outfit_appearances"):
                     row.pop(key, None)
     return result

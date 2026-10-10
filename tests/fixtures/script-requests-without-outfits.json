@@ -1,0 +1,75 @@
+{
+  "requests": [
+    {
+      "purpose": "script-cast",
+      "sha256": "5560099cb0acaadc82ede0e387016f86117e22461e258cc1edcf52615d1ec891"
+    },
+    {
+      "purpose": "script-outline",
+      "sha256": "5153ce48d20ea309d5c7f6f668a99658d3f1ab522689c3560d97d71d249c7219"
+    },
+    {
+      "purpose": "script-allocation",
+      "sha256": "2a62a51e36d9997cd4dd543ecf9d333bc32c32ac8f7570340559c247d2b7ac1d"
+    },
+    {
+      "purpose": "script-plan",
+      "sha256": "a5377e7d0693066ea57d0efacf27efd0dcf2e83342443f45f3f9e24aa7ed8040"
+    },
+    {
+      "purpose": "script-scene",
+      "sha256": "9cc17abb3fefb5c59db52260e99519f51712ba04335907af2db4d956ebaac1cf"
+    },
+    {
+      "purpose": "script-staging",
+      "sha256": "41426ead6fc121b847f4d22616aa43686415dc0f12932bd027cbd5abe4626567"
+    },
+    {
+      "purpose": "script-handoff",
+      "sha256": "afa87e570dbbc1b218bb5d9445170438872a0b004e843131dfe38bd5d07b8078"
+    },
+    {
+      "purpose": "script-plan",
+      "sha256": "ce560af3dfb0c668bb44583f5668d2f255c1d3c72b54c3b66d58d4dc7420ca22"
+    },
+    {
+      "purpose": "script-scene",
+      "sha256": "d94d063cd9b0be4435a3ae8be457cb127ee1050edff0fed61e233f6365df8e1d"
+    },
+    {
+      "purpose": "script-staging",
+      "sha256": "21dc3ae7a5271931ec046d199080921bd516b9fba689e28631dcd4dd3aadb198"
+    },
+    {
+      "purpose": "script-handoff",
+      "sha256": "ebc9e3a7dbb7d6ebb2dcf9dbe4f5c628de320b818cc87bd1f2573a82030c31db"
+    },
+    {
+      "purpose": "script-plan",
+      "sha256": "4963f19ddd3bdd0c10a65bd84ae4088303d0a7e6058696083f80a2f22d7c4cd0"
+    },
+    {
+      "purpose": "script-scene",
+      "sha256": "725cb74599ee8cf1fbd5352075e28c8b7fd5f9738e087c01a0cbbfa7ae405fa1"
+    },
+    {
+      "purpose": "script-staging",
+      "sha256": "23a5aab39451c99add254f7732fa42200e2dc161dc589cfa4d3fd0f15372dca3"
+    }
+  ],
+  "plot": "7b1ed1afb6668c995d7a51c37d134829eb94eb5e994e2979fb8edd1d041dbc13",
+  "chapters": [
+    {
+      "narrative.json": "28a6f0f68a6f6807028847f001323da29ce4132a49928bb9422647b9341d3f44",
+      "script.json": "672a2c0414e2368d47bd0407ca90fdeacf96a5ede8c629f770dba0a40910bc97"
+    },
+    {
+      "narrative.json": "9c2facd0fe1fa947c094c041b71d11d3e02ac9ccc7c9f344ebf2b125440dcd58",
+      "script.json": "2b49a46f5aab251bf1a81588b3b8e3091c2baa8021abb68086c54de7d70b1c30"
+    },
+    {
+      "narrative.json": "c380340cb28df412445fe103b53cbb8befe9b061f1c8e7c33a639cb528757e74",
+      "script.json": "1afd6a537b4f32ca9c19aa915790006bce4f3966bea5443eab3b0d8b1f0f151f"
+    }
+  ]
+}

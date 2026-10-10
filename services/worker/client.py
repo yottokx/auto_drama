@@ -42,6 +42,7 @@ M2_JOB_KINDS = (
     "m2_voice",
     "m2_relationships",
     "m2_voice_clone",
+    "m2_outfit_image",
 )
 GENERATION_JOB_KINDS = (*M2_JOB_KINDS, *M3_KINDS)
 
@@ -231,6 +232,9 @@ class WorkerClient:
                 heartbeat.check()
             if job["kind"] == "m3_event_cg":
                 self._prepare_cg_references(job, directory, heartbeat)
+            if job["kind"] == "m2_outfit_image":
+                self._prepare_outfit_reference(job, directory)
+                heartbeat.check()
             # Job identity, rather than attempt identity, preserves the request
             # and tool cache across lease recovery and transport retries.
             def publish_progress(progress):
@@ -268,6 +272,25 @@ class WorkerClient:
             assets[asset.id] = content
         heartbeat.check()
         return compile_bundle(script, assets)
+
+    def _prepare_outfit_reference(self, job, directory):
+        """Fetch the base portrait an alternate look is edited from, verified by hash."""
+        reference = job["payload"].get("reference_image")
+        if not isinstance(reference, dict):
+            raise TypeError("An outfit image requires its base portrait")
+        identifier, expected = reference.get("artifact_id"), reference.get("sha256")
+        if (not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier)
+                or not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected)):
+            raise ValueError("Invalid base portrait identity")
+        path = directory / "outfit-reference.png"
+        cached = path.read_bytes() if path.is_file() and path.stat().st_size <= 32 * 1024 * 1024 else b""
+        content = cached if hashlib.sha256(cached).hexdigest() == expected else self._artifact(identifier)
+        if not content or len(content) > 32 * 1024 * 1024 or hashlib.sha256(content).hexdigest() != expected:
+            raise ValueError("Base portrait content hash or size mismatch")
+        if content != cached:
+            temporary = path.with_suffix(".tmp")
+            temporary.write_bytes(content)
+            temporary.replace(path)
 
     def _prepare_cg_references(self, job, directory, heartbeat):
         from PIL import Image

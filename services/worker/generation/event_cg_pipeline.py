@@ -11,6 +11,7 @@ from packages.contracts.event_cg import (
     BUDGET_ALLOCATION_VERSION,
     CG_KINDS,
     CG_LLM_KINDS,
+    LENIENT_RULES_VERSION,
     MIN_IMAGE_UTTERANCES,
     MODEL_REVISION,
     STAGING_RULES_VERSION,
@@ -27,6 +28,7 @@ from packages.contracts.event_cg import (
 from packages.contracts.m3 import GenerationEnvelope
 
 from . import (
+    event_cg_lenient,
     event_cg_session,
     event_cg_staging,
     event_cg_visuals,
@@ -158,9 +160,26 @@ def plan_budget(payload: dict, llm) -> dict:
 def _scene_source(scene, payload):
     location = next((row for row in payload["context"]["narrative"].get("locations", [])
         if row["id"] == scene["plan"].get("location_id")), {})
-    return {"id": scene["id"], "plan": scene["plan"], "location": location, "utterances": [
+    names = {row.get("id", row["result"]["id"]): {look["id"]: look["name"] for look in row.get("outfits", [])}
+             for row in payload["context"].get("approval_snapshot", {}).get("characters", [])}
+    source = {"id": scene["id"], "plan": scene["plan"], "location": location, "utterances": [
         {key: row[key] for key in ("id", "speaker_id", "display_text", "inner_emotion", "delivery")
             if key in row} for row in scene["utterances"]]}
+    # Mark where a person's outfit/form changes; a CG may not run across such a line.
+    changes = {}
+    for row in scene.get("directions", []):
+        if row["kind"] == "outfit":
+            changes.setdefault(row["utterance_id"], []).append(row["character_id"])
+    for row in source["utterances"]:
+        if row["id"] in changes:
+            row["look_changes_here"] = changes[row["id"]]
+    if scene["plan"].get("outfits") or changes:
+        # Tell the planner which look each person with alternates is in, by the author's own name.
+        worn = {row["character_id"]: row["outfit_id"] for row in scene["plan"].get("outfits", [])}
+        source["looks_at_scene_start"] = {
+            cid: names.get(cid, {}).get(worn.get(cid, "default"), "通常の姿")
+            for cid in scene["plan"]["character_ids"] if len(names.get(cid, {})) > 1 or cid in worn}
+    return source
 
 
 def _visual_context(payload):
@@ -197,6 +216,13 @@ def _normalize_selection(answer, payload):
 def _select(payload, llm, scenes, stage, planning_notes=None):
     policy = EventCgPolicy.model_validate(payload["policy"])
     limit = min(policy.max_cgs, payload["chapter_budget"])
+    if policy.planning_version >= LENIENT_RULES_VERSION:
+        selected, notes = event_cg_lenient.select(payload, llm, stage, {
+            "maximum": limit, "references": payload["references"], "world": _visual_context(payload),
+            "scenes": [_scene_source(scene, payload) for scene in scenes]})
+        if planning_notes is not None:
+            planning_notes.extend(notes)
+        return selected
     if policy.planning_version >= STAGING_RULES_VERSION:
         selected, notes = event_cg_staging.select(payload, llm, stage,
             {"maximum": limit, "max_variants": policy.max_variants_per_cg,
@@ -268,7 +294,9 @@ def _select_with_context_limit(payload, llm, planning_notes=None):
 
 
 def _visual_prompts(cg, payload, llm):
-    staged = payload["policy"].get("planning_version", 1) >= STAGING_RULES_VERSION
+    version = payload["policy"].get("planning_version", 1)
+    staged = version == STAGING_RULES_VERSION
+    planned = version >= STAGING_RULES_VERSION
     scenes = payload["context"]["narrative"]["scenes"]
     scene = next(row for row in scenes if row["id"] == cg["scene_id"])
     rows = scene["utterances"]
@@ -293,6 +321,10 @@ def _visual_prompts(cg, payload, llm):
     visual_source = {"scene": source, "world": _visual_context(payload), "cg": cg, "characters": characters}
     system = event_cg_visuals.SYSTEM
     version = event_cg_visuals.VERSION
+    if planned and not staged:
+        # The picture stands for its whole passage; draw the planner's composition, not one late line.
+        system += (" cg.composition is the planned picture and cg.interpretation why it is shown: draw that "
+                   "situation as it stands when the passage begins, so that it suits the whole passage.")
     if staged:
         visual_source.update(common_composition=cg["composition"],
             image_intervals=event_cg_staging.image_context(cg, payload))
@@ -301,9 +333,9 @@ def _visual_prompts(cg, payload, llm):
     images = _structured(llm, f"prompt-v{version}-" + cg["id"], system,
         visual_source, visual_schema, validate)
     result = {**cg, "prompt": images[0]["prompt"],
-        "interpretation": cg["interpretation"] if staged else images[0]["interpretation"]}
+        "interpretation": cg["interpretation"] if planned else images[0]["interpretation"]}
     result["variants"] = [{**variant, "prompt": image["prompt"],
-        "interpretation": variant["interpretation"] if staged else image["interpretation"]}
+        "interpretation": variant["interpretation"] if planned else image["interpretation"]}
         for variant, image in zip(cg["variants"], images[1:], strict=True)]
     return result
 
@@ -432,7 +464,7 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         planning_version = payload["policy"].get("planning_version", 1)
         provenance["planning_version"] = planning_version
         provenance["visual_prompt_version"] = (event_cg_visuals.STAGING_VERSION
-            if planning_version >= STAGING_RULES_VERSION else event_cg_visuals.VERSION)
+            if planning_version == STAGING_RULES_VERSION else event_cg_visuals.VERSION)
     lease = gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"])
     stage = "event_cg_budget" if kind == "m3_event_cg_budget" else "event_cg_plan"
     if kind in CG_LLM_KINDS:

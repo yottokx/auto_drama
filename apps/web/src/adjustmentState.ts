@@ -50,7 +50,7 @@ export type AdjustmentScene = {
 }
 export type AdjustmentResponse = {
   project_id: string; complete: boolean; readonly: boolean; busy: boolean; draft: AdjustmentDraft | null
-  cast: { character_id: string; name: string; role: 'main' | 'supporting'; chapter_numbers: number[]
+  cast: { character_id: string; name: string; role: 'main' | 'supporting' | 'look'; chapter_numbers: number[]
     result?: { appearance?: string; voice?: string; selfIntroduction?: string }
     source_prompts?: { image: string; voice: string }
     image_candidate_id: string | null; voice_candidate_id: string | null; image_url: string | null; voice_url: string | null; reference_text: string | null }[]
@@ -72,6 +72,8 @@ export const adjustmentDirty = (state: AdjustmentEditorState) => (
 )
 
 export function adjustmentSetting(character: AdjustmentResponse['cast'][number] | undefined, kind: AdjustmentKind): string {
+  // An alternate look is described by its own text, not by the character's base appearance.
+  if (character?.role === 'look') return character.source_prompts?.[kind] ?? ''
   const setting = character?.result?.[kind === 'image' ? 'appearance' : 'voice']
   return setting?.trim() ? setting : character?.source_prompts?.[kind] ?? ''
 }

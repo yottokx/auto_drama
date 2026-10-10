@@ -19,6 +19,8 @@ from packages.contracts.event_cg import (
     validate_budget,
     validate_plan,
 )
+from packages.contracts.outfits import image_target as image_target_for_look
+from packages.contracts.outfits import look_timeline
 
 from .m2_bundle import validate_png
 from .service import encode_json, required
@@ -137,7 +139,9 @@ def prepare_image(m3, connection, production, requirement, descriptor):
             raise ValueError("CG variation requires this production's base image.")
         references.append({"role": "base_cg", "artifact_id": record["id"], "sha256": record["sha256"]})
     for character in descriptor["characters"]:
-        row = _requirement(connection, production["id"], "m3_image", character["character_id"])
+        row = (_requirement(connection, production["id"], "m3_image",
+                            image_target_for_look(character["character_id"], character.get("outfit_id")))
+               or _requirement(connection, production["id"], "m3_image", character["character_id"]))
         if not row or not row["artifact_id"]:
             return None
         record = required(connection, "artifact", row["artifact_id"])
@@ -196,14 +200,18 @@ def adopt(m3, connection, production, requirement, job, attempt, payload, result
                               provenance=metadata, job=job, attempt=attempt)
         if job["kind"] == "m3_event_cg_plan":
             characters = {row["character_id"]: row for row in payload["references"]}
+            looks = look_timeline(payload["context"]["narrative"]["scenes"])
             for cg in result.cgs:
+                # The plan keeps each person in one look per CG; reference that look's portrait.
+                worn = looks.get(cg.start_utterance_id, {})
                 for variant in [None, *cg.variants]:
                     variant_id = variant.id if variant else None
                     m3._requirement(connection, production, "m3_event_cg", image_target(cg.id, variant_id), {
                         "cg_id": cg.id, "variant_id": variant_id,
                         "prompt": variant.prompt if variant else cg.prompt,
                         "cg_profile": payload["policy"]["generation_profile"],
-                        "characters": [characters[cid] for cid in cg.character_ids],
+                        "characters": [{**characters[cid], "outfit_id": worn[cid]} if cid in worn
+                                       else characters[cid] for cid in cg.character_ids],
                         "context": {key: payload["context"][key]
                                     for key in ("source_sha256", "narrative_artifact_id")},
                     })
@@ -266,7 +274,7 @@ def add_to_script(m3, connection, production, script, content, requirements):
         variants, end = [], cg.end_utterance_id
         current = cg
         for variant in cg.variants:
-            if plan.planning_version >= 2:
+            if plan.planning_version == 2:
                 if current.staging is None:
                     raise ValueError("CG staging is required for safe image fallback.")
                 if boundary(variant.start_utterance_id) > boundary(current.staging.safe_end_utterance_id):
@@ -277,7 +285,7 @@ def add_to_script(m3, connection, production, script, content, requirements):
             if image:
                 variants.append({"id": variant.id, "utterance_id": variant.start_utterance_id, "asset_id": image})
                 current = variant
-        if plan.planning_version >= 2:
+        if plan.planning_version == 2:
             if current.staging is None:
                 raise ValueError("CG staging is required for safe image fallback.")
             if boundary(current.staging.safe_end_utterance_id) < boundary(end):

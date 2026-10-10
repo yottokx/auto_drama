@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from .m2 import CharacterId, CharacterResult
 from .m4 import ContinuityReview, StateHash, StoryState
+from .outfits import SceneOutfit
 from .script import Contract, Identifier, PortraitBounds
 from .story_workflow import (
     ChapterExtraction,
@@ -135,6 +137,9 @@ class ScenePlan(Contract):
     required_events: list[RequiredEvent] = Field(min_length=1, max_length=8)
     end_state: Text
     atmosphere: Text
+    # Absent from every generated schema; the script planner adds it for casts with alternates.
+    outfits: SkipJsonSchema[list[SceneOutfit]] = Field(
+        default_factory=list, max_length=6, exclude_if=lambda value: not value)
 
 
 class MappedUtterance(Contract):
@@ -152,11 +157,13 @@ class MappedUtterance(Contract):
 class NarrativeDirection(Contract):
     id: Identifier
     utterance_id: Identifier
-    kind: Literal["enter", "exit", "position", "focus", "pause", "blackout"]
+    kind: Literal["enter", "exit", "position", "focus", "pause", "blackout", "outfit"]
     timing: Literal["before", "start", "after"]
     character_id: CharacterId | None
     position: Literal["left", "center", "right"] | None
     duration_ms: int = Field(ge=0, le=10_000, strict=True)
+    # Only an "outfit" direction names the look the character changes into.
+    outfit_id: Identifier | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class EventReview(Contract):

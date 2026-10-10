@@ -19,6 +19,7 @@ from packages.contracts.m3 import (
     ProductionPlot,
     ProductionPortraits,
 )
+from packages.contracts.outfits import image_target
 from packages.contracts.portrait_recovery import PortraitOmission
 from packages.narrative.continuity import narrative_hash
 from packages.narrative.script_conversion import narrative_to_script
@@ -833,6 +834,10 @@ class M3Service(ChapterProduction):
     def _plan(self, connection, production, narrative):
         snapshot = self._snapshot(connection, production)
         used_characters = {cid for scene in narrative.scenes for cid in scene.plan.character_ids}
+        shown_looks = {(row.character_id, look) for scene in narrative.scenes
+                       for row in scene.plan.outfits for look in (row.outfit_id, row.change_to)}
+        shown_looks.update((row.character_id, row.outfit_id) for scene in narrative.scenes
+                           for row in scene.directions if row.kind == "outfit")
         for character in snapshot["characters"]:
             if character["id"] not in used_characters:
                 continue
@@ -850,6 +855,25 @@ class M3Service(ChapterProduction):
                     provenance={"approved_artifact_id": image["id"]},
                 )
             self._requirement(connection, production, "m3_image", character["id"], {}, alias["id"])
+            # An approved alternate look is published only in chapters whose plan shows it.
+            for outfit in character.get("outfits", []):
+                if "image" not in outfit or (character["id"], outfit["id"]) not in shown_looks:
+                    continue
+                image, data = self._reference(connection, production, outfit["image"], "m2_outfit_image")
+                validate_png(data)
+                alias = connection.execute(
+                    "SELECT * FROM artifact WHERE project_id=? AND logical_id=? AND kind='character' "
+                    "AND sha256=? ORDER BY version DESC LIMIT 1",
+                    (production["project_id"], "m3-image-" + image["id"], image["sha256"]),
+                ).fetchone()
+                if alias is None:
+                    alias = self._artifact(
+                        connection, production, "m3-image-" + image["id"], "character",
+                        script_character_id(character["id"]) + "--" + outfit["id"] + ".png", data,
+                        provenance={"approved_artifact_id": image["id"]},
+                    )
+                self._requirement(connection, production, "m3_image",
+                                  image_target(character["id"], outfit["id"]), {}, alias["id"])
             voice, data = self._reference(connection, production, character["voice"], "m2_voice")
             validate_wav(data)
             metadata = json.loads(voice["provenance"]).get("voice", {})
@@ -1120,17 +1144,37 @@ class M3Service(ChapterProduction):
 
         script = add_cg_to_script(self, connection, production, script, content, requirements)
         if presentation is not None:
+            from packages.contracts.outfits import DEFAULT_OUTFIT, snapshot_outfits
+            from packages.contracts.script import portrait_key
             from packages.narrative.validation import script_character_id
             from packages.tyrano_export.presentation import apply_portrait_presentation
 
+            # An adjusted look is keyed by its own row; map it to that character's look on stage.
+            rows = {image_target(cid, outfit.id): portrait_key(script_character_id(cid), outfit.id)
+                    for cid, outfits in snapshot_outfits(snapshot).items() for outfit in outfits
+                    if outfit.id != DEFAULT_OUTFIT}
+
+            def stage_key(identifier):
+                return rows.get(identifier) or script_character_id(identifier)
+
             baseline = {**presentation["baseline"], "layouts": {
-                script_character_id(cid): layout for cid, layout in presentation["baseline"]["layouts"].items()
+                stage_key(cid): layout for cid, layout in presentation["baseline"]["layouts"].items()
             }}
             adjustments = {
-                script_character_id(value["character_id"]): {
+                stage_key(value["character_id"]): {
                     "offset_y": value.get("offset_y", 0), "scale": value.get("scale", 1),
                 } for value in presentation.get("characters", [])
             }
+            # An edition's baseline lists base portraits; alternate looks add only their own layouts.
+            from packages.tyrano_export.presentation import (
+                make_portrait_baseline,
+                script_portrait_sources,
+            )
+
+            looks = {key: source for key, source in script_portrait_sources(script, content).items()
+                     if key not in baseline["layouts"]}
+            if looks:
+                baseline = make_portrait_baseline(looks, baseline)
             script = apply_portrait_presentation(script, baseline, adjustments)
         self.coordinator._script_assets(connection, production["project_id"], script)
         public_approval = {

@@ -116,7 +116,7 @@ def validate_bundle(
     if not data or len(data) > MAX_BUNDLE_BYTES:
         raise ValueError("invalid result bundle size")
     expected = {"result.json"}
-    if kind == "m2_image":
+    if kind in ("m2_image", "m2_outfit_image"):
         expected.add("image.png")
     elif kind in ("m2_voice", "m2_voice_clone"):
         expected.add("voice.wav")

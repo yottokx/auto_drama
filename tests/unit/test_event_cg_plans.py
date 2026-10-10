@@ -174,3 +174,23 @@ def test_all_prompt_failures_are_valid_as_explicit_omissions():
 def test_invalid_generation_limits_are_not_coerced(patch):
     with pytest.raises(ValidationError):
         EventCgPolicy(**patch)
+
+
+def test_cg_keeps_each_person_in_one_look():
+    from packages.contracts.outfits import look_timeline
+
+    payload = request()
+    scene = payload["context"]["narrative"]["scenes"][0]
+    assert look_timeline(payload["context"]["narrative"]["scenes"]) == {}
+    scene["plan"]["outfits"] = [{"character_id": "alice", "outfit_id": "default", "change_to": "armor"}]
+    scene["directions"] = [{"kind": "outfit", "utterance_id": "u3", "character_id": "alice", "outfit_id": "armor"}]
+    looks = look_timeline(payload["context"]["narrative"]["scenes"])
+    assert [looks[uid]["alice"] for uid in ("u1", "u2", "u3", "u4")] == ["default", "default", "armor", "default"]
+    value = plan()
+    value["cgs"][0]["variants"] = []
+    with pytest.raises(ValueError, match="alice changes outfit/form at u3"):
+        validate_plan(value, payload)
+    value["cgs"][0]["end_utterance_id"] = "u3"
+    assert validate_plan(value, payload).cgs[0].end_utterance_id == "u3"
+    value["cgs"][0].update(start_utterance_id="u3", end_utterance_id="u4")
+    assert validate_plan(value, payload).cgs[0].start_utterance_id == "u3"

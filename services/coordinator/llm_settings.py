@@ -23,6 +23,7 @@ def saved_settings(coordinator, connection=None) -> LLMSettings | None:
 LLM_JOB_KINDS = frozenset({
     "m2_world", "m2_character", "m2_relationships", "m2_image", "m3_narrative",
     "m3_image", "m3_plan", "m3_music_plan", "m3_event_cg_budget", "m3_event_cg_plan",
+    "m2_outfit_image",
 })
 RETRY_LLM_JOB_KINDS = frozenset({
     "m2_world", "m2_character", "m2_relationships", "m2_image", "m3_image", "m3_narrative", "m3_plan",

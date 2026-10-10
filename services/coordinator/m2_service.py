@@ -24,6 +24,7 @@ from packages.contracts.m2 import (
     RelationshipsResult,
     WorldResult,
 )
+from packages.contracts.outfits import DEFAULT_OUTFIT
 
 from .m2_bundle import validate_bundle
 from .service import Coordinator, ServiceError, encode_json, public, required
@@ -153,6 +154,7 @@ class M2Service:
         draft.setdefault("relationships", relationship_state(draft["characters"]))
         for character in draft["characters"]:
             character.setdefault("voiceTests", [])
+            character.setdefault("outfits", [])
         return state
 
     @staticmethod
@@ -217,6 +219,9 @@ class M2Service:
             character["voiceReferenceText"] = self._voice_reference_text(connection, character)
             for trial in character["voiceTests"]:
                 trial["url"] = f"/api/artifacts/{trial['artifactId']}/content"
+            for outfit in character.setdefault("outfits", []):
+                artifact = outfit.get("imageArtifactId")
+                outfit["imageUrl"] = f"/api/artifacts/{artifact}/content" if artifact else None
         return {"project": project, "draft": draft, "jobs": jobs}
 
     def projects(self) -> list[dict]:
@@ -498,6 +503,8 @@ class M2Service:
                     character[f"{prefix}ArtifactId"] = None
                     character[f"{prefix}Url"] = None
                     character[f"{prefix}PendingChanges"] = True
+                    if prefix == "image":
+                        self._stale_outfits(character)
             character["result"] = result
             character["resultArtifactId"], character["resultVersion"] = (
                 record["id"],
@@ -517,6 +524,63 @@ class M2Service:
                 value["pendingChanges"] = True
             self._invalidate_relationships(draft)
 
+    @staticmethod
+    def _alternates(character: dict) -> list[dict]:
+        return [value for value in character.get("outfits", []) if value["id"] != DEFAULT_OUTFIT]
+
+    @classmethod
+    def _stale_outfits(cls, character: dict) -> None:
+        """An alternate look is an edit of the base portrait and follows its changes."""
+        for outfit in cls._alternates(character):
+            outfit["imagePendingChanges"] = True
+
+    def _outfit_action(self, connection, project_id: str, state: dict, character: dict, body) -> None:
+        outfits = character.setdefault("outfits", [])
+        if body.action == "save-outfit":
+            value = body.outfit.model_dump()
+            current = next((item for item in outfits if item["id"] == value["id"]), None)
+            if current is None:
+                if value["id"] not in (None, DEFAULT_OUTFIT):
+                    raise ServiceError(404, "別バージョンが見つかりません。")
+                if value["id"] is None:
+                    if len(self._alternates(character)) >= 4:
+                        raise ServiceError(422, "別バージョンは1人につき4つまでです。")
+                    used = {item["id"] for item in outfits}
+                    value["id"] = next(f"look{n}" for n in range(1, 100) if f"look{n}" not in used)
+                current = {"id": value["id"], "imageArtifactId": None, "baseImageArtifactId": None,
+                           "imagePendingChanges": value["id"] != DEFAULT_OUTFIT}
+                outfits.append(current)
+            if value["id"] != DEFAULT_OUTFIT and (current.get("name"), current.get("description")) != (
+                    value["name"], value["description"]):
+                # The look is designed from its name and the user's wish; either one changes it.
+                current["imagePendingChanges"] = True
+            current.update(name=value["name"], description=value["description"], occasion=value["occasion"])
+            outfits.sort(key=lambda item: item["id"] != DEFAULT_OUTFIT)
+            return
+        outfit = next((item for item in self._alternates(character) if item["id"] == body.outfit_id), None)
+        if outfit is None:
+            raise ServiceError(404, "別バージョンが見つかりません。")
+        if body.action == "delete-outfit":
+            outfits.remove(outfit)
+            return
+        if not character["imageArtifactId"] or character["imagePendingChanges"] or character["pendingChanges"]:
+            raise ServiceError(409, "現在の設定を反映した立ち絵を先に生成してください。")
+        reference = required(connection, "artifact", character["imageArtifactId"])
+        if reference["project_id"] != project_id or reference["kind"] != "m2_image":
+            raise ServiceError(409, "立ち絵とキャラクターが一致しません。")
+        self.store.read(reference)
+        from .event_cg_settings import EventCgSettings
+
+        if not any("m2_outfit_image" in json.loads(worker["capabilities"]) for worker in connection.execute(
+                "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.clock() - 90,))):
+            raise ServiceError(409, "別バージョンの立ち絵にはQwenの準備済みWorkerが必要です。Workerを起動してください。")
+        descriptor = task("m2_outfit_image", character["id"], "outfit-image")
+        descriptor["cg_profile"] = EventCgSettings(self.coordinator).settings(connection)["profile"]
+        descriptor["outfit"] = {key: outfit[key] for key in ("id", "name", "description", "occasion")}
+        descriptor["reference_image"] = {"artifact_id": reference["id"], "sha256": reference["sha256"]}
+        outfit["imagePendingChanges"] = True
+        state["queue"] = [descriptor]
+
     def _profile(self, connection=None) -> dict:
         from .llm_settings import generation_profile
 
@@ -529,7 +593,8 @@ class M2Service:
             return
         # Keep all text generation ahead of media, including pending queues saved
         # by older versions. Stable ordering preserves cast order within a stage.
-        stages = {"m2_character": 0, "m2_relationships": 1, "m2_image": 2, "m2_voice": 3}
+        stages = {"m2_character": 0, "m2_relationships": 1, "m2_image": 2, "m2_outfit_image": 2,
+                  "m2_voice": 3}
         state["queue"].sort(key=lambda item: stages.get(item["kind"], 0))
         descriptor = state["queue"].pop(0)
         draft = state["draft"]
@@ -594,7 +659,7 @@ class M2Service:
             payload["portrait_prompt_batch"] = copy.deepcopy(state["portraitPromptBatch"])
         else:
             state.pop("portraitPromptBatch", None)
-        for key in ("reference_voice", "dialogue_text"):
+        for key in ("reference_voice", "dialogue_text", "reference_image", "outfit", "cg_profile"):
             if key in descriptor:
                 payload[key] = descriptor[key]
         identifier, run_id, now = uuid4().hex, uuid4().hex, self.clock()
@@ -958,7 +1023,9 @@ class M2Service:
         character = self._character(draft, body.character_id)
         if not character["result"]:
             raise ServiceError(409, "先にキャラクターを生成してください。")
-        if name == "toggle-lock":
+        if name in {"save-outfit", "delete-outfit", "generate-outfit"}:
+            self._outfit_action(connection, project_id, state, character, body)
+        elif name == "toggle-lock":
             scope = body.scope
             character["locked"][scope] = not character["locked"][scope]
             character["input"]["locked"] = dict(character["locked"])
@@ -1099,6 +1166,10 @@ class M2Service:
             raise ServiceError(
                 409, "全キャラクターの設定・立ち絵・音声を生成して確認してください。"
             )
+        if any(not outfit["imageArtifactId"] or outfit["imagePendingChanges"]
+               or outfit["baseImageArtifactId"] != value["imageArtifactId"]
+               for value in draft["characters"] for outfit in self._alternates(value)):
+            raise ServiceError(409, "別バージョンの立ち絵を現在の立ち絵から生成するか、削除してください。")
         relationships = draft["relationships"]
         if len(draft["characters"]) >= 2:
             if (
@@ -1147,6 +1218,15 @@ class M2Service:
                     **reference(value["resultArtifactId"]),
                     "image": reference(value["imageArtifactId"]),
                     "voice": reference(value["voiceArtifactId"]),
+                    # Present only for a character with an alternate look.
+                    **({"outfits": [
+                        {**{key: outfit[key] for key in ("id", "name", "description", "occasion")},
+                         # The story is told what the adopted image shows, not how it was requested.
+                         **({"description": outfit["generatedDescription"]}
+                            if outfit.get("generatedDescription") else {}),
+                         **({"image": reference(outfit["imageArtifactId"])}
+                            if outfit["id"] != DEFAULT_OUTFIT else {})}
+                        for outfit in value["outfits"]]} if self._alternates(value) else {}),
                 }
                 for value in draft["characters"]
             ],
@@ -1258,6 +1338,20 @@ class M2Service:
                 "version": record["version"],
                 "pendingChanges": False,
             }
+        elif job["kind"] == "m2_outfit_image":
+            outfit = next(item for item in self._alternates(character)
+                          if item["id"] == payload["outfit"]["id"])
+            record = self._artifact(
+                connection, job["project_id"], f"outfit-{character['id']}-{outfit['id']}",
+                job["kind"], "image.png", "image/png", files["image.png"],
+                provenance=envelope["provenance"], job=job, attempt=attempt)
+            outfit.update(imageArtifactId=record["id"], imagePendingChanges=False,
+                          baseImageArtifactId=payload["reference_image"]["artifact_id"],
+                          generatedDescription=envelope["provenance"].get("outfit", {}).get("summary"))
+            self._artifact(
+                connection, job["project_id"], f"result-{job['id']}", "m2_metadata", "result.json",
+                "application/json", files["result.json"], provenance=envelope["provenance"],
+                job=job, attempt=attempt)
         else:
             is_image = job["kind"] == "m2_image"
             prefix, filename, media_type = (
@@ -1292,6 +1386,8 @@ class M2Service:
             else:
                 character[f"{prefix}ArtifactId"] = record["id"]
                 character[f"{prefix}PendingChanges"] = False
+                if is_image:
+                    self._stale_outfits(character)
             self._artifact(
                 connection,
                 job["project_id"],
@@ -1324,6 +1420,7 @@ class M2Service:
                 "m2_voice",
                 "m2_relationships",
                 "m2_voice_clone",
+                "m2_outfit_image",
             ):
                 raise ServiceError(422, "M2の生成ジョブを指定してください。")
             if job["status"] == "completed":
@@ -1346,6 +1443,11 @@ class M2Service:
                 actual = voice_metadata.get("reference_text")
                 if introduction and actual != introduction:
                     raise ValueError("reference speech must use the character self-introduction")
+            elif job["kind"] == "m2_outfit_image":
+                source = envelope["provenance"].get("outfit", {})
+                if (not isinstance(source, dict) or source.get("id") != payload["outfit"]["id"]
+                        or source.get("reference_sha256") != payload["reference_image"]["sha256"]):
+                    raise ValueError("outfit image provenance must match its base portrait")
             elif job["kind"] == "m2_voice_clone":
                 voice_metadata = envelope["provenance"].get("voice", {})
                 if (

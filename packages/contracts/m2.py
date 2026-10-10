@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
-from .script import Contract, HeightCm
+from .script import Contract, HeightCm, Identifier
 
 Text = Annotated[str, StringConstraints(max_length=30_000)]
 ResultText = Annotated[str, StringConstraints(min_length=1, max_length=30_000)]
@@ -14,7 +14,8 @@ CharacterId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_
 Step = Literal["world-input", "world-review", "character-input", "character-review", "planning-review", "production"]
 Scope = Literal["settings", "appearance", "voice"]
 Kind = Literal[
-    "m2_world", "m2_character", "m2_image", "m2_voice", "m2_relationships", "m2_voice_clone"
+    "m2_world", "m2_character", "m2_image", "m2_voice", "m2_relationships", "m2_voice_clone",
+    "m2_outfit_image",
 ]
 SpokenText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 BodyType = Literal["humanoid", "nonhumanoid", "unknown"]
@@ -246,6 +247,27 @@ class Retake(Action):
     instruction: Text = ""
 
 
+class OutfitInput(Contract):
+    """An alternate look of one main character. ``default`` names the approved base portrait."""
+
+    id: Identifier | None = None
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
+    occasion: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
+
+
+class SaveOutfit(Action):
+    action: Literal["save-outfit"]
+    character_id: CharacterId
+    outfit: OutfitInput
+
+
+class OutfitAction(Action):
+    action: Literal["delete-outfit", "generate-outfit"]
+    character_id: CharacterId
+    outfit_id: Identifier
+
+
 class GoTo(Action):
     action: Literal["go-to"]
     step: Step
@@ -277,6 +299,8 @@ M2Action = Annotated[
     | EditCharacter
     | ToggleLock
     | Retake
+    | SaveOutfit
+    | OutfitAction
     | GoTo
     | SaveRelationships
     | GenerateRelationships

@@ -5,6 +5,7 @@ outside this content contract. Approval binds this content to its M2 snapshot.
 """
 from __future__ import annotations
 
+from packages.contracts.outfits import snapshot_outfits
 from packages.contracts.script import Contract
 from services.worker.generation.script_cast import CastPlan, check_cast
 from services.worker.generation.script_plot import (
@@ -12,6 +13,7 @@ from services.worker.generation.script_plot import (
     DetailedPlot,
     check_chapters,
     check_core,
+    check_outfit_appearances,
 )
 
 
@@ -42,6 +44,11 @@ def validate_plan_content(content: dict | CommonPlanContent, snapshot: dict) -> 
     check_cast(value.cast_plan, main)
     check_core(value.plot.core, main, count)
     check_chapters(value.plot.chapters, list(range(1, count + 1)))
+    outfits = snapshot_outfits(snapshot)
+    if outfits:
+        check_outfit_appearances(value.plot.chapters, outfits)
+    elif any(chapter.outfit_appearances for chapter in value.plot.chapters):
+        raise ValueError("Only an approved alternate look can be planned for a chapter.")
     available = main | {row.id for row in value.cast_plan.supporting_characters}
     for chapter in value.plot.chapters:
         for topic in chapter.conversation_topics:

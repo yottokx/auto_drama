@@ -1,4 +1,4 @@
-import { editPlanningField, type PlanningContent, type PlanningTab, type PlotRoute } from './planningState'
+import { editPlanningField, type OutfitNames, type PlanningContent, type PlanningTab, type PlotRoute } from './planningState'
 import type { CharacterBrief } from './wizardState'
 
 type FieldPath = (string | number)[]
@@ -12,8 +12,8 @@ const characterFields = [
   ['freeform', '補足設定'],
 ] as const
 
-export function PlanningContentEditor({ content, mainCharacters, disabled, onChange, tab }: {
-  content: PlanningContent; mainCharacters: CharacterBrief[]; disabled: boolean; onChange: (content: PlanningContent) => void
+export function PlanningContentEditor({ content, mainCharacters, disabled, onChange, tab, outfitNames = {} }: {
+  content: PlanningContent; mainCharacters: CharacterBrief[]; disabled: boolean; onChange: (content: PlanningContent) => void; outfitNames?: OutfitNames
   tab?: PlanningTab
 }) {
   const cast = [...mainCharacters, ...content.cast_plan.supporting_characters]
@@ -48,6 +48,7 @@ export function PlanningContentEditor({ content, mainCharacters, disabled, onCha
           {field('その結果', [...path, 'events', eventIndex, 'steps', stepIndex, 'result'], step.result)}
         </div>)}</section>) : <div className="planning-subcard">{(Object.keys(routeLabels) as (keyof PlotRoute)[]).map(key => field(routeLabels[key], [...path, 'route', key], chapter.route[key]))}</div>}
         {Boolean(chapter.conversation_topics?.length) && <section className="planning-subcard"><h4>会話の材料</h4>{chapter.conversation_topics?.map((topic, topicIndex) => <div className="planning-event-step" key={topicIndex}><p>{topic.character_ids.map(name).join('・')}</p>{field('会話のきっかけ', [...path, 'conversation_topics', topicIndex, 'topic'], topic.topic, 2, 120)}{field('やり取りと反応', [...path, 'conversation_topics', topicIndex, 'exchange'], topic.exchange, 2, 120)}</div>)}</section>}
+        {Boolean(chapter.outfit_appearances?.length) && <section className="planning-subcard"><h4>この章で登場する別バージョン</h4>{chapter.outfit_appearances?.map((look, lookIndex) => <div className="planning-event-step" key={lookIndex}><p>{name(look.character_id)}・{outfitNames[look.character_id]?.[look.outfit_id] || look.outfit_id}</p>{field('どの出来事・状況でその姿になるか', [...path, 'outfit_appearances', lookIndex, 'occasion'], look.occasion, 2, 160)}</div>)}<p className="planning-help">登場する章を変えるには、AIへの修正指示で伝えてください。</p></section>}
       </div></details>
     })}</section>
     </>}

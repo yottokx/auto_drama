@@ -14,7 +14,8 @@ Revision = Annotated[int, Field(strict=True, ge=1)]
 class AdjustmentCharacter(Contract):
     character_id: CharacterId
     image_candidate_id: Id | None = None
-    voice_candidate_id: Id
+    # An alternate look of a main character is adjusted as an image-only row.
+    voice_candidate_id: Id | None = None
     framing: Literal["auto", "upper_body", "full_body"] = "auto"
     height_cm: float | None = Field(default=None, strict=True, ge=1, le=10000, allow_inf_nan=False)
     body_bounds: PortraitBounds | None = None

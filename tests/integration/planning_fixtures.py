@@ -4,6 +4,7 @@ import io
 import json
 from zipfile import ZipFile
 
+from packages.contracts.outfits import snapshot_outfits
 from packages.contracts.planning import planning_protocol, validate_plan_content
 
 
@@ -35,6 +36,11 @@ def plan_content(snapshot):
             } for number in range(1, count + 1)],
         },
     }
+    # An approved alternate look must be planned; the fixture shows each in the first chapter.
+    looks = [{"character_id": cid, "outfit_id": row.id, "occasion": "記録を確かめる場面。"}
+             for cid, rows in snapshot_outfits(snapshot).items() for row in rows if row.id != "default"]
+    if looks:
+        content["plot"]["chapters"][0]["outfit_appearances"] = looks
     return validate_plan_content(content, snapshot).model_dump(mode="json")
 
 

@@ -19,7 +19,7 @@ from tests.integration.test_m3 import complete, production
 from tests.integration.test_project_history import history, restore
 
 
-def setup_story(client, *, enabled=True, max_cgs=1, max_variants_per_cg=1, legacy=True):
+def setup_story(client, *, enabled=True, max_cgs=1, max_variants_per_cg=1, legacy=True, version=None):
     """Existing short-CG cases replay a policy frozen before staging version 2."""
     project, _ = ready(client)
     identifier = project["project"]["id"]
@@ -34,13 +34,14 @@ def setup_story(client, *, enabled=True, max_cgs=1, max_variants_per_cg=1, legac
                                     "max_variants_per_cg": max_variants_per_cg})
         assert response.status_code == 200, response.text
     action(client, project, "approve")
-    if legacy:
+    if legacy or version:
         from services.coordinator.event_cg_settings import EventCgSettings
 
         freeze = EventCgSettings.freeze
 
         def legacy_freeze(*args, **kwargs):
-            return freeze(*args, **kwargs).model_copy(update={"planning_version": 1})
+            # Productions keep the planning rules they were frozen with.
+            return freeze(*args, **kwargs).model_copy(update={"planning_version": version or 1})
 
         with patch.object(EventCgSettings, "freeze", legacy_freeze):
             complete_and_approve_plan(client, project)

@@ -72,9 +72,9 @@ def finish_staged(client, worker, *, stop_at=None, omit=()):
     raise AssertionError("Staging production did not settle")
 
 
-def test_new_production_freezes_v2_and_rejects_short_images_before_publication(tmp_path):
+def test_production_frozen_at_v2_rejects_short_images_before_publication(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
-        project, worker = setup_story(client, legacy=False, max_variants_per_cg=2)
+        project, worker = setup_story(client, legacy=False, version=2, max_variants_per_cg=2)
         plan_job = finish_staged(client, worker, stop_at=lambda job: job["kind"] == "m3_event_cg_plan")
         assert plan_job["payload"]["policy"]["planning_version"] == 2
         result = staged_plan(plan_job)
@@ -118,7 +118,7 @@ def test_new_production_freezes_v2_and_rejects_short_images_before_publication(t
 def test_missing_variants_stop_or_bridge_only_within_safe_state(
         tmp_path, base_safe, first_safe, omitted, end, variants):
     with TestClient(create_app(tmp_path)) as client:
-        project, worker = setup_story(client, legacy=False, max_variants_per_cg=2)
+        project, worker = setup_story(client, legacy=False, version=2, max_variants_per_cg=2)
         job = finish_staged(client, worker, stop_at=lambda job: job["kind"] == "m3_event_cg_plan")
         result = staged_plan(job, base_safe=base_safe, first_safe=first_safe)
         response = complete(client, worker, job, cg_output(job, result=result))

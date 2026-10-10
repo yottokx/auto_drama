@@ -9,6 +9,7 @@ import re
 import zipfile
 
 from packages.contracts import Script
+from packages.contracts.script import portrait_key
 
 from .player import player_files
 from .presentation import BACKGROUND, PORTRAIT_Z_INDEX, script_portrait_layouts
@@ -59,7 +60,39 @@ def event_cg_after_anchors(script: Script) -> set[str]:
     frames = event_cg_frames(script)
     return {value.utterance_id for value in script.directions
             if value.utterance_id in frames and value.timing == "after"
-            and value.kind in {"background", "enter", "exit", "position"}}
+            and value.kind in {"background", "enter", "exit", "position", "outfit"}}
+
+
+class _Wardrobe:
+    """Which portrait each character currently wears; an entrance decides it."""
+
+    def __init__(self, script: Script, portraits: dict):
+        assets = {value.id: value for value in script.assets}
+        self.portraits = portraits
+        self.files = {portrait_key(character.id, outfit_id): assets[asset_id].filename
+                      for character in script.characters if character.image_asset_id
+                      for outfit_id, asset_id in ((None, character.image_asset_id),
+                                                  *((value.id, value.image_asset_id) for value in character.outfits))}
+        self.worn, self.slots = {}, {}
+
+    def enter(self, direction) -> None:
+        if direction.kind in {"enter", "outfit"}:
+            self.worn[direction.character_id] = direction.outfit_id
+        if direction.kind in {"enter", "position"}:
+            self.slots[direction.character_id] = direction.position
+        elif direction.kind == "exit":
+            self.slots.pop(direction.character_id, None)
+
+    def look(self, character_id: str):
+        key = portrait_key(character_id, self.worn.get(character_id))
+        return self.files[key], self.portraits[key]
+
+    def shown(self, character_id: str, z_index: int) -> dict:
+        """The stage record of a visible character in its current look and slot."""
+        storage, portrait = self.look(character_id)
+        return {"id": character_id, "storage": storage,
+                "left": portrait.left(self.slots[character_id]), "top": portrait.top,
+                "width": portrait.width, "height": portrait.height, "z_index": z_index}
 
 
 def scene_stage_data(script: Script, images: dict[str, bytes]) -> dict:
@@ -71,8 +104,7 @@ def scene_stage_data(script: Script, images: dict[str, bytes]) -> dict:
     Mid-scene directions still update the compiler's state and run normally.
     """
     assets = {value.id: value for value in script.assets}
-    characters = {value.id: value for value in script.characters}
-    portraits = script_portrait_layouts(script, images)
+    wardrobe = _Wardrobe(script, script_portrait_layouts(script, images))
     specs = stage_anchors(script)
     cg_frames = event_cg_frames(script)
     cg_after = event_cg_after_anchors(script)
@@ -88,18 +120,16 @@ def scene_stage_data(script: Script, images: dict[str, bytes]) -> dict:
             background = {"storage": assets[direction.asset_id].filename,
                           "position": BACKGROUND["position"] if script.portrait_baseline else ""}
         elif direction.kind == "exit":
+            wardrobe.enter(direction)
             cast.pop(direction.character_id, None)
-        elif direction.kind in {"enter", "position"}:
-            if direction.kind == "position" and direction.character_id not in cast:
+        elif direction.kind in {"enter", "position", "outfit"}:
+            if direction.kind != "enter" and direction.character_id not in cast:
+                if direction.kind == "outfit":
+                    wardrobe.enter(direction)
                 return
-            portrait = portraits[direction.character_id]
-            character = characters[direction.character_id]
-            cast[direction.character_id] = {
-                "id": direction.character_id, "storage": assets[character.image_asset_id].filename,
-                "left": portrait.left(direction.position), "top": portrait.top,
-                "width": portrait.width, "height": portrait.height,
-                "z_index": PORTRAIT_Z_INDEX if script.portrait_baseline else 1,
-            }
+            wardrobe.enter(direction)
+            cast[direction.character_id] = wardrobe.shown(
+                direction.character_id, PORTRAIT_Z_INDEX if script.portrait_baseline else 1)
 
     def snapshot(utterance_id, spec):
         target = {**spec, "music_cue_id": music.get(utterance_id) if spec.get("timing") != "after" else None,
@@ -134,7 +164,7 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
     script = Script.model_validate(script.model_dump(mode="json"))
     assets = {value.id: value for value in script.assets}
     characters = {value.id: value for value in script.characters}
-    portraits = script_portrait_layouts(script, images)
+    wardrobe = _Wardrobe(script, script_portrait_layouts(script, images))
     music_by_anchor = {cue.utterance_id: cue for cue in script.music_cues}
     transitions_by_anchor = stage_anchors(script)
     scene_entries = {cue.utterance_id for cue in script.scene_transitions}
@@ -147,7 +177,10 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
     def direction_lines(utterance_id: str, timing: str) -> list[str]:
         result = []
         for direction in directions_by_anchor.get((utterance_id, timing), []):
-            if direction.kind in {"background", "enter", "exit", "position"} and (
+            visible = getattr(direction, "character_id", None) in wardrobe.slots
+            before = wardrobe.look(direction.character_id)[1] if direction.kind == "outfit" else None
+            wardrobe.enter(direction)
+            if direction.kind in {"background", "enter", "exit", "position", "outfit"} and (
                     utterance_id in cg_frames or
                     (utterance_id in transitions_by_anchor and timing in {"before", "start"})):
                 continue
@@ -160,8 +193,11 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
                     position = f' position="{BACKGROUND["position"]}"' if script.portrait_baseline is not None else ""
                     result.append(f'[bg storage="{filename}" time="{direction.duration_ms}"{position}]')
                 case "enter":
-                    portrait = portraits[direction.character_id]
+                    storage, portrait = wardrobe.look(direction.character_id)
                     z_index = f' zindex="{PORTRAIT_Z_INDEX}"' if script.portrait_baseline is not None else ""
+                    if characters[direction.character_id].outfits:
+                        # A hidden character only records the image its next entrance shows.
+                        result.append(f'[chara_mod name="ad_{direction.character_id}" storage="{storage}" time="0"]')
                     result.append(
                         f'[chara_show name="ad_{direction.character_id}" '
                         f'left="{portrait.left(direction.position)}" top="{portrait.top}" '
@@ -171,11 +207,24 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
                 case "exit":
                     result.append(f'[chara_hide name="ad_{direction.character_id}" time="{direction.duration_ms}"]')
                 case "position":
-                    portrait = portraits[direction.character_id]
+                    _, portrait = wardrobe.look(direction.character_id)
                     result.append(
                         f'[chara_move name="ad_{direction.character_id}" '
                         f'left="{portrait.left(direction.position)}" time="{direction.duration_ms}" anim="true"]'
                     )
+                case "outfit":
+                    storage, portrait = wardrobe.look(direction.character_id)
+                    name = f"ad_{direction.character_id}"
+                    if not visible:
+                        result.append(f'[chara_mod name="{name}" storage="{storage}" time="0"]')
+                        continue
+                    result.append(f'[chara_mod name="{name}" storage="{storage}" time="{direction.duration_ms}"]')
+                    if portrait != before:
+                        # Another look has its own silhouette; keep it standing on the same spot.
+                        result.append(
+                            f'[chara_move name="{name}" left="{portrait.left(wardrobe.slots[direction.character_id])}" '
+                            f'top="{portrait.top}" width="{portrait.width}" height="{portrait.height}" '
+                            'time="0" anim="true"]')
                 case "focus":
                     result.append(f'[chara_ptext name="ad_{direction.character_id}"]')
                 case "blackout":
@@ -227,8 +276,7 @@ def entry_states(script: Script, images: dict[str, bytes]) -> dict:
     and scene transitions that belong to the line still play as written.
     """
     assets = {value.id: value for value in script.assets}
-    characters = {value.id: value for value in script.characters}
-    portraits = script_portrait_layouts(script, images)
+    wardrobe = _Wardrobe(script, script_portrait_layouts(script, images))
     cg_frames = event_cg_frames(script)
     cues = {value.utterance_id: value for value in script.music_cues}
     directions: dict[str, list] = {}
@@ -251,16 +299,15 @@ def entry_states(script: Script, images: dict[str, bytes]) -> dict:
                     background = {"storage": assets[direction.asset_id].filename,
                                   "position": BACKGROUND["position"] if script.portrait_baseline else ""}
                 elif direction.kind == "exit":
+                    wardrobe.enter(direction)
                     cast.pop(direction.character_id, None)
-                elif direction.kind == "enter" or (direction.kind == "position" and direction.character_id in cast):
-                    portrait = portraits[direction.character_id]
-                    cast[direction.character_id] = {
-                        "id": direction.character_id,
-                        "storage": assets[characters[direction.character_id].image_asset_id].filename,
-                        "left": portrait.left(direction.position), "top": portrait.top,
-                        "width": portrait.width, "height": portrait.height,
-                        "z_index": PORTRAIT_Z_INDEX if script.portrait_baseline else 1,
-                    }
+                elif direction.kind == "outfit" and direction.character_id not in cast:
+                    wardrobe.enter(direction)
+                elif direction.kind in {"enter", "outfit"} or (
+                        direction.kind == "position" and direction.character_id in cast):
+                    wardrobe.enter(direction)
+                    cast[direction.character_id] = wardrobe.shown(
+                        direction.character_id, PORTRAIT_Z_INDEX if script.portrait_baseline else 1)
         frame = cg_frames.get(utterance.id)
     return {"schema_version": 1, "entries": entries}
 

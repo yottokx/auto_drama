@@ -1,8 +1,10 @@
 """Future-only plot material, projected into the existing export contract."""
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from packages.contracts.m3 import CharacterArc, Foreshadowing, OutlineChapter, StoryOutline
+from packages.contracts.outfits import DEFAULT_OUTFIT, OutfitAppearance
 from packages.contracts.script import Contract, Identifier
 
 
@@ -119,6 +121,20 @@ class ChapterPresentation(Contract):
     role: str = Field(min_length=1, max_length=200, description="当章で新しく経験することと、その結果変わる到達状態を1〜2文で記す。")
     conversation_topics: list[ConversationTopic] = Field(default_factory=list, max_length=4,
         description="会話の材料を2〜3件を目安に短く記す。主筋の会話だけで十分なら空配列。")
+    # Present only for casts with alternate looks; see outfit_schema().
+    outfit_appearances: SkipJsonSchema[list[OutfitAppearance]] = Field(
+        default_factory=list, max_length=12, exclude_if=lambda value: not value)
+
+    @field_validator("outfit_appearances", mode="after")
+    @classmethod
+    def only_alternate_looks(cls, value):
+        # A planner may state that someone keeps the base look; that needs no appearance.
+        # Two occasions for one look in a chapter are still one appearance.
+        kept = {}
+        for row in value:
+            if row.outfit_id != DEFAULT_OUTFIT:
+                kept.setdefault((row.character_id, row.outfit_id), row)
+        return list(kept.values())
 
 
 class ChapterBoundary(ChapterPresentation):
@@ -242,6 +258,48 @@ def check_chain(chain: StoryChain, characters: set[str], available: set[str] | N
             raise ValueError("Chain steps must identify registered characters.")
 
 
+def alternate_outfits(outfits: dict) -> list[tuple[str, str]]:
+    return [(cid, row.id) for cid, rows in outfits.items() for row in rows if row.id != DEFAULT_OUTFIT]
+
+
+def add_outfit_appearances(schema: dict, outfits: dict) -> None:
+    """Ask each chapter description for the alternate looks it shows."""
+    pairs = alternate_outfits(outfits)
+    # One alternative per character, offering only that character's own looks. The base
+    # look is offered too, so "nothing special in this chapter" has an honest answer.
+    item = {"anyOf": [{"type": "object", "additionalProperties": False,
+                       "properties": {
+                           "character_id": {"type": "string", "enum": [cid]},
+                           "outfit_id": {"type": "string", "enum": [row.id for row in rows]},
+                           "occasion": {"type": "string", "minLength": 1, "maxLength": 160,
+                                        "description": OutfitAppearance.model_fields["occasion"].description}},
+                       "required": ["character_id", "outfit_id", "occasion"]}
+                      for cid, rows in outfits.items()]}
+    for definition in [schema, *schema.get("$defs", {}).values()]:
+        properties = definition.get("properties", {})
+        if "conversation_topics" in properties and "title" in properties:
+            properties["outfit_appearances"] = {
+                "type": "array", "maxItems": len(pairs) + len(outfits), "items": item,
+                "description": "当章で実際に登場させる別の姿。なければ空配列。"}
+            definition.setdefault("required", []).append("outfit_appearances")
+
+
+def check_outfit_appearances(chapters, outfits: dict) -> None:
+    """Every alternate look the user approved is shown in at least one chapter."""
+    pairs = alternate_outfits(outfits)
+    shown = set()
+    for chapter in chapters:
+        rows = [(row.character_id, row.outfit_id) for row in chapter.outfit_appearances]
+        if len(rows) != len(set(rows)) or not set(rows) <= set(pairs):
+            raise ValueError(f"Chapter {chapter.number}: outfit_appearances must list each registered "
+                             f"character_id/outfit_id pair at most once. Registered pairs: {pairs}; received: {rows}.")
+        shown.update(rows)
+    missing = [pair for pair in pairs if pair not in shown]
+    if missing:
+        raise ValueError("Every alternate look must appear in at least one chapter's outfit_appearances. "
+                         f"Not assigned to any chapter: {missing}.")
+
+
 def allocate_chain(chain: StoryChain, allocation: ChapterAllocation) -> DetailedPlot:
     """Partition once, in order, without rewriting or duplicating planned events."""
     if [row.number for row in allocation.chapters] != [1, 2, 3]:
@@ -270,7 +328,8 @@ def allocate_chain(chain: StoryChain, allocation: ChapterAllocation) -> Detailed
             **{key: " → ".join(getattr(route, key) for route in routes)
                for key in ("attempt", "consequence", "choice", "core_progress")})
         chapters.append(PlotChapter(number=boundary.number, title=boundary.title,
-            role=boundary.role, route=route, events=events, conversation_topics=boundary.conversation_topics))
+            role=boundary.role, route=route, events=events, conversation_topics=boundary.conversation_topics,
+            outfit_appearances=boundary.outfit_appearances))
         start = boundary.last_event
     return DetailedPlot(core=core, chapters=chapters)
 
@@ -389,4 +448,22 @@ PLOT_PRIORITY = (
     "現在の実態から同じ目的へ進む手段を選びます。未発生の大事件を場面の開始状態へ埋めて済ませません。"
     "既に達成したことは再演せず、残る目標へ進めます。核心は変更せず、手段や順序だけを調整します。"
     "事実と核心を両立させるために、起きていない過去を捏造したり別の核心へ置換したりしません。"
+)
+
+OUTFIT_EVENTS = (
+    "settingのcharacter_outfitsは、承認メインが持つ姿の一覧（服装・変身など）です。"
+    "同じ人物の別の姿であり別人ではありません。人物ID・記憶・関係は同じです。"
+    "default以外の姿は、作品のどこかで必ずその姿で登場します。"
+    "各姿のoccasionに沿って、その姿になる状況やきっかけ（着替える場面、変身するきっかけと変身後の行動など）を"
+    "出来事の行動と結果へ具体的に含めます。姿を見せるためだけの出来事は足さず、"
+    "主筋や交流の中でその姿になる理由を作ります。"
+)
+
+OUTFIT_ALLOCATION = (
+    "各章のoutfit_appearancesに、当章で実際に登場させる別の姿を記します。"
+    "character_idとoutfit_id、当章のどの出来事・状況でその姿になるかをoccasionに1文です。"
+    "default以外の全ての姿を、全章のどこかへ少なくとも1回割り当てます。"
+    "出来事の内容に合う章へ置き、同じ姿が複数の章に登場しても構いません。登場しない章は空配列です。"
+    "当章でその姿にならない人物は書きません。全員分の欄を埋める必要はなく、ここに書いた姿は当章で必ず登場します。"
+    "割り当てのために出来事を変更・追加しません。"
 )

@@ -131,9 +131,13 @@ def validate_narrative(value: dict | NarrativeResult, approval_snapshot: dict,
         for direction in scene.directions:
             if direction.utterance_id not in utterances:
                 raise ValueError("Direction references an unknown utterance.")
-            if direction.kind in {"enter", "exit", "position", "focus"}:
+            if (direction.kind == "outfit") != (direction.outfit_id is not None):
+                raise ValueError("Only an outfit change names a look.")
+            if direction.kind in {"enter", "exit", "position", "focus", "outfit"}:
                 if direction.character_id not in scene.plan.character_ids:
                     raise ValueError("Direction references an absent character.")
+                if direction.kind == "outfit" and direction.position is not None:
+                    raise ValueError("An outfit change does not move the character.")
             elif direction.character_id is not None or direction.position is not None:
                 raise ValueError("A pause/blackout must not reference a character or position.")
             if direction.kind in {"enter", "position"} and direction.position is None:

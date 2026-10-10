@@ -9,10 +9,12 @@ from pathlib import Path
 
 from packages.contracts.job_progress import ChapterPlanProgress
 from packages.contracts.m3 import (
+    NarrativeDirection,
     NarrativeResult,
     NarrativeScene,
     SceneReview,
 )
+from packages.contracts.outfits import DEFAULT_OUTFIT, outfits_after, snapshot_outfits
 from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.continuity import narrative_hash
 
@@ -50,10 +52,17 @@ from .script_cast import (
     story_character,
 )
 from .script_chapter_plan import (
+    OUTFIT_MOMENT,
+    OUTFIT_PLAN,
     ChapterScriptPlan,
     ContinuedChapterPlan,
     FirstChapterPlan,
+    OutfitMoments,
+    add_scene_outfits,
+    outfit_moment_schema,
+    pending_outfit_changes,
     project_plan,
+    settle_scene_outfits,
 )
 from .script_context import fit_context
 from .script_examples import example_for
@@ -63,6 +72,8 @@ from .script_overlap import trim_chapter_overlap
 from .script_plot import (
     ALLOCATION_INSTRUCTION,
     CHAIN_INSTRUCTION,
+    OUTFIT_ALLOCATION,
+    OUTFIT_EVENTS,
     PLOT_INSTRUCTION,
     PLOT_PRIORITY,
     PRESENTATION_INSTRUCTION,
@@ -74,11 +85,13 @@ from .script_plot import (
     PlotCore,
     StoryChain,
     StoryChainDraft,
+    add_outfit_appearances,
     allocate_chain,
     bind_core_cast,
     check_chain,
     check_chapters,
     check_core,
+    check_outfit_appearances,
     future_material,
 )
 
@@ -152,6 +165,12 @@ SCRIPT_FORMAT = (
 )
 SCENE_INSTRUCTION = (SCRIPT_SYSTEM + PROGRESSION + DRAMATIC_ACTION + ADAPTATION
                      + SCENE_SCOPE + SCRIPT_FORMAT)
+SCENE_OUTFITS = (
+    "scene_outfitsは当場面での各人物の姿です。服装や姿に触れる地の文はこれに合わせます。"
+    "changes_during_scene_toがある人物は、この場面の中で実際にその姿へ変わる様子を描きます。"
+    "指定のない着替え・変身は描きません。姿の説明を書き写したり、毎回服装を描写したりする必要はありません。"
+    "scene_outfitsにない人物は姿が1種類だけです。その人物が着替えた・普段と違う服装だとは書きません。"
+)
 
 
 class ExistingStages:
@@ -375,6 +394,11 @@ class ScriptRun(DraftRun):
     @property
     def options(self):
         return ScriptOptions.model_validate(self.payload.get("script_options", {}))
+
+    @property
+    def outfits(self):
+        """Alternate looks by main character; empty for an ordinary production."""
+        return snapshot_outfits(self.payload["approval_snapshot"])
 
     def cast_plan(self):
         if (self.manifest["approved_chapter_count"] != 3
@@ -723,13 +747,19 @@ class ScriptRun(DraftRun):
         # A single-main approval legitimately omits relationships. Keep the
         # approval snapshot unchanged so its saved identity remains resumable.
         relationships = snapshot.get("relationships", {"result": {"pairs": []}})["result"]
-        return {"world": snapshot["world"]["result"],
-                "characters": [story_character(row) for row in cast.values()],
-                "relationships": relationships,
-                "main_character_ids": [row["id"] for row in main],
-                "introduced_character_ids": [row["id"] for row in [*main, *introduced]],
-                "planned_connections_not_events": cast_plan.get("connections", []),
-                "initial_cast_context_not_events": cast_plan.get("everyday_context", [])}
+        result = {"world": snapshot["world"]["result"],
+                  "characters": [story_character(row) for row in cast.values()],
+                  "relationships": relationships,
+                  "main_character_ids": [row["id"] for row in main],
+                  "introduced_character_ids": [row["id"] for row in [*main, *introduced]],
+                  "planned_connections_not_events": cast_plan.get("connections", []),
+                  "initial_cast_context_not_events": cast_plan.get("everyday_context", [])}
+        if self.outfits:
+            result["character_outfits"] = [
+                {"character_id": cid, "name": cast[cid]["name"],
+                 "outfits": [row.model_dump(mode="json") for row in rows]}
+                for cid, rows in self.outfits.items()]
+        return result
 
     def material(self, setting, outline, number, brief="", *, stage="plan"):
         plot = DetailedPlot.model_validate(self.state["plot"])
@@ -844,7 +874,7 @@ class ScriptRun(DraftRun):
             scene_context["chapters"] = [*context["chapters"], {
                 "number": number, "text": self.script_text(saved_scenes),
                 "scene_starts": self.scene_offsets(saved_scenes)}]
-        prompt = SCENE_INSTRUCTION
+        prompt = SCENE_INSTRUCTION + (SCENE_OUTFITS if scene_context["setting"].get("scene_outfits") else "")
         budget = self.output_budget(scope, size, plan.character_ids)
         saved_source = self.saved_source_attempt(scope + "-text") if enabled(self.payload) else None
         source_profile = saved_source["profile"] if saved_source else self.llm.profile
@@ -925,6 +955,7 @@ class ScriptRun(DraftRun):
         if normalizations:
             self.llm.trace.extend(normalizations)
             self.state.setdefault("staging_normalizations", {})[scope] = normalizations
+        directions.extend(self.outfit_directions(scope, number, plan, following_plans, utterances))
         scene = NarrativeScene(id=plan.id, plan=plan, raw_text=separation.raw_text,
             utterances=utterances, directions=directions,
             review=SceneReview(policy="not_evaluated", passed=False, issues=[], events=[]))
@@ -934,6 +965,48 @@ class ScriptRun(DraftRun):
         _text(self.output / "sources" / f"{scope}.normalized.txt", scene.raw_text)
         self.partial(number, self.script_text([*saved_scenes, scene]))
         return scene
+
+    def outfit_directions(self, scope, number, plan, following_plans, utterances):
+        """Anchor each change of look to the frozen line that shows it.
+
+        A change the text does not show, or an answer that cannot be used, leaves the
+        portrait as it is: the next scene's entrance shows the new look instead.
+        """
+        outfits = self.outfits
+        changes = pending_outfit_changes(plan, following_plans, outfits) if outfits else []
+        if not changes:
+            return []
+        expected = {row["character_id"]: row for row in changes}
+        names = {cid: {row.id: row.name for row in rows} for cid, rows in outfits.items()}
+        order = [row.id for row in utterances]
+
+        def check(value):
+            if [row.character_id for row in value.moments] != list(expected):
+                raise ValueError(f"Answer once for each of {list(expected)}, in this order.")
+
+        brief = json.dumps({
+            "changes": [{**row, "from": names[row["character_id"]][row["from"]],
+                         "to": names[row["character_id"]][row["to"]]} for row in changes],
+            "utterances": [{"id": row.id, "speaker": row.speaker_id or "NARRATOR", "text": row.display_text}
+                           for row in utterances]}, ensure_ascii=False)
+        context = {"setting": {}, "outline": "", "brief": brief, "chapters": [], "notes": []}
+        self.progress_step(scope + "-outfit", "script-staging", number, "running")
+        record = {"changes": changes}
+        try:
+            answer = self.structured(scope + "-outfit", "script-staging", number, OUTFIT_MOMENT, context,
+                                     OutfitMoments, check, outfit_moment_schema(changes, order))
+            moments = {row.character_id: row.utterance_id for row in answer.moments}
+        except DraftBudgetError:
+            raise
+        except (DraftExecutionError, ContextBudgetError) as exc:
+            moments, record["error"] = {}, str(exc)
+        self.progress_step(scope + "-outfit", "script-staging", number, "completed")
+        record["moments"] = moments
+        self.state.setdefault("outfit_moments", {})[scope] = record
+        return [NarrativeDirection(
+            id=f"{plan.id}-o{index}", utterance_id=moments[cid], kind="outfit", timing="before",
+            character_id=cid, position=None, duration_ms=400, outfit_id=row["to"])
+            for index, (cid, row) in enumerate(expected.items(), 1) if moments.get(cid)]
 
     def save_source(self, number, scope, raw, saved_scenes):
         (self.output / "sources").mkdir(exist_ok=True)
@@ -947,9 +1020,15 @@ class ScriptRun(DraftRun):
         characters = set(setting["main_character_ids"])
         available = characters | {row.id for row in cast_plan.supporting_characters}
 
+        outfits = self.outfits
+        events_note = OUTFIT_EVENTS if outfits else ""
+        allocation_note = OUTFIT_ALLOCATION if outfits else ""
+
         def check(value):
             check_core(value.core, characters, count)
             check_chapters(value.chapters, list(range(1, count + 1)))
+            if outfits:
+                check_outfit_appearances(value.chapters, outfits)
             for chapter in value.chapters:
                 for topic in chapter.conversation_topics:
                     if len(set(topic.character_ids)) != len(topic.character_ids) or not set(topic.character_ids) <= available:
@@ -978,7 +1057,7 @@ class ScriptRun(DraftRun):
             schema = StoryChainDraft.model_json_schema()
             bind_core_cast(schema, characters, core="ChainCore", character="ChainCharacter")
             schema["$defs"]["ChainStep"]["properties"]["character_id"]["enum"] = sorted(available)
-            chain = self.structured_core("story-chain", "script-outline", 1, CHAIN_INSTRUCTION,
+            chain = self.structured_core("story-chain", "script-outline", 1, CHAIN_INSTRUCTION + events_note,
                 context, StoryChainDraft,
                 lambda value: check_chain(value.as_chain(), characters, available), schema).as_chain()
             chain_data = chain.model_dump(mode="json")
@@ -993,8 +1072,10 @@ class ScriptRun(DraftRun):
             if len(chain.events) == 3:
                 schema = FixedChapterAllocation.model_json_schema()
                 schema["$defs"]["ConversationTopic"]["properties"]["character_ids"]["items"]["enum"] = sorted(available)
+                if outfits:
+                    add_outfit_appearances(schema, outfits)
                 allocation = self.structured("chapter-allocation", "script-allocation", 1,
-                    PRESENTATION_INSTRUCTION + "出来事は3個、章は3章なので配分はコードで確定しています。"
+                    PRESENTATION_INSTRUCTION + allocation_note + "出来事は3個、章は3章なので配分はコードで確定しています。"
                     "chapter_1は出来事1だけ、chapter_2は出来事2だけ、chapter_3は出来事3だけを担当します。"
                     "境界番号は出力せず、担当する出来事を変えずに各章のtitle・role・conversation_topicsを設計します。",
                     allocation_context, FixedChapterAllocation,
@@ -1003,8 +1084,10 @@ class ScriptRun(DraftRun):
                 schema = ChapterAllocation.model_json_schema()
                 schema["$defs"]["ChapterBoundary"]["properties"]["last_event"]["maximum"] = len(chain.events)
                 schema["$defs"]["ConversationTopic"]["properties"]["character_ids"]["items"]["enum"] = sorted(available)
+                if outfits:
+                    add_outfit_appearances(schema, outfits)
                 allocation = self.structured("chapter-allocation", "script-allocation", 1,
-                    ALLOCATION_INSTRUCTION + f"出来事は全{len(chain.events)}個です。last_eventはevent_numberを使い、"
+                    ALLOCATION_INSTRUCTION + allocation_note + f"出来事は全{len(chain.events)}個です。last_eventはevent_numberを使い、"
                     f"3章の値を狭義昇順にし、第3章の値は必ず{len(chain.events)}にします。",
                     allocation_context, ChapterAllocation,
                     check_allocation, schema)
@@ -1017,8 +1100,10 @@ class ScriptRun(DraftRun):
             schema["properties"]["chapters"].update(minItems=count, maxItems=count)
             schema["$defs"]["PlotChapter"]["properties"]["number"]["enum"] = list(range(1, count + 1))
             bind_core_cast(schema, characters, core="PlotCore", character="PlotCharacter")
+            if outfits:
+                add_outfit_appearances(schema, outfits)
             plot = self.structured_core("outline", "script-outline", 1,
-                f"全{count}章のドラマを指定JSONで計画します。" + PLOT_INSTRUCTION,
+                f"全{count}章のドラマを指定JSONで計画します。" + PLOT_INSTRUCTION + events_note + allocation_note,
                 context, DetailedPlot, check, schema)
         else:
             schema = PlotCore.model_json_schema()
@@ -1036,9 +1121,19 @@ class ScriptRun(DraftRun):
                     "immutable_core": core.model_dump(mode="json"),
                     "previous_planned_chapters": [row.model_dump(mode="json") for row in chapters[-2:]],
                     "total_chapters": count, "requested_chapters": numbers}, ensure_ascii=False)}
+                if outfits:
+                    add_outfit_appearances(schema, outfits)
+
+                def check_batch(value, numbers=numbers, planned=tuple(chapters)):
+                    check_chapters(value.chapters, numbers)
+                    if outfits and numbers[-1] == count:
+                        # Only the last batch can still place a look no chapter has shown.
+                        check_outfit_appearances([*planned, *value.chapters], outfits)
+
                 batch = self.structured(f"plot-batch-{first:03d}", "script-outline", 1,
-                    "指定範囲の章だけを計画します。前の章もまだ未執筆の予定です。" + PLOT_INSTRUCTION,
-                    batch_context, PlotBatch, lambda value, numbers=numbers: check_chapters(value.chapters, numbers), schema)
+                    "指定範囲の章だけを計画します。前の章もまだ未執筆の予定です。" + PLOT_INSTRUCTION
+                    + events_note + allocation_note,
+                    batch_context, PlotBatch, check_batch, schema)
                 chapters.extend(batch.chapters)
             plot = DetailedPlot(core=core, chapters=chapters)
             check(plot)
@@ -1056,6 +1151,18 @@ class ScriptRun(DraftRun):
         planning_context = {**context, "brief": context["brief"] +
                             "\n以前に使用した場所のIDと名前:\n" + json.dumps(
                                 {key: value["name"] for key, value in registry.items()}, ensure_ascii=False)}
+        outfits = self.outfits
+        required_outfits = []
+        if outfits:
+            plot = DetailedPlot.model_validate(self.state["plot"])
+            required_outfits = [(row.character_id, row.outfit_id)
+                                for row in plot.chapters[number - 1].outfit_appearances]
+            # Only the latest chapter is kept whole across production jobs; older ones are text.
+            looks = outfits_after([scene.plan for scene in NarrativeResult.model_validate(
+                self.state["chapters"][-1]["narrative"]).scenes]) if self.state["chapters"] else {}
+            if looks:
+                planning_context["brief"] += "\n前章の終了時点での各人物の姿（outfit_id）:\n" + json.dumps(
+                    {cid: looks.get(cid, DEFAULT_OUTFIT) for cid in outfits}, ensure_ascii=False)
 
         def check(plan):
             source_hash = digest(plan.model_dump(mode="json"))
@@ -1079,6 +1186,11 @@ class ScriptRun(DraftRun):
             for location in plan.locations:
                 if location.id in registry and location.name != registry[location.id]["name"]:
                     raise ValueError("An existing location ID must retain its registered name.")
+            if outfits:
+                plan, dropped = settle_scene_outfits(plan, outfits, required_outfits)
+                if dropped:
+                    self.state.setdefault("outfit_plan_normalizations", {})[str(number)] = dropped
+                    self.persist()
             if unused_locations:
                 record = {"source_sha256": source_hash,
                           "normalized_sha256": digest(plan.model_dump(mode="json")),
@@ -1090,6 +1202,9 @@ class ScriptRun(DraftRun):
             return plan
 
         model = FirstChapterPlan if number == 1 else ContinuedChapterPlan
+        schema = model.model_json_schema()
+        if outfits:
+            add_scene_outfits(schema, outfits)
         instruction = (
             "第1章です。承認設定と当章の予定から直接場面を作ります。前章の実績整理は不要です。"
             if number == 1 else
@@ -1126,10 +1241,10 @@ class ScriptRun(DraftRun):
             "既存の場所IDと名前を維持し、背景の状態は今回に合わせます。"
             "別の場所へ移るなら場面を分け、移動先を登録します。image_promptは人物のいない背景の英語描写です。"
             "素材在庫を理由に同じ人物や舞台へ戻さないでください。"
-            + PLOT_PRIORITY +
+            + PLOT_PRIORITY + (OUTFIT_PLAN if outfits else "") +
             ("最終章では、積み重ねた選択の結果として外的な課題と人物・関係の着地を描きます。"
              if number == self.manifest["approved_chapter_count"] else ""),
-            planning_context, model, check, model.model_json_schema())
+            planning_context, model, check, schema)
         plan = project_plan(draft, self.options)
         used_ids = {cid for scene in plan.scenes for cid in scene.character_ids}
         main_ids = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}

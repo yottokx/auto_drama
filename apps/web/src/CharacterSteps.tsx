@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './Icons'
 import { Dialog, LockButton } from './PreviewComponents'
 import type { CharacterBrief, RevisionRequest, RevisionScope } from './wizardState'
+import { CharacterOutfits } from './CharacterOutfits'
 import { CharacterVoiceTrials } from './CharacterVoiceTrials'
 import { ImageGenerationDetails } from './ImageGenerationDetails'
-import type { VoiceTest } from './m2Api'
+import type { M2Outfit, VoiceTest } from './m2Api'
 import './characterSteps.css'
 
 type CharacterPatch = Partial<Omit<CharacterBrief, 'id' | 'locked'>>
@@ -109,10 +110,14 @@ export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, 
   </div>
 }
 
-export function CharacterReview({ characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus }: {
+export function CharacterReview({ characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus, outfitActions }: {
   characters: CharacterBrief[]; requests: RevisionRequest[]; onChange: CharacterChange; onToggleLock: (id: string, scope: DetailScope) => void;
   onRequest: (scope: RevisionScope, instruction: string, characterId?: string) => boolean | Promise<boolean>; onBack: () => void; onApprove: () => void; onPendingChange?: (pending: boolean) => void;
-  previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[] }>
+  previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]; imagePending?: boolean }>
+  outfitActions?: {
+    save: (characterId: string, outfit: { id?: string; name: string; description: string; occasion: string }) => Promise<boolean>
+    remove: (characterId: string, outfitId: string) => Promise<boolean>; generate: (characterId: string, outfitId: string) => Promise<boolean>
+  }
   relationshipResults?: ReactNode; onCloneVoice?: (characterId: string, text: string) => Promise<boolean>; characterStatus?: Record<string, string>
   live?: boolean; canApprove?: boolean; generating?: boolean; busy?: boolean
 }) {
@@ -226,6 +231,7 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
         {appearanceEdit ? <fieldset disabled={busy} className="char-inline-editor" aria-label="外見を編集"><label className="field-label">外見の設定<textarea autoFocus rows={5} value={appearanceEdit.appearance} disabled={character.locked.appearance} onChange={event => updateEdit('appearance', { appearance: event.target.value })}/></label><CharacterDimensions character={{ ...appearanceEdit, locked: character.locked }} onChange={(_id, patch) => updateEdit('appearance', patch)}/>{editActions('appearance')}</fieldset> : <><ResultText title="外見の設定" text={character.appearance}/>{character.height_cm != null && <p className="char-height-summary">身長 {character.height_cm} cm<span>表示用の目安</span></p>}</>}
         <div className="char-asset-actions"><span>素材の作り直し</span><button type="button" className="char-retake-button" disabled={busy || character.locked.appearance || resultUnavailable || unsavedEdits.length > 0} onClick={() => { setRetake('image-retake'); setRetakeInstruction('') }}><Icon name="refresh" size={14}/>立ち絵だけリテイク</button></div>
         <p className="char-retake-hint">人物の設定と外見を維持して、立ち絵だけ作り直します。</p>
+        {outfitActions && <CharacterOutfits characterId={character.id} characterName={characterName(character, characterIndex)} outfits={assets?.outfits ?? []} baseImageArtifactId={assets?.imageArtifactId ?? null} baseReady={Boolean(assets?.image) && !assets?.imagePending && !resultUnavailable} busy={busy} onSave={outfitActions.save} onDelete={outfitActions.remove} onGenerate={outfitActions.generate} onExpand={(name, image) => setPortrait({ name, image })}/>}
       </section>
       <section className="char-asset-card">
         <DetailHeader title="声・話し方" icon="volume" locked={character.locked.voice} onToggle={() => toggleLock('voice')} onEdit={() => startEdit('voice')} editing={Boolean(voiceEdit)} disabled={busy || resultUnavailable}/>

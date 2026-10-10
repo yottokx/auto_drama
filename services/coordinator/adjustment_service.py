@@ -11,8 +11,10 @@ from uuid import uuid4
 
 from packages.contracts.adjustments import AdjustmentCharacter
 from packages.contracts.m3 import EMOTION_TAGS, PortraitSetting
+from packages.contracts.outfits import DEFAULT_OUTFIT, image_target
 from packages.tyrano_export.portrait import PortraitSource
 
+from .m2_bundle import validate_bundle as validate_m2_bundle
 from .m3_bundle import validate_bundle
 from .m3_service import M3Service
 from .service import ServiceError, public, required
@@ -116,7 +118,24 @@ class AdjustmentService:
         for person in cast.values():
             person["source_prompts"] = {kind: person["result"].get(field, "")
                                         for kind, field in (("image", "appearance"), ("voice", "voice"))}
-        return list(cast.values()), scenes
+        # A published alternate look is adjusted as its own image-only row after its character.
+        rows = []
+        for person in cast.values():
+            rows.append(person)
+            approved = next((row for row in snapshot["characters"] if row["id"] == person["character_id"]), {})
+            for outfit in approved.get("outfits", []):
+                target = image_target(person["character_id"], outfit["id"])
+                shown = [chapter["chapter_number"] for chapter in chapters if connection.execute(
+                    "SELECT 1 FROM m3_requirement WHERE production_id=? AND kind='m3_image' AND target_id=?",
+                    (chapter["id"], target)).fetchone()]
+                if outfit["id"] == DEFAULT_OUTFIT or not shown:
+                    continue
+                rows.append({"character_id": target, "name": f"{person['name']}（{outfit['name']}）", "role": "look",
+                             "look": {"character_id": person["character_id"], "outfit_id": outfit["id"],
+                                      "name": outfit["name"]},
+                             "result": person["result"], "chapter_numbers": shown,
+                             "source_prompts": {"image": outfit.get("description", ""), "voice": ""}})
+        return rows, scenes
 
     @staticmethod
     def _provenance_prompt(provenance, kind):
@@ -212,6 +231,8 @@ class AdjustmentService:
                      "scene_music": effective_settings(connection, chapters, self.m3, state)}
             draft.pop("state", None)
             selected = {row["character_id"]: row for row in state["characters"]}
+            cast = [row for row in cast if row["character_id"] in selected or row["role"] != "look"]
+            people = {row["character_id"]: row for row in cast}
             for row in cast:
                 row.update(selected[row["character_id"]])
                 for kind in ("image", "voice"):
@@ -284,7 +305,7 @@ class AdjustmentService:
                 for person in cast:
                     cid = person["character_id"]
                     values = {}
-                    for kind, job_kind in (("image", "m3_image"), ("voice", "m3_voice")):
+                    for kind, job_kind in (("image", "m3_image"), ("voice", "m3_voice"))[:1 if person["role"] == "look" else 2]:
                         material = next((row for rows in requirements.values() for row in rows
                                          if row["kind"] == job_kind and row["target_id"] == cid), None)
                         if material:
@@ -304,6 +325,10 @@ class AdjustmentService:
                         values[kind + "_candidate_id"] = self._store_candidate(connection, root, cid, kind,
                             artifact_id, transcript, "original")
                     setting = settings.get(cid, {})
+                    if person["role"] == "look":
+                        # Same body as the base portrait; only its own rectangle is set later.
+                        base = settings.get(person["look"]["character_id"], {})
+                        setting = {key: base[key] for key in ("framing", "height_cm") if key in base}
                     characters.append(AdjustmentCharacter(character_id=cid, **values,
                         framing=setting.get("framing", "auto"), height_cm=setting.get("height_cm", person["result"].get("height_cm")),
                         body_bounds=setting.get("body_bounds")).model_dump(mode="json"))
@@ -342,7 +367,10 @@ class AdjustmentService:
                 self._candidate(connection, draft, value["image_candidate_id"], cid, "image")
             elif prior[cid]["image_candidate_id"]:
                 raise ServiceError(422, "立ち絵の素材候補を選択してください。")
-            self._candidate(connection, draft, value["voice_candidate_id"], cid, "voice")
+            if value["voice_candidate_id"]:
+                self._candidate(connection, draft, value["voice_candidate_id"], cid, "voice")
+            elif prior[cid]["voice_candidate_id"]:
+                raise ServiceError(422, "基準音声の素材候補を選択してください。")
             if (value["image_candidate_id"] != prior[cid]["image_candidate_id"]
                     and value["body_bounds"] == prior[cid]["body_bounds"]):
                 value["body_bounds"] = None
@@ -402,6 +430,10 @@ class AdjustmentService:
             character = next((row["result"] for row in cast if row["character_id"] == request.character_id), None)
             if not character:
                 raise ServiceError(422, "作品に登場する人物を指定してください。")
+            look = next((row for row in cast if row["character_id"] == request.character_id
+                         and row["role"] == "look"), None)
+            if look:
+                return self._generate_look(connection, project_id, draft, root, look, request)
             self.history.begin(connection, project_id, "素材候補を生成", "m3-adjustment-generate", concurrent=True)
             draft = {**draft, "revision": draft["revision"] + 1}
             transcript = (request.reference_text or character["selfIntroduction"]) if request.kind == "voice" else None
@@ -420,6 +452,39 @@ class AdjustmentService:
             connection.execute("UPDATE adjustment_candidate SET job_id=? WHERE id=?", (job, candidate))
             connection.execute("UPDATE adjustment_draft SET revision=revision+1 WHERE id=?", (draft["id"],))
             return self._view(connection, project_id)
+
+    def _generate_look(self, connection, project_id, draft, root, look, request):
+        """Redraw an alternate look from the base portrait currently chosen in this draft."""
+        if request.kind != "image":
+            raise ServiceError(422, "別バージョンには立ち絵だけを生成できます。")
+        from .event_cg_settings import EventCgSettings
+
+        if not any("m2_outfit_image" in json.loads(worker["capabilities"]) for worker in connection.execute(
+                "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.clock() - 90,))):
+            raise ServiceError(409, "別バージョンの立ち絵にはQwenの準備済みWorkerが必要です。Workerを起動してください。")
+        state = json.loads(draft["state"])
+        base = next(row for row in state["characters"] if row["character_id"] == look["look"]["character_id"])
+        reference = required(connection, "artifact", self._candidate(
+            connection, draft, base["image_candidate_id"], base["character_id"], "image")["artifact_id"])
+        source = look["source_prompts"]["image"]
+        description = "\n".join(filter(None, (
+            request.source_prompt if request.source_prompt is not None else source, request.instruction.strip())))
+        self.history.begin(connection, project_id, "素材候補を生成", "m3-adjustment-generate", concurrent=True)
+        draft = {**draft, "revision": draft["revision"] + 1}
+        candidate = self._store_candidate(
+            connection, root, look["character_id"], "image", None, None, "generated", request.instruction,
+            metadata={"prompt_details": {"source": source, "instruction": request.instruction, "effective": None,
+                                         "input": request.source_prompt if request.source_prompt is not None else source,
+                                         "baseline": source}})
+        job = self._enqueue(connection, draft, root, "m2_outfit_image", "candidate", look["character_id"],
+            candidate_id=candidate, material={
+                "character_id": look["look"]["character_id"], "character_result": look["result"],
+                "outfit": {"id": look["look"]["outfit_id"], "name": look["look"]["name"], "description": description},
+                "reference_image": {"artifact_id": reference["id"], "sha256": reference["sha256"]},
+                "cg_profile": EventCgSettings(self.coordinator).settings(connection)["profile"]})
+        connection.execute("UPDATE adjustment_candidate SET job_id=? WHERE id=?", (job, candidate))
+        connection.execute("UPDATE adjustment_draft SET revision=revision+1 WHERE id=?", (draft["id"],))
+        return self._view(connection, project_id)
 
     def upload(self, project_id, revision, cid, kind, original, normalized, metadata, reference_text):
         with self.db.transaction() as connection:
@@ -692,8 +757,15 @@ class AdjustmentService:
             if job["status"] == "completed":
                 return self.coordinator._duplicate(connection, job, data)
         try:
-            envelope, files = validate_bundle(data, job["kind"])
             payload = json.loads(job["payload"])
+            if job["kind"] == "m2_outfit_image":
+                envelope, files = validate_m2_bundle(data, job["kind"], payload["character_id"])
+                edited = envelope["provenance"].get("outfit", {})
+                if (edited.get("id") != payload["outfit"]["id"]
+                        or edited.get("reference_sha256") != payload["reference_image"]["sha256"]):
+                    raise ValueError("outfit image differs from its base portrait")
+            else:
+                envelope, files = validate_bundle(data, job["kind"])
             voice = envelope["provenance"].get("voice", {})
             if job["kind"] == "m3_voice" and voice.get("reference_text") != payload["reference_text"]:
                 raise ValueError("reference speech changed")
@@ -709,7 +781,7 @@ class AdjustmentService:
         except (ValueError, TypeError, KeyError, AttributeError, zipfile.BadZipFile,
                 EOFError, wave.Error, zlib.error) as exc:
             raise ServiceError(422, "生成結果の素材・音声情報が入力と一致しません。") from exc
-        filename = "image.png" if job["kind"] == "m3_image" else "voice.wav"
+        filename = "image.png" if job["kind"] in {"m3_image", "m2_outfit_image"} else "voice.wav"
         if filename not in files:
             raise ServiceError(422, "素材候補には実際の画像・音声が必要です。")
         with self.db.transaction() as connection:
@@ -737,7 +809,8 @@ class AdjustmentService:
                 details = prior.get("prompt_details")
                 if isinstance(details, dict):
                     metadata["prompt_details"] = {**details,
-                        "effective": self._provenance_prompt(envelope["provenance"], candidate["kind"])}
+                        "effective": envelope["provenance"].get("prompt") if job["kind"] == "m2_outfit_image"
+                        else self._provenance_prompt(envelope["provenance"], candidate["kind"])}
                 connection.execute("UPDATE adjustment_candidate SET artifact_id=?,metadata=? WHERE id=?",
                     (record["id"], json.dumps(metadata), link["candidate_id"]))
                 if job["kind"] == "m3_voice" and current:

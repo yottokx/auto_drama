@@ -6,6 +6,7 @@ import hashlib
 
 from packages.contracts import Script
 from packages.contracts.m3 import NarrativeDirection, NarrativeResult, PortraitSetting
+from packages.contracts.outfits import DEFAULT_OUTFIT, image_target, snapshot_outfits
 
 from .staging import normalize_directions
 from .validation import script_character_id
@@ -49,13 +50,32 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
         return {"framing": {"humanoid": "upper_body", "nonhumanoid": "full_body"}.get(
             body, "auto"), "height_cm": value.get("height_cm") if body == "humanoid" else None}
 
+    # An alternate look is used only where its own portrait was resolved.
+    looks = {cid: {row.id: references[("m3_image", image_target(cid, row.id))]["id"] for row in rows
+                   if row.id != DEFAULT_OUTFIT and ("m3_image", image_target(cid, row.id)) in references}
+             for cid, rows in snapshot_outfits(snapshot).items()}
+
+    def look(cid, oid, asset):
+        value = {"id": oid, "image_asset_id": asset}
+        target = image_target(cid, oid)
+        if target in portrait_settings:
+            setting = PortraitSetting.model_validate(portrait_settings[target])
+            if (setting.body_bounds is not None
+                    and setting.image_artifact_id == references[("m3_image", target)]["artifact_id"]):
+                value["body_bounds"] = setting.body_bounds.model_dump(mode="json")
+        return value
+
     characters = [{"id": script_character_id(cid), "name": value["name"],
                    "image_asset_id": references[("m3_image", cid)]["id"] if cid not in omitted_portraits else None,
-                   **presentation(cid, value)}
+                   **presentation(cid, value),
+                   **({"outfits": [look(cid, oid, asset) for oid, asset in looks[cid].items()]}
+                      if looks.get(cid) else {})}
                   for cid, value in cast.items() if ("m3_image", cid) in references or cid in omitted_portraits]
     utterances, directions = [], []
     for scene in narrative.scenes:
         first = scene.utterances[0].id
+        worn = {row.character_id: row.outfit_id for row in scene.plan.outfits
+                if row.outfit_id in looks.get(row.character_id, {})}
         directions.append({"id": stable_id("background", scene.id), "kind": "background",
                            "utterance_id": first, "timing": "before", "duration_ms": 0,
                            "asset_id": references[("m3_background", scene.plan.location_id)]["id"]})
@@ -86,12 +106,19 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
             direction = NarrativeDirection.model_validate(raw_direction)
             if direction.character_id in omitted_portraits:
                 continue
+            if direction.kind == "outfit" and direction.outfit_id not in {
+                    DEFAULT_OUTFIT, *looks.get(direction.character_id, {})}:
+                continue
             value = {"id": direction.id, "kind": direction.kind,
                      "utterance_id": direction.utterance_id, "timing": direction.timing}
-            if direction.kind in ("enter", "exit", "position", "focus"):
+            if direction.kind in ("enter", "exit", "position", "focus", "outfit"):
                 value["character_id"] = script_character_id(direction.character_id)
+            if direction.kind == "outfit":
+                value["outfit_id"] = direction.outfit_id
             if direction.kind in ("enter", "position"):
                 value["position"] = direction.position
+            if direction.kind == "enter" and direction.character_id in worn:
+                value["outfit_id"] = worn[direction.character_id]
             if direction.kind != "focus":
                 value["duration_ms"] = direction.duration_ms
             directions.append(value)

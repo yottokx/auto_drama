@@ -10,7 +10,7 @@ from packages.contracts.event_cg import (
     CG_CONFIGURATIONS,
     CG_KINDS,
     CG_SIZES,
-    STAGING_RULES_VERSION,
+    LENIENT_RULES_VERSION,
     EventCgPolicy,
     EventCgProfile,
     configuration_id,
@@ -64,12 +64,12 @@ class EventCgSettings:
         if expected_revision is not None and expected_revision != policy["revision"]:
             raise ServiceError(409, "イベントCG設定が更新されました。最新の設定を確認してください。")
         if policy["max_cgs"] == 0:
-            return EventCgPolicy(planning_version=STAGING_RULES_VERSION,
+            return EventCgPolicy(planning_version=LENIENT_RULES_VERSION,
                                  max_variants_per_cg=policy["max_variants_per_cg"])
         settings = self.settings(connection)
         if not settings["ready"]:
             raise ServiceError(409, "イベントCGを使うにはQwenの準備済みWorkerを起動してください。CG上限0なら準備不要です。")
-        return EventCgPolicy(planning_version=STAGING_RULES_VERSION, max_cgs=policy["max_cgs"],
+        return EventCgPolicy(planning_version=LENIENT_RULES_VERSION, max_cgs=policy["max_cgs"],
                              max_variants_per_cg=policy["max_variants_per_cg"],
                              generation_profile=settings["profile"])
 

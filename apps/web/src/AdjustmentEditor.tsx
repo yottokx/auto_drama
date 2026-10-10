@@ -87,7 +87,8 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
   const kind: AdjustmentKind = tab === 'voice' ? 'voice' : 'image'
   const inputKey = `${character?.character_id ?? ''}:${kind}`
   const instruction = prompts[inputKey] ?? ''
-  const settingLabel = kind === 'image' ? '外見の設定' : '声・話し方の設定'
+  const isLook = character?.role === 'look'
+  const settingLabel = kind === 'image' ? (isLook ? '別バージョンの見た目' : '外見の設定') : '声・話し方の設定'
   const originalPrompt = adjustmentSetting(character, kind)
   const sourcePrompt = sourcePrompts[inputKey] ?? originalPrompt
   const blankEditedPrompt = inputKey in sourcePrompts && !sourcePrompt.trim()
@@ -289,7 +290,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
         {(state.conflict || dirty || formPending) && <div className="adjustment-actions"><button type="button" className="button button-light" disabled={mutating} onClick={() => void reload()}>{confirmReload ? '入力を破棄して最新の下書きを読み込む' : '入力を取り消して読み直す'}</button>{confirmReload && <button type="button" className="button button-light" onClick={() => setConfirmReload(false)}>入力を残す</button>}</div>}
         {(!draft || draft.status === 'applied') && <div className="adjustment-actions"><button type="button" className="button button-primary" disabled={disabled || source.readonly || !source.complete || source.busy || mutating} onClick={() => void action('start')}>{draft?.status === 'applied' ? 'この版から次の調整を始める' : '調整を始める'}</button>{draft?.status === 'applied' && <span role="status">調整版を反映しました。制作画面の鑑賞・書き出しから確認できます。</span>}</div>}
         {draft && <>
-          {tab !== 'music' && <div className="adjustment-character-heading"><label>編集対象の人物<select value={character?.character_id ?? ''} onChange={event => setCharacterId(event.target.value)}>{source.cast.map(cast => <option key={cast.character_id} value={cast.character_id}>{cast.name}（{cast.role === 'main' ? 'メイン' : 'サブ'}）</option>)}</select></label>{character && <span>登場章：{character.chapter_numbers.map(number => `第${number}章`).join('・')}</span>}</div>}
+          {tab !== 'music' && <div className="adjustment-character-heading"><label>編集対象の人物<select value={character?.character_id ?? ''} onChange={event => setCharacterId(event.target.value)}>{source.cast.map(cast => <option key={cast.character_id} value={cast.character_id}>{cast.name}（{cast.role === 'main' ? 'メイン' : cast.role === 'look' ? '別バージョン' : 'サブ'}）</option>)}</select></label>{character && <span>登場章：{character.chapter_numbers.map(number => `第${number}章`).join('・')}</span>}</div>}
           <div className="adjustment-kind-tabs" role="tablist" aria-label="編集対象">
             {([{ id: 'layout', label: '表示位置調整' }, { id: 'image', label: '立ち絵' }, { id: 'voice', label: '基準音声' }, { id: 'music', label: 'BGM' }] as const).map((item, index, tabs) => <button key={item.id} type="button" role="tab" id={`adjustment-tab-${item.id}`} aria-controls={`adjustment-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => { setTab(item.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate') }} onKeyDown={event => {
               const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length] : event.key === 'ArrowLeft' ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] : null
@@ -394,9 +395,10 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
               </div>
             </fieldset></div>
           </section>}
-          {(tab === 'image' || tab === 'voice') && character && edit && <section id={`adjustment-panel-${kind}`} role="tabpanel" aria-labelledby={`adjustment-tab-${kind}`} tabIndex={0}>
+          {tab === 'voice' && isLook && <section id="adjustment-panel-voice" role="tabpanel" aria-labelledby="adjustment-tab-voice" tabIndex={0}><p className="adjustment-help">別バージョンは立ち絵だけを持ちます。声は元の人物の基準音声を使うので、編集対象の人物で元の人物を選んでください。</p></section>}
+          {(tab === 'image' || tab === 'voice') && !(tab === 'voice' && isLook) && character && edit && <section id={`adjustment-panel-${kind}`} role="tabpanel" aria-labelledby={`adjustment-tab-${kind}`} tabIndex={0}>
             <div className="adjustment-material-heading"><h3>{character.name}の{kind === 'image' ? '立ち絵' : '基準音声'}</h3></div>
-            <p className="adjustment-help">候補を選ぶと下書きのプレビューに使用します。人物設定・プロット・台本は変更されません。{kind === 'voice' && '反映すると、この人物の全台詞音声を作り直します。'}</p>
+            <p className="adjustment-help">候補を選ぶと下書きのプレビューに使用します。人物設定・プロット・台本は変更されません。{kind === 'voice' && '反映すると、この人物の全台詞音声を作り直します。'}{kind === 'image' && isLook && '生成では、元の人物でいま選んでいる立ち絵をもとに服装だけを描き直します。元の人物の立ち絵を差し替えた場合は、別バージョンも作り直してください。'}</p>
             <div className="adjustment-material-workspace"><div className="adjustment-material-candidates">
             <div className={`adjustment-candidates adjustment-candidates-${kind}`}>{candidates.map(candidate => {
               const selectedCandidate = kind === 'image' ? edit.image_candidate_id === candidate.id : edit.voice_candidate_id === candidate.id
@@ -424,8 +426,8 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
                 setSubmittedPrompts(previous => { const next = { ...previous }; delete next[inputKey]; return next })
               }}>元の設定に戻す</button>
               {sourcePrompt !== originalPrompt && <div className="adjustment-prompt-change" role="status">{settingLabel}を編集しています。元の設定は上で比較できます。</div>}
-              <label>{kind === 'image' ? '今回だけの変更指示（構図・ポーズなど／任意）' : '今回だけの変更指示（任意）'}<textarea aria-label="今回だけの変更指示" rows={3} maxLength={10000} value={instruction} placeholder={kind === 'image' ? '例：今の服装で、手を自然に下ろした立ち姿にする' : '例：落ち着いた声で、少しゆっくり話す'} onChange={event => setPrompts(previous => ({ ...previous, [inputKey]: event.target.value }))}/></label>
-              <p>{kind === 'image' ? '外見の設定をSTEP3と同じ処理でAnima用プロンプトに変換します。生成後、候補から実際に使ったプロンプトを確認できます。' : '生成後、候補から実際に使った声・話し方の指示を確認できます。'}編集した設定はこの画面に保持し、変更指示は生成ごとに空欄へ戻します。</p>
+              <label>{kind === 'image' && isLook ? '今回だけの変更指示（色・小物など／任意）' : kind === 'image' ? '今回だけの変更指示（構図・ポーズなど／任意）' : '今回だけの変更指示（任意）'}<textarea aria-label="今回だけの変更指示" rows={3} maxLength={10000} value={instruction} placeholder={kind === 'image' ? '例：今の服装で、手を自然に下ろした立ち姿にする' : '例：落ち着いた声で、少しゆっくり話す'} onChange={event => setPrompts(previous => ({ ...previous, [inputKey]: event.target.value }))}/></label>
+              <p>{kind === 'image' && isLook ? '元の人物の立ち絵をもとに、この見た目へ服装を描き直します（Qwen-Image）。顔・髪・体格は元の立ち絵を保ちます。編集した見た目はこの画面に保持し、変更指示は生成ごとに空欄へ戻します。' : kind === 'image' ? '外見の設定をSTEP3と同じ処理でAnima用プロンプトに変換します。生成後、候補から実際に使ったプロンプトを確認できます。' : '生成後、候補から実際に使った声・話し方の指示を確認できます。'}編集した設定はこの画面に保持し、変更指示は生成ごとに空欄へ戻します。</p>
               {kind === 'voice' && <label>音声に含まれる読み上げ文<textarea aria-label="音声に含まれる読み上げ文" rows={3} maxLength={2000} value={transcript} placeholder="読み上げる文章を入力してください" onChange={event => setTranscripts(previous => ({ ...previous, [character.character_id]: event.target.value }))}/><span>自己紹介台詞を初期入力しています。必要に応じて編集してください。アップロード時は、音声の内容と一致する文章にしてください。</span></label>}
               <button type="button" className="button button-primary" disabled={sendingBlocked || blankEditedPrompt || (!sourcePrompt.trim() && !instruction.trim()) || (kind === 'voice' && !transcript.trim())} onClick={() => void action('generate')}><Icon name="spark" size={15}/>この設定で候補を生成</button>
               <div className="adjustment-upload"><label>ファイルから候補を取り込む<input key={`${inputKey}:${Boolean(file)}`} type="file" accept={kind === 'image' ? '.png,.webp,.jpg,.jpeg,image/png,image/webp,image/jpeg' : '.wav,.mp3,audio/wav,audio/mpeg'} onChange={event => { const selectedFile = event.target.files?.[0]; if (selectedFile) { const problem = adjustmentUploadError(selectedFile, kind, limits!.upload_bytes); if (problem) { setError(problem); return }; setError(''); setFiles(previous => ({ ...previous, [inputKey]: selectedFile })) } }}/></label>

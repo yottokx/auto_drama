@@ -83,6 +83,22 @@ class PortraitBounds(Contract):
         return self
 
 
+def portrait_key(character_id: str, outfit_id: str | None = None) -> str:
+    """Name one look of a character; the base portrait keeps the character's own ID."""
+    return character_id if outfit_id in (None, "default") else f"{character_id}--{outfit_id}"
+
+
+class CharacterOutfit(Contract):
+    """An alternate portrait of the same character, shown by an entrance that names it."""
+
+    id: Identifier
+    image_asset_id: Identifier
+    # Each look is placed by its own silhouette; defaults add nothing to saved scripts.
+    body_bounds: PortraitBounds | None = Field(default=None, exclude_if=lambda value: value is None)
+    offset_y: DisplayOffset = Field(default=0, exclude_if=lambda value: value == 0)
+    scale: DisplayScale = Field(default=1, exclude_if=lambda value: value == 1)
+
+
 class Character(Contract):
     id: Identifier
     name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
@@ -93,6 +109,8 @@ class Character(Contract):
     # Default presentation adds no fields to the established Script bytes.
     offset_y: DisplayOffset = Field(default=0, exclude_if=lambda value: value == 0)
     scale: DisplayScale = Field(default=1, exclude_if=lambda value: value == 1)
+    outfits: list[CharacterOutfit] = Field(default_factory=list, max_length=20,
+                                           exclude_if=lambda value: not value)
 
 
 class PortraitTransform(Contract):
@@ -150,6 +168,7 @@ class EnterDirection(DirectionBase):
     character_id: Identifier
     position: Position = "center"
     duration_ms: Duration = 0
+    outfit_id: Identifier | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ExitDirection(DirectionBase):
@@ -162,6 +181,15 @@ class PositionDirection(DirectionBase):
     kind: Literal["position"]
     character_id: Identifier
     position: Position
+    duration_ms: Duration = 0
+
+
+class OutfitDirection(DirectionBase):
+    """Change a character's portrait in place; ``default`` returns to the base image."""
+
+    kind: Literal["outfit"]
+    character_id: Identifier
+    outfit_id: Identifier
     duration_ms: Duration = 0
 
 
@@ -187,6 +215,7 @@ Direction = Annotated[
     | EnterDirection
     | ExitDirection
     | PositionDirection
+    | OutfitDirection
     | FocusDirection
     | BlackoutDirection
     | PauseDirection,
@@ -301,6 +330,15 @@ class Script(Contract):
             if (self.portrait_baseline is not None and character.image_asset_id is not None
                     and character.id not in self.portrait_baseline.layouts):
                 raise ValueError("fixed portrait baseline is missing a displayed character")
+            looks = [value.id for value in character.outfits]
+            if len(looks) != len(set(looks)) or "default" in looks or (
+                    looks and character.image_asset_id is None):
+                raise ValueError("alternate outfits need unique IDs and a character with a base image")
+            for outfit in character.outfits:
+                asset(outfit.image_asset_id, "character")
+                if (self.portrait_baseline is not None
+                        and portrait_key(character.id, outfit.id) not in self.portrait_baseline.layouts):
+                    raise ValueError("fixed portrait baseline is missing an alternate outfit")
         for utterance in self.utterances:
             if utterance.speaker_id is not None and utterance.speaker_id not in characters:
                 raise ValueError(f"unknown speaker: {utterance.speaker_id}")
@@ -347,8 +385,13 @@ class Script(Contract):
                 raise ValueError(f"unknown direction utterance: {direction.utterance_id}")
             if direction.kind == "background":
                 asset(direction.asset_id, "background")
-            if direction.kind in {"enter", "exit", "position", "focus"}:
+            if direction.kind in {"enter", "exit", "position", "focus", "outfit"}:
                 character = characters.get(direction.character_id)
                 if character is None or character.image_asset_id is None:
                     raise ValueError("character direction requires a character with an image")
+                looks = {value.id for value in character.outfits}
+                if direction.kind == "enter" and direction.outfit_id is not None and direction.outfit_id not in looks:
+                    raise ValueError("entrance names an outfit the character does not have")
+                if direction.kind == "outfit" and direction.outfit_id not in looks | {"default"}:
+                    raise ValueError("outfit change names a look the character does not have")
         return self

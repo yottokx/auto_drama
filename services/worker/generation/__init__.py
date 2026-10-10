@@ -23,7 +23,8 @@ def check_readiness() -> dict:
     except (OSError, ValueError, KeyError):
         event_cg = {"ready": False, "errors": []}
     if event_cg["ready"]:
-        status["available_job_kinds"].append("m3_event_cg")
+        # The same Qwen runtime edits a base portrait into an alternate look.
+        status["available_job_kinds"].extend(("m3_event_cg", "m2_outfit_image"))
     status["errors"].extend(event_cg["errors"])
     status["event_cg_ready"] = event_cg["ready"]
     return status
@@ -40,6 +41,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
 
     prepare_job(job.get("kind"))
     prepare_event_cg(job.get("kind"))
+    if job.get("kind") == "m2_outfit_image":
+        from .outfit_image import generate_job as generate_outfit
+
+        return generate_outfit(job, work_dir)
     if job.get("kind", "").startswith("m3_"):
         from .m3_pipeline import generate_job as generate_m3
 

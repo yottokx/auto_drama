@@ -8,7 +8,9 @@ export type PlotRoute = { start_condition: string; attempt: string; consequence:
 export type PlotChapter = {
   number: number; title: string; role: string; route: PlotRoute; events?: PlotEvent[]
   conversation_topics?: { character_ids: string[]; topic: string; exchange: string }[]
+  outfit_appearances?: { character_id: string; outfit_id: string; occasion: string }[]
 }
+export type OutfitNames = Record<string, Record<string, string>>
 export type PlanningContent = {
   cast_plan: { supporting_characters: CharacterBrief[]; everyday_context: CastLife[]; connections: CastConnection[] }
   plot: {

@@ -8,9 +8,11 @@ import zipfile
 from pathlib import Path
 
 from packages.contracts.m3 import NarrativeResult
+from packages.contracts.outfits import DEFAULT_OUTFIT, image_target, snapshot_outfits
 from packages.narrative.script_conversion import narrative_to_script, stable_id
 from packages.tyrano_export import compile_bundle, demo_content, validate_bundle
 from packages.tyrano_export.compiler import canonical_json
+from packages.tyrano_export.demo import _png
 
 
 def _hash(data: bytes) -> str:
@@ -71,6 +73,17 @@ def export_debug_chapter(narrative: NarrativeResult, snapshot: dict, output: Pat
                              "descriptor": {"character_id": cid, "character_result": character,
                                             "reference_text": character.get("selfIntroduction")},
                              "resolution": "not_generated"})
+    shown = {(row.character_id, look) for scene in narrative.scenes for row in scene.plan.outfits
+             for look in (row.outfit_id, row.change_to)}
+    for cid, outfits in snapshot_outfits(snapshot).items():
+        for outfit in outfits:
+            if outfit.id == DEFAULT_OUTFIT or (cid, outfit.id) not in shown:
+                continue
+            # A different flat colour per look makes a change of portrait visible in playback.
+            colour = (*hashlib.sha256(image_target(cid, outfit.id).encode()).digest()[:3], 255)
+            image("character", image_target(cid, outfit.id),
+                  _png(28, 42, lambda x, y, colour=colour: colour if 5 < x < 23 and y > 3 else (0, 0, 0, 0)),
+                  {"character_id": cid, "outfit": outfit.model_dump(mode="json")})
     for location in narrative.locations:
         image("background", location.id, fixtures["station"],
               {"location": location.model_dump(mode="json")})
