@@ -42,3 +42,6 @@ private/
 /services/worker/runtimes/irodori/ffmpeg/
 /services/worker/runtimes/*/installed.json
 /services/worker/runtimes/*/.runtime-state.json
+
+# Local preview launch settings for the Claude desktop app
+/.claude/launch.json
