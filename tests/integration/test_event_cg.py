@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from packages.contracts.event_cg import CG_KINDS, EventCgProfile
+from packages.contracts.event_cg import CG_KINDS, new_production_profile
 from packages.contracts.m3 import M3_KINDS
 from services.coordinator.app import create_app
 from tests.integration.planning_fixtures import complete_and_approve_plan
@@ -115,7 +115,9 @@ def test_settings_defaults_readiness_revision_and_bounds(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         project = create(client)["project"]["id"]
         settings = client.get("/api/event-cg/settings").json()
-        assert settings["ready"] is False and settings["profile"] == EventCgProfile().model_dump(mode="json")
+        assert settings["ready"] is False
+        assert settings["profile"] == new_production_profile().model_dump(mode="json")
+        assert (settings["profile"]["width"], settings["profile"]["height"]) == (1536, 1024)
         endpoint = f"/api/event-cg/projects/{project}/policy"
         assert client.get(endpoint).json() == {"max_cgs": 0, "max_variants_per_cg": 0, "revision": 0}
         request = {"expected_revision": 0, "max_cgs": 2, "max_variants_per_cg": 1}

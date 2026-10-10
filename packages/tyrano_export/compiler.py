@@ -14,6 +14,10 @@ from packages.contracts.script import portrait_key
 from .player import player_files
 from .presentation import BACKGROUND, PORTRAIT_Z_INDEX, script_portrait_layouts
 
+# Entering, leaving and changing an event CG: the previous picture fades over the next one.
+# Only those lines carry it. The player hides the message window for any anchor with an
+# effect, whether or not the picture changes, so the other lines inside a CG must cut.
+EVENT_CG_TRANSITION = {"visual": "dissolve", "duration_ms": 500}
 ASSET_FOLDERS = {"background": "bgimage", "character": "fgimage", "audio": "sound", "music": "bgm",
                  "event_cg": "cgimage"}
 
@@ -53,6 +57,17 @@ def stage_anchors(script: Script) -> dict[str, dict]:
                     "visual": "cut", "duration_ms": 0,
                     "music_fade_out_ms": 0, "music_fade_in_ms": 0,
                 }
+        # Where the picture changes it crossfades. A CG that starts or ends on a scene entry
+        # shares that entry's anchor: its own effect is kept, an instant one crossfades.
+        changes = {value.start_utterance_id for value in script.event_cg_segments}
+        changes.update(value.end_utterance_id for value in script.event_cg_segments
+                       if value.end_utterance_id)
+        changes.update(variant.utterance_id for value in script.event_cg_segments
+                       for variant in value.variants)
+        for utterance_id in changes:
+            anchor = anchors[utterance_id]
+            if anchor["visual"] not in {"fade", "dissolve"} or not anchor["duration_ms"]:
+                anchors[utterance_id] = {**anchor, **EVENT_CG_TRANSITION}
     return anchors
 
 

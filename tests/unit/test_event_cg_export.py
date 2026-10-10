@@ -10,7 +10,7 @@ import pytest
 
 from packages.contracts import Script
 from packages.tyrano_export import compile_bundle, compile_scenario, demo_content
-from packages.tyrano_export.compiler import event_cg_frames, scene_stage_data
+from packages.tyrano_export.compiler import event_cg_frames, scene_stage_data, stage_anchors
 from packages.tyrano_export.demo import _png
 from packages.tyrano_export.player import player_config
 
@@ -77,6 +77,32 @@ def test_scene_entry_cg_uses_one_transition_and_one_music_barrier():
     assert '[ad_transition cue="cg:line_002"]' not in scenario
     assert '[ad_music cue="continue"]' not in scenario
     assert scene_stage_data(script, assets)["scenes"][0]["music_cue_id"] == "continue"
+
+
+def test_cg_boundaries_crossfade_even_where_a_scene_entry_would_cut():
+    script, _ = cg_content()
+    value = script.model_dump(mode="json")
+    first, last = value["event_cg_segments"][0]["start_utterance_id"], value["event_cg_segments"][0]["end_utterance_id"]
+    inside = next(row["utterance_id"] for row in value["event_cg_segments"][0]["variants"])
+    anchors = stage_anchors(script)
+    assert all((anchors[key]["visual"], anchors[key]["duration_ms"]) == ("dissolve", 500)
+               for key in (first, inside, last))
+    # Lines where the picture stays must cut: any effect makes the player hide the window.
+    value["utterances"].insert(3, {"id": "line_still", "display_text": "同じ絵", "spoken_text": "同じ絵"})
+    still = stage_anchors(Script.model_validate(value))
+    assert (still["line_still"]["visual"], still["line_still"]["duration_ms"]) == ("cut", 0)
+    del value["utterances"][3]
+    # An instant scene entry on a boundary crossfades; one with its own effect keeps it.
+    for visual, duration, expected in (("cut", 0, ("dissolve", 500)), ("none", 0, ("dissolve", 500)),
+                                       ("fade", 900, ("fade", 900)), ("dissolve", 0, ("dissolve", 500))):
+        value["scene_transitions"] = [{"id": "entry", "utterance_id": last, "visual": visual,
+                                       "duration_ms": duration, "music_fade_out_ms": 300}]
+        anchor = stage_anchors(Script.model_validate(value))[last]
+        assert (anchor["visual"], anchor["duration_ms"]) == expected
+        assert anchor["id"] == "entry" and anchor["music_fade_out_ms"] == 300
+    # A scene entry away from any CG change is left exactly as written.
+    value["scene_transitions"] = [{"id": "entry", "utterance_id": "line_001", "visual": "cut"}]
+    assert stage_anchors(Script.model_validate(value))["line_001"]["visual"] == "cut"
 
 
 def test_adjacent_cgs_switch_directly_and_final_null_end_retains_picture():

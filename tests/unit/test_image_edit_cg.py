@@ -419,7 +419,7 @@ def test_preview_button_prepares_off_thread_and_opens_the_local_page(app, monkey
     assert path == directory / "image.png" and server == "http://coordinator:8000"
     monkeypatch.setattr(app.cg_preview_server, "add", lambda upstream, files: "http://127.0.0.1:9/t/")
     monkeypatch.setattr(cg_tab.webbrowser, "open", opened.append)
-    app.cg_transition.set("なし（現在の本編と同じ）")
+    app.cg_transition.set("なし")
     app.cg_transition_ms.set("0")
     app.preview_cg()
     assert work[1][2]()[3] == ("cut", 0)

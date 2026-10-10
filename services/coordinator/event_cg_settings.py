@@ -14,6 +14,7 @@ from packages.contracts.event_cg import (
     EventCgPolicy,
     EventCgProfile,
     configuration_id,
+    new_production_profile,
 )
 from packages.contracts.script import Contract
 
@@ -44,7 +45,7 @@ class EventCgSettings:
 
     def settings(self, connection):
         row = connection.execute("SELECT * FROM event_cg_settings WHERE id=1").fetchone()
-        profile = EventCgProfile.model_validate_json(row["profile"]) if row else EventCgProfile()
+        profile = EventCgProfile.model_validate_json(row["profile"]) if row else new_production_profile()
         # Worker registrations remain for job history after the process exits.
         # The settings inventory must describe only currently connected workers.
         workers = [{"id": worker["id"], "name": worker["name"],

@@ -71,9 +71,14 @@ def test_transition_applies_to_cg_anchors_only_and_the_default_stays_a_cut():
         stages = json.loads(result["data/others/auto_drama_stages.json"])["scenes"]
         return {row["id"]: (row["visual"], row["duration_ms"]) for row in stages}
 
-    assert anchors() == {"cg:line_004": ("cut", 0), "cg:line_005": ("cut", 0), "entry": ("fade", 900)}
-    assert anchors(transition=("dissolve", 500)) == {
-        "cg:line_004": ("dissolve", 500), "cg:line_005": ("dissolve", 500), "entry": ("fade", 900)}
+    # Without a choice the preview keeps the published player's own crossfade. The line
+    # inside the interval always cuts, or the message window would blink on it.
+    assert anchors() == {"cg:line_004": ("dissolve", 500), "cg:line_005": ("cut", 0),
+                         "entry": ("fade", 900)}
+    assert anchors(transition=("cut", 0)) == {
+        "cg:line_004": ("cut", 0), "cg:line_005": ("cut", 0), "entry": ("fade", 900)}
+    assert anchors(transition=("dissolve", 800)) == {
+        "cg:line_004": ("dissolve", 800), "cg:line_005": ("cut", 0), "entry": ("fade", 900)}
     for bad in (("wipe", 500), ("fade", 5000), ("fade", "500")):
         with pytest.raises(cg_preview.PreviewError, match="効果と時間"):
             anchors(transition=bad)

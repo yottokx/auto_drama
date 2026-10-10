@@ -19,7 +19,7 @@ from scripts.image_edit.common import new_run
 from scripts.image_edit.engine import validate_request
 
 CG_VISIBILITY = {"face_front": "正面", "face_profile": "横顔", "back": "背中", "partial": "一部"}
-CG_TRANSITIONS = {"なし（現在の本編と同じ）": "cut", "クロスフェード": "dissolve", "暗転": "fade"}
+CG_TRANSITIONS = {"なし": "cut", "クロスフェード": "dissolve", "暗転": "fade"}
 CG_HINT = "場面を選び「LLMで案を作成」を押すと、描く瞬間・人物・構図の案がここに並びます。"
 
 

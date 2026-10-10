@@ -103,11 +103,21 @@ def test_preview_resumes_at_the_scene_and_shows_the_cg_only_in_its_interval(coor
                 assert "cg_preview.png" in shown["source"] and not shown["cast"]
                 assert shown["cg"]["segment_id"] == "cg_preview_segment"
                 page.screenshot(path=str(tmp_path / "cg-preview.png"))
+                # Inside the interval the picture stays, and the message window must not blink.
+                page.evaluate("""() => { window.hidWindow = false;
+                  new MutationObserver(() => { if (document.getElementById('adn').classList.contains('away'))
+                    window.hidWindow = true; }).observe(document.getElementById('adn'),
+                    {attributes: true, attributeFilter: ['class']}); }""")
                 page.keyboard.press("Enter")
                 stable_line(page, "line_005")
                 assert "cg_preview.png" in picture(page)["source"]
+                assert page.evaluate("window.hidWindow") is False
+                assert page.locator(".ad-stage-transition").count() == 0
                 page.keyboard.press("Enter")
                 stable_line(page, "line_006")
+                # Leaving the CG crossfades, and the window steps aside for that moment only.
+                assert page.evaluate("window.hidWindow") is True
+                assert not page.evaluate("document.getElementById('adn').classList.contains('away')")
                 after = picture(page)
                 assert "station.png" in after["source"] and after["cg"] is None
                 assert after["cast"] == before["cast"]

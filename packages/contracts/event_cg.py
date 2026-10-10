@@ -82,6 +82,14 @@ class EventCgProfile(Contract):
         return self
 
 
+def new_production_profile() -> EventCgProfile:
+    """What a new production uses until the image settings are saved.
+
+    The contract's own defaults describe productions frozen before these options existed.
+    """
+    return EventCgProfile(width=1536, height=1024, text_encoder_offload="layers")
+
+
 def configuration_id(profile: dict | EventCgProfile) -> str | None:
     """The listed configuration a profile corresponds to, if any."""
     value = EventCgProfile.model_validate(profile).model_dump(mode="json")

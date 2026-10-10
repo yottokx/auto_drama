@@ -20,7 +20,6 @@ from urllib.request import Request, urlopen
 ASSET_ID = "cg_preview"
 SEGMENT_ID = "cg_preview_segment"
 MAX_SESSIONS = 8
-# The published player switches to and from a CG with an immediate cut.
 TRANSITIONS = ("cut", "dissolve", "fade")
 
 
@@ -58,13 +57,14 @@ def preview_interval(record: dict) -> tuple[str, str]:
     return identifiers[first - 1], identifiers[last - 1]
 
 
-def build_files(record: dict, image: bytes, read, transition=("cut", 0)) -> dict[str, bytes]:
+def build_files(record: dict, image: bytes, read, transition=None) -> dict[str, bytes]:
     """Recompile the published script with the CG interval added; nothing is published.
 
     `read(path)` returns one file of the published chapter, or None when it is absent.
-    `transition` is the effect and its milliseconds for entering, leaving and changing a CG.
+    `transition` is the effect and its milliseconds for entering, leaving and changing a CG;
+    None keeps the published player's own.
     """
-    visual, duration = transition
+    visual, duration = transition or ("cut", 0)
     if visual not in TRANSITIONS or type(duration) is not int or not 0 <= duration <= 3000:
         raise PreviewError("CGの切り替えの効果と時間（0〜3000ミリ秒）が正しくありません。")
     from packages.contracts import Script
@@ -117,12 +117,16 @@ def build_files(record: dict, image: bytes, read, transition=("cut", 0)) -> dict
     script_bytes = canonical_json(script.model_dump(mode="json"))
     files = player_overlay(script, images, script_bytes)
     files["script.json"] = script_bytes
-    if visual != "cut" and duration:
-        # CG lines carry their own stage anchors. The player animates one only when the
-        # picture actually changes, so lines inside an interval still pass instantly.
+    if transition is not None:
+        # Only the lines where the picture changes. The player hides the message window
+        # for any anchor with an effect, so the other lines inside a CG stay a cut.
+        changes = {row[key] for row in value["event_cg_segments"]
+                   for key in ("start_utterance_id", "end_utterance_id") if row.get(key)}
+        changes.update(variant["utterance_id"] for row in value["event_cg_segments"]
+                       for variant in row.get("variants") or [])
         stages = json.loads(files["data/others/auto_drama_stages.json"])
         for anchor in stages["scenes"]:
-            if anchor["id"].startswith("cg:"):
+            if anchor["id"].startswith("cg:") and anchor["utterance_id"] in changes:
                 anchor.update(visual=visual, duration_ms=duration)
         files["data/others/auto_drama_stages.json"] = canonical_json(stages)
     files[f"data/{ASSET_FOLDERS['event_cg']}/{ASSET_ID}.png"] = image
@@ -222,7 +226,7 @@ class PreviewServer:
 
 
 def prepare(record: dict, image_path, server: str,
-            transition=("cut", 0)) -> tuple[str, dict[str, bytes]]:
+            transition=None) -> tuple[str, dict[str, bytes]]:
     """Network work for a background thread: returns the upstream URL and the local files."""
     from pathlib import Path
 

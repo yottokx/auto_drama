@@ -29,6 +29,16 @@ def test_profile_frozen_before_the_options_existed_keeps_its_behavior():
     assert configuration_id({**LEGACY, "transformer_storage": "fp8"}) is None
 
 
+def test_unsaved_settings_start_new_productions_in_high_resolution_without_changing_old_ones():
+    from packages.contracts.event_cg import new_production_profile
+
+    profile = new_production_profile()
+    assert (profile.width, profile.height, profile.text_encoder_offload) == (1536, 1024, "layers")
+    assert configuration_id(profile) == "vram32"
+    # A stored profile without the new fields is still read as it was generated.
+    assert EventCgProfile.model_validate(LEGACY).width == 960
+
+
 def test_only_the_two_supported_sizes_are_accepted():
     assert EventCgProfile.model_validate({**LEGACY, "width": 1536, "height": 1024}).width == 1536
     for width, height in ((960, 1024), (1536, 640), (1920, 1280)):
