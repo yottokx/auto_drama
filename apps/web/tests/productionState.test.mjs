@@ -318,7 +318,7 @@ test('disabled and pre-music legacy chapters retain their original phases while 
   assert.equal(overridden[0].music_enabled, false)
 })
 
-test('media progress groups required assets in model order and includes reused and unqueued work without main cast', () => {
+test('media progress groups assets generated in the chapter in model order, without reused assets or main cast', () => {
   const current = chapter(2, 'generating_assets', {
     jobs: [job('image-live', 'm3_image', 'running'), job('voice-failed', 'm3_voice', 'failed')],
     requirements: [
@@ -335,8 +335,8 @@ test('media progress groups required assets in model order and includes reused a
   const before = structuredClone(current)
   const groups = chapterAssetProgress(current)
   assert.deepEqual(groups.map(item => item.id), ['m3_image', 'm3_background', 'm3_voice', 'm3_voice_clone'])
-  assert.deepEqual(groups.map(item => [item.current, item.total, item.completed, item.status]), [[1, 3, 1, 'running'], [0, 2, 0, 'pending'], [0, 1, 0, 'failed'], [3, 40, 3, 'pending']])
-  assert.equal(progressItemLabel(groups[0]), 'サブキャラの立ち絵（1/3）')
+  assert.deepEqual(groups.map(item => [item.current, item.total, item.completed, item.status]), [[0, 2, 0, 'running'], [0, 2, 0, 'pending'], [0, 1, 0, 'failed'], [3, 40, 3, 'pending']])
+  assert.equal(progressItemLabel(groups[0]), 'サブキャラの立ち絵（0/2）')
   assert.equal(progressItemLabel(groups[3]), '台詞の音声（3/40）')
   assert.deepEqual(current, before)
 })
@@ -539,7 +539,7 @@ test('supporting material rows stay hidden before assets unless the accepted pla
   }
 })
 
-test('main-only and historic requirements suppress empty supporting rows while actual legacy and reused supporting assets remain visible', () => {
+test('main-only, historic and reused requirements suppress supporting rows while assets generated in the chapter remain visible', () => {
   const mainOnly = chapter(1, 'published', { requirements: [
     requirement('m3_image', 'main', 'approved-image'),
     requirement('m3_voice', 'main', 'approved-voice', null, { reference_text: 'メインキャラです' }),
@@ -555,8 +555,14 @@ test('main-only and historic requirements suppress empty supporting rows while a
   assert.deepEqual(supportingRows(chapter(2, 'generating_assets', { requirements: [
     requirement('m3_image', 'support', 'reused-image', null, supporting),
     requirement('m3_voice', 'support', 'reused-voice', null, supporting),
-  ] })).map(item => [item.id, item.current, item.total, item.status]),
-    [['m3_image', 1, 1, 'completed'], ['m3_voice', 1, 1, 'completed']], 'reused assets with no jobs still show completed supporting groups')
+  ] })), [], 'assets carried over from an earlier chapter are not shown as generated here')
+  assert.deepEqual(supportingRows(chapter(2, 'generating_assets', { requirements: [
+    requirement('m3_image', 'support', 'reused-image', null, supporting),
+    requirement('m3_image', 'newcomer', null, null, supporting),
+    requirement('m3_voice', 'support', 'reused-voice', null, supporting),
+    requirement('m3_voice', 'newcomer', 'new-voice', 'voice-job', supporting),
+  ], jobs: [job('voice-job', 'm3_voice', 'completed')] })).map(item => [item.id, item.current, item.total]),
+    [['m3_image', 0, 1], ['m3_voice', 1, 1]], 'only the newcomer generated in this chapter is counted')
 })
 
 test('old attempt and paused progress cannot masquerade as a currently running LLM step', () => {

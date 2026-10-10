@@ -157,7 +157,8 @@ function supportingRequirement(requirement: AssetRequirement): boolean {
   if (requirement.kind !== 'm3_image' && requirement.kind !== 'm3_voice') return true
   try {
     const descriptor = typeof requirement.descriptor === 'string' ? JSON.parse(requirement.descriptor) : requirement.descriptor
-    if (descriptor && typeof descriptor === 'object') return Boolean(descriptor.character_result)
+    // A portrait or voice carried over from an earlier chapter is not generated again here.
+    if (descriptor && typeof descriptor === 'object') return Boolean(descriptor.character_result) && (Boolean(requirement.job_id) || !requirement.artifact_id)
   } catch { /* Older snapshots can omit readable descriptors; their jobs identify generated assets. */ }
   return Boolean(requirement.job_id)
 }
