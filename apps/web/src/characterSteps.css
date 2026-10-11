@@ -291,3 +291,10 @@
 .char-outfit-new { margin: 0 0 14px; }
 .char-outfit-new > p { margin: 0 0 12px; color: #929a85; font-size: 11px; line-height: 1.9; }
 @media (max-width: 1200px) { .char-outfit { grid-template-columns: minmax(0, 1fr); } .char-outfit-image { width: 100%; } }
+.char-look-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; width: fit-content; max-width: 100%; padding: 3px; margin: 0 0 16px; border: 1px solid #dde1d2; border-radius: 8px; background: #f1f2e9; }
+.char-look-tabs button { padding: 7px 14px; font-size: 11px; border: 0; border-radius: 5px; background: transparent; color: #7b846e; cursor: pointer; max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.char-look-tabs button[aria-selected=true] { color: #3e5b32; background: #fffefa; box-shadow: 0 1px 4px #3a4d2d15; }
+.char-look-tabs .char-look-add { display: inline-flex; align-items: center; padding: 7px 10px; color: #87937a; }
+.char-look-tabs .char-look-add:hover { color: #3e5b32; background: #fffefa; }
+.char-brief-looks .char-brief-look { margin: 0 0 14px; }
+.char-brief-looks .field-hint { display: block; margin: 0 0 14px; }

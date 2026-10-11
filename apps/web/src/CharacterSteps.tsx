@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './Icons'
 import { Dialog, LockButton } from './PreviewComponents'
 import type { CharacterBrief, RevisionRequest, RevisionScope } from './wizardState'
-import { CharacterOutfits } from './CharacterOutfits'
+import { alternateLooks, BaseLookName, BriefLooks, LookDialog, LookPanel, LookTabs, type LookWish } from './CharacterOutfits'
 import { CharacterVoiceTrials } from './CharacterVoiceTrials'
 import { ImageGenerationDetails } from './ImageGenerationDetails'
 import type { M2Outfit, VoiceTest } from './m2Api'
@@ -72,8 +72,9 @@ function CharacterDimensions({ character, onChange }: { character: CharacterBrie
   </div>
 }
 
-export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, onBack, onSave, live = false, relationshipInputs, embedded = false }: {
+export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, onBack, onSave, live = false, relationshipInputs, embedded = false, looks, onLooksChange }: {
   characters: CharacterBrief[]; onChange: CharacterChange; onAdd: () => string; onRemove: (id: string) => void; onNext?: () => void; onBack?: () => void; onSave?: () => void; live?: boolean; relationshipInputs?: ReactNode; embedded?: boolean
+  looks?: Record<string, LookWish[]>; onLooksChange?: (id: string, looks: LookWish[]) => void
 }) {
   const [selectedId, setSelectedId] = useState(characters[0]?.id ?? '')
   const character = characters.find(item => item.id === selectedId) ?? characters[0]
@@ -103,6 +104,7 @@ export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, 
           {(character.locked.appearance || character.locked.voice) && <p className="field-hint">固定された項目は、キャラクターの確認画面で固定を解除すると編集できます。</p>}
         </div>
       </details>
+      {onLooksChange && <BriefLooks looks={looks?.[character.id] ?? []} onChange={value => onLooksChange(character.id, value)}/>}
       <div className="char-input-tip"><span><Icon name="leaf" size={20}/></span><p>まだ出会っていない人物の、輪郭だけで大丈夫。<br/><strong>{embedded ? 'まず世界観を確認・確定してから、この指示をもとに設定・外見・声をつくります。' : '次の画面で、設定・外見・声をまとめて確認し、言葉で調整できます。'}</strong></p></div>
     </section>
     {relationshipInputs}
@@ -115,7 +117,9 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
   onRequest: (scope: RevisionScope, instruction: string, characterId?: string) => boolean | Promise<boolean>; onBack: () => void; onApprove: () => void; onPendingChange?: (pending: boolean) => void;
   previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]; imagePending?: boolean }>
   outfitActions?: {
-    save: (characterId: string, outfit: { id?: string; name: string; description: string; occasion: string }) => Promise<boolean>
+    save: (characterId: string, outfit: LookWish) => Promise<boolean>
+    // Adds a look and starts its image; resolves to the new look's id.
+    add: (characterId: string, outfit: LookWish, existing: Set<string>) => Promise<string | null>
     remove: (characterId: string, outfitId: string) => Promise<boolean>; generate: (characterId: string, outfitId: string) => Promise<boolean>
   }
   relationshipResults?: ReactNode; onCloneVoice?: (characterId: string, text: string) => Promise<boolean>; characterStatus?: Record<string, string>
@@ -131,6 +135,9 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
   const [retakeInstruction, setRetakeInstruction] = useState('')
   const [savedMessage, setSavedMessage] = useState('')
   const [portrait, setPortrait] = useState<{ name: string; image: string } | null>(null)
+  const [lookTabs, setLookTabs] = useState<Record<string, string>>({})
+  const [addingLook, setAddingLook] = useState(false)
+  const [lookEdit, setLookEdit] = useState<string | null>(null)
   const revisionPanel = useRef<HTMLDetailsElement>(null)
   const instructionInput = useRef<HTMLTextAreaElement>(null)
   const pendingCallback = useRef(onPendingChange)
@@ -158,6 +165,11 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
   const appearanceEdit = edits[`${character.id}:appearance`]
   const voiceEdit = edits[`${character.id}:voice`]
   const assets = previewAssets?.[character.id]
+  const looks = alternateLooks(assets?.outfits)
+  // A deleted look falls back to the base portrait.
+  const shownLook = looks.find(outfit => outfit.id === lookTabs[character.id])
+  const baseReady = Boolean(assets?.image) && !assets?.imagePending && !resultUnavailable
+  const lookKey = shownLook ? `${character.id}:${shownLook.id}` : null
 
   function chooseScope(nextScope: EditScope) {
     setScope(nextScope); setRevisionOpen(true); setSavedMessage('')
@@ -225,13 +237,18 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
 
     <div className="char-assets-grid">
       <section className="char-asset-card">
-        <DetailHeader title="外見・立ち絵" icon="users" locked={character.locked.appearance} onToggle={() => toggleLock('appearance')} onEdit={() => startEdit('appearance')} editing={Boolean(appearanceEdit)} disabled={busy || resultUnavailable}/>
+        <DetailHeader title="外見・立ち絵" icon="users" locked={character.locked.appearance} onToggle={() => toggleLock('appearance')} onEdit={() => lookKey ? setLookEdit(lookKey) : startEdit('appearance')} editing={lookKey ? lookEdit === lookKey : Boolean(appearanceEdit)} disabled={busy || resultUnavailable}/>
+        {outfitActions && <LookTabs idPrefix={`look-${character.id}`} outfits={assets?.outfits ?? []} selected={shownLook?.id ?? 'default'} onSelect={id => setLookTabs(current => ({ ...current, [character.id]: id }))} onAdd={() => setAddingLook(true)}/>}
+        <div id={`look-${character.id}-panel`} role={outfitActions ? 'tabpanel' : undefined}>
+        {outfitActions && shownLook ? <LookPanel characterId={character.id} characterName={characterName(character, characterIndex)} outfit={shownLook} baseImageArtifactId={assets?.imageArtifactId ?? null} baseReady={baseReady} busy={busy} editing={lookEdit === lookKey} onEditingChange={editing => setLookEdit(editing ? lookKey : null)} onSave={outfitActions.save} onDelete={outfitActions.remove} onGenerate={outfitActions.generate} onExpand={(name, image) => setPortrait({ name, image })}/> : <>
         {assets?.image ? <figure className="char-result-portrait"><button type="button" className="char-portrait-expand" aria-label={`${characterName(character, characterIndex)}の立ち絵を拡大`} onClick={() => setPortrait({ name: characterName(character, characterIndex), image: assets.image! })}><img src={assets.image} alt={`${characterName(character, characterIndex)}の${live ? '立ち絵' : '立ち絵の参考素材'}`}/><span className="char-expand-hint">クリックで拡大</span></button><figcaption>{live ? '生成した立ち絵' : '立ち絵の参考素材'}</figcaption></figure> : <div className="char-image-placeholder" aria-label={generating ? '立ち絵は生成待ち・生成中' : '立ち絵は未生成'}><div className="char-portrait-outline"><Icon name="users" size={47}/></div><span>{generating ? '立ち絵は生成が完了すると表示されます' : '立ち絵はまだ生成されていません'}</span><small>{generating ? '生成待ち・生成中' : '未生成'}</small></div>}
         {assets?.image && assets.imageArtifactId && <ImageGenerationDetails key={assets.imageArtifactId} artifactId={assets.imageArtifactId}/>}
         {appearanceEdit ? <fieldset disabled={busy} className="char-inline-editor" aria-label="外見を編集"><label className="field-label">外見の設定<textarea autoFocus rows={5} value={appearanceEdit.appearance} disabled={character.locked.appearance} onChange={event => updateEdit('appearance', { appearance: event.target.value })}/></label><CharacterDimensions character={{ ...appearanceEdit, locked: character.locked }} onChange={(_id, patch) => updateEdit('appearance', patch)}/>{editActions('appearance')}</fieldset> : <><ResultText title="外見の設定" text={character.appearance}/>{character.height_cm != null && <p className="char-height-summary">身長 {character.height_cm} cm<span>表示用の目安</span></p>}</>}
         <div className="char-asset-actions"><span>素材の作り直し</span><button type="button" className="char-retake-button" disabled={busy || character.locked.appearance || resultUnavailable || unsavedEdits.length > 0} onClick={() => { setRetake('image-retake'); setRetakeInstruction('') }}><Icon name="refresh" size={14}/>立ち絵だけリテイク</button></div>
         <p className="char-retake-hint">人物の設定と外見を維持して、立ち絵だけ作り直します。</p>
-        {outfitActions && <CharacterOutfits characterId={character.id} characterName={characterName(character, characterIndex)} outfits={assets?.outfits ?? []} baseImageArtifactId={assets?.imageArtifactId ?? null} baseReady={Boolean(assets?.image) && !assets?.imagePending && !resultUnavailable} busy={busy} onSave={outfitActions.save} onDelete={outfitActions.remove} onGenerate={outfitActions.generate} onExpand={(name, image) => setPortrait({ name, image })}/>}
+        {outfitActions && <BaseLookName characterId={character.id} outfits={assets?.outfits ?? []} busy={busy} onSave={outfitActions.save}/>}
+        </>}
+        </div>
       </section>
       <section className="char-asset-card">
         <DetailHeader title="声・話し方" icon="volume" locked={character.locked.voice} onToggle={() => toggleLock('voice')} onEdit={() => startEdit('voice')} editing={Boolean(voiceEdit)} disabled={busy || resultUnavailable}/>
@@ -269,6 +286,7 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
     <div className="char-step-footer"><button type="button" className="button button-light" disabled={busy || hasPending} onClick={onBack}><Icon name="back" size={16}/>世界観の確認に戻る</button><button type="button" className="button button-primary" disabled={busy || hasPending || !canApprove} onClick={onApprove}><Icon name="check" size={16}/>この内容で確認を完了</button></div>
     <p className="char-complete-note">{live ? 'すべての設定と素材が揃うと確認を完了できます。承認した内容は作品の版として保存されます。' : '確認を完了すると、現在の設定と保存済みの指示をこのブラウザーに保存します。'}</p>
 
+    {addingLook && outfitActions && <LookDialog characterName={characterName(character, characterIndex)} busy={busy} onClose={() => setAddingLook(false)} onSave={async look => { const before = new Set(looks.map(outfit => outfit.id)); const created = await outfitActions.add(character.id, look, before); if (created) setLookTabs(current => ({ ...current, [character.id]: created })); return Boolean(created) }}/>}
     {portrait && <Dialog title={`${portrait.name}の立ち絵`} className="char-portrait-dialog" onClose={() => setPortrait(null)}><img src={portrait.image} alt={`${portrait.name}の立ち絵（拡大）`}/></Dialog>}
     {retake && <Dialog title={scopeNames[retake]} onClose={() => { setRetake(null); setRetakeInstruction('') }}><p className="dialog-intro">{retake === 'image-retake' ? '人物の設定と外見のイメージを維持したまま、立ち絵の素材だけを作り直す指示です。' : '人物の設定と声のイメージを維持したまま、音声の素材だけを作り直す指示です。'}キャラクター自体を変えたい場合は「キャラクター全体」への修正指示を使えます。</p><label className="field-label">リテイクへの追加指示<span className="char-optional">任意</span><textarea autoFocus rows={4} value={retakeInstruction} onChange={event => setRetakeInstruction(event.target.value)} placeholder={retake === 'image-retake' ? '例：同じ服装で、少し顔を正面に向けて。' : '例：同じ声質で、もう少し間を置いて読んで。'}/></label><p className="dialog-info">{live ? '設定と他の素材を維持したまま、選択した素材のみを生成します。' : <>プレビューでは指示を保存します。{retake === 'image-retake' ? '画像' : '音声'}の再生成はまだ実行されません。</>}</p><div className="dialog-actions"><button type="button" className="button button-light" onClick={() => { setRetake(null); setRetakeInstruction('') }}>キャンセル</button><button type="button" className="button button-primary" disabled={busy} onClick={saveRetake}><Icon name="check" size={15}/>{live ? '指示して再生成' : '指示を保存（プレビュー）'}</button></div></Dialog>}
   </div>

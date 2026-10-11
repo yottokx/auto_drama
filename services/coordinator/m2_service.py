@@ -534,6 +534,79 @@ class M2Service:
         for outfit in cls._alternates(character):
             outfit["imagePendingChanges"] = True
 
+    def _qwen_ready(self, connection) -> bool:
+        return any("m2_outfit_image" in json.loads(worker["capabilities"]) for worker in connection.execute(
+            "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.clock() - 90,)))
+
+    @classmethod
+    def _stale_looks(cls, character: dict) -> list[dict]:
+        """Alternate looks whose image is missing or was made from another portrait or wish."""
+        return [outfit for outfit in cls._alternates(character)
+                if not outfit.get("imageArtifactId") or outfit.get("imagePendingChanges")
+                or outfit.get("baseImageArtifactId") != character["imageArtifactId"]]
+
+    def _outfit_descriptor(self, connection, project_id: str, character: dict, outfit: dict) -> dict:
+        reference = required(connection, "artifact", character["imageArtifactId"])
+        if reference["project_id"] != project_id or reference["kind"] != "m2_image":
+            raise ServiceError(409, "立ち絵とキャラクターが一致しません。")
+        self.store.read(reference)
+        from .event_cg_settings import EventCgSettings
+
+        descriptor = task("m2_outfit_image", character["id"], "outfit-image")
+        descriptor["cg_profile"] = EventCgSettings(self.coordinator).settings(connection)["profile"]
+        descriptor["outfit"] = {key: outfit[key] for key in ("id", "name", "description", "occasion")}
+        if outfit.get("descriptionEdited") and outfit.get("generatedDescription"):
+            # A directly edited look is drawn as written rather than designed again from the wish.
+            descriptor["outfit"]["appearance"] = outfit["generatedDescription"]
+            descriptor["outfit"]["occasion"] = outfit["occasion"] or outfit.get("generatedOccasion") or ""
+        descriptor["reference_image"] = {"artifact_id": reference["id"], "sha256": reference["sha256"]}
+        return descriptor
+
+    def _outfit_tasks(self, connection, project_id: str, state: dict, character: dict) -> list[dict]:
+        """Looks wished for in the brief are drawn as soon as their base portrait is ready."""
+        if (not character["imageArtifactId"] or character["imagePendingChanges"] or character["pendingChanges"]
+                or not self._qwen_ready(connection)):
+            return []
+        queued = {(item["character_id"], item["outfit"]["id"]) for item in state["queue"]
+                  if item["kind"] == "m2_outfit_image"}
+        tasks = []
+        for outfit in self._stale_looks(character):
+            if (character["id"], outfit["id"]) not in queued:
+                outfit["imagePendingChanges"] = True
+                tasks.append(self._outfit_descriptor(connection, project_id, character, outfit))
+        return tasks
+
+    def _sync_outfits(self, draft: dict, wishes: dict | None) -> bool:
+        """Make each named character's alternate looks match the brief; True if anything changed."""
+        changed = False
+        for character in draft["characters"]:
+            if wishes is None or character["id"] not in wishes:
+                continue
+            outfits = character.setdefault("outfits", [])
+            current = {item["id"]: item for item in self._alternates(character)}
+            kept = [item for item in outfits if item["id"] == DEFAULT_OUTFIT]
+            used = set(current) | {DEFAULT_OUTFIT}
+            for wish in wishes[character["id"]]:
+                value = wish.model_dump() if hasattr(wish, "model_dump") else dict(wish)
+                look = current.pop(value["id"], None) if value["id"] else None
+                if look is None:
+                    identifier = next(f"look{n}" for n in range(1, 100) if f"look{n}" not in used)
+                    used.add(identifier)
+                    look = {"id": identifier, "imageArtifactId": None, "baseImageArtifactId": None,
+                            "imagePendingChanges": True}
+                    changed = True
+                if (look.get("name"), look.get("description")) != (value["name"], value["description"]):
+                    look["imagePendingChanges"] = True
+                    if look.get("description") != value["description"]:
+                        look.pop("descriptionEdited", None)
+                fields = {key: value[key] for key in ("name", "description", "occasion")}
+                changed = changed or any(look.get(key) != item for key, item in fields.items())
+                look.update(fields)
+                kept.append(look)
+            changed = changed or bool(current)
+            character["outfits"] = kept
+        return changed
+
     def _outfit_action(self, connection, project_id: str, state: dict, character: dict, body) -> None:
         outfits = character.setdefault("outfits", [])
         if body.action == "save-outfit":
@@ -550,10 +623,18 @@ class M2Service:
                 current = {"id": value["id"], "imageArtifactId": None, "baseImageArtifactId": None,
                            "imagePendingChanges": value["id"] != DEFAULT_OUTFIT}
                 outfits.append(current)
-            if value["id"] != DEFAULT_OUTFIT and (current.get("name"), current.get("description")) != (
-                    value["name"], value["description"]):
+            if value["id"] == DEFAULT_OUTFIT:
+                pass
+            elif value["appearance"] is not None:
+                # A direct edit states what the look shows; only that text redraws it.
+                if value["appearance"] != current.get("generatedDescription"):
+                    current.update(generatedDescription=value["appearance"], descriptionEdited=True,
+                                   imagePendingChanges=True)
+            elif (current.get("name"), current.get("description")) != (value["name"], value["description"]):
                 # The look is designed from its name and the user's wish; either one changes it.
                 current["imagePendingChanges"] = True
+                if current.get("description") != value["description"]:
+                    current.pop("descriptionEdited", None)
             current.update(name=value["name"], description=value["description"], occasion=value["occasion"])
             outfits.sort(key=lambda item: item["id"] != DEFAULT_OUTFIT)
             return
@@ -565,21 +646,10 @@ class M2Service:
             return
         if not character["imageArtifactId"] or character["imagePendingChanges"] or character["pendingChanges"]:
             raise ServiceError(409, "現在の設定を反映した立ち絵を先に生成してください。")
-        reference = required(connection, "artifact", character["imageArtifactId"])
-        if reference["project_id"] != project_id or reference["kind"] != "m2_image":
-            raise ServiceError(409, "立ち絵とキャラクターが一致しません。")
-        self.store.read(reference)
-        from .event_cg_settings import EventCgSettings
-
-        if not any("m2_outfit_image" in json.loads(worker["capabilities"]) for worker in connection.execute(
-                "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.clock() - 90,))):
+        if not self._qwen_ready(connection):
             raise ServiceError(409, "別バージョンの立ち絵にはQwenの準備済みWorkerが必要です。Workerを起動してください。")
-        descriptor = task("m2_outfit_image", character["id"], "outfit-image")
-        descriptor["cg_profile"] = EventCgSettings(self.coordinator).settings(connection)["profile"]
-        descriptor["outfit"] = {key: outfit[key] for key in ("id", "name", "description", "occasion")}
-        descriptor["reference_image"] = {"artifact_id": reference["id"], "sha256": reference["sha256"]}
         outfit["imagePendingChanges"] = True
-        state["queue"] = [descriptor]
+        state["queue"] = [self._outfit_descriptor(connection, project_id, character, outfit)]
 
     def _profile(self, connection=None) -> dict:
         from .llm_settings import generation_profile
@@ -593,8 +663,8 @@ class M2Service:
             return
         # Keep all text generation ahead of media, including pending queues saved
         # by older versions. Stable ordering preserves cast order within a stage.
-        stages = {"m2_character": 0, "m2_relationships": 1, "m2_image": 2, "m2_outfit_image": 2,
-                  "m2_voice": 3}
+        stages = {"m2_character": 0, "m2_relationships": 1, "m2_image": 2, "m2_voice": 3,
+                  "m2_outfit_image": 4}
         state["queue"].sort(key=lambda item: stages.get(item["kind"], 0))
         descriptor = state["queue"].pop(0)
         draft = state["draft"]
@@ -771,6 +841,7 @@ class M2Service:
                     draft["relationshipInputs"],
                 )
                 self._save_characters(draft, body)
+                looks_changed = self._sync_outfits(draft, body.outfits)
                 draft["worldInput"] = body.world.model_dump()
                 current = (
                     draft["worldInput"],
@@ -786,6 +857,10 @@ class M2Service:
                     for character in draft["characters"]:
                         character["pendingChanges"] = True
                     self._invalidate_relationships(draft)
+                elif looks_changed:
+                    # A look alone leaves the world and cast as they are; only the approval ends.
+                    self._invalidate(state)
+                    draft["revision"] += 1
                 draft["step"] = "world-input"
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
@@ -856,7 +931,7 @@ class M2Service:
                     )
                     draft["worldConfirmationArtifactId"] = record["id"]
                 draft["worldConfirmed"], draft["step"] = True, "character-review"
-                self._queue_characters(state, force=reconfirm)
+                self._queue_characters(state, force=reconfirm, connection=connection, project_id=project_id)
             else:
                 self._world_confirmed(draft)
                 self._character_action(connection, project_id, state, body)
@@ -930,7 +1005,7 @@ class M2Service:
         return (previous_inputs != [value["input"] for value in replacements]
                 or previous_relationships != draft["relationshipInputs"])
 
-    def _queue_characters(self, state: dict, *, force: bool = False) -> None:
+    def _queue_characters(self, state: dict, *, force: bool = False, connection=None, project_id=None) -> None:
         draft = state["draft"]
         if len(draft["characters"]) > 3:
             raise ServiceError(409, "メインキャラクターを3人以下にしてから生成してください。")
@@ -943,6 +1018,8 @@ class M2Service:
             else:
                 character["pendingChanges"] = False
                 state["queue"].extend(self._missing_media(character))
+                if connection is not None:
+                    state["queue"].extend(self._outfit_tasks(connection, project_id, state, character))
         if len(draft["characters"]) >= 2 and (
             force
             or draft["relationships"]["pendingChanges"]
@@ -955,6 +1032,7 @@ class M2Service:
     def _needs_cast_generation(self, draft: dict) -> bool:
         return any(
             not character["result"] or character["pendingChanges"] or self._missing_media(character)
+            or self._stale_looks(character)
             for character in draft["characters"]
         ) or (
             len(draft["characters"]) >= 2
@@ -971,7 +1049,9 @@ class M2Service:
             previous_inputs = {person["id"]: copy.deepcopy(person["input"])
                                for person in draft["characters"]}
             previous_relationships = copy.deepcopy(draft["relationshipInputs"])
-            if self._save_characters(draft, body):
+            saved = self._save_characters(draft, body)
+            self._sync_outfits(draft, body.outfits)
+            if saved:
                 current_inputs = {person["id"]: person["input"] for person in draft["characters"]}
                 changed_ids = {identifier for identifier in previous_inputs.keys() | current_inputs.keys()
                                if previous_inputs.get(identifier) != current_inputs.get(identifier)}
@@ -1018,7 +1098,7 @@ class M2Service:
             state["queue"] = [descriptor]
             return
         if name == "generate-characters":
-            self._queue_characters(state, force=True)
+            self._queue_characters(state, force=True, connection=connection, project_id=project_id)
             return
         character = self._character(draft, body.character_id)
         if not character["result"]:
@@ -1224,6 +1304,8 @@ class M2Service:
                          # The story is told what the adopted image shows, not how it was requested.
                          **({"description": outfit["generatedDescription"]}
                             if outfit.get("generatedDescription") else {}),
+                         **({"occasion": outfit["generatedOccasion"]}
+                            if not outfit["occasion"] and outfit.get("generatedOccasion") else {}),
                          **({"image": reference(outfit["imageArtifactId"])}
                             if outfit["id"] != DEFAULT_OUTFIT else {})}
                         for outfit in value["outfits"]]} if self._alternates(value) else {}),
@@ -1347,7 +1429,8 @@ class M2Service:
                 provenance=envelope["provenance"], job=job, attempt=attempt)
             outfit.update(imageArtifactId=record["id"], imagePendingChanges=False,
                           baseImageArtifactId=payload["reference_image"]["artifact_id"],
-                          generatedDescription=envelope["provenance"].get("outfit", {}).get("summary"))
+                          generatedDescription=envelope["provenance"].get("outfit", {}).get("summary"),
+                          generatedOccasion=envelope["provenance"].get("outfit", {}).get("occasion"))
             self._artifact(
                 connection, job["project_id"], f"result-{job['id']}", "m2_metadata", "result.json",
                 "application/json", files["result.json"], provenance=envelope["provenance"],
@@ -1388,6 +1471,7 @@ class M2Service:
                 character[f"{prefix}PendingChanges"] = False
                 if is_image:
                     self._stale_outfits(character)
+                    state["queue"].extend(self._outfit_tasks(connection, job["project_id"], state, character))
             self._artifact(
                 connection,
                 job["project_id"],

@@ -169,10 +169,29 @@ class SimpleAction(Action):
     reconfirm: bool = Field(default=False, strict=True)
 
 
+class OutfitInput(Contract):
+    """An alternate look of one main character. ``default`` names the approved base portrait."""
+
+    id: Identifier | None = None
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
+    occasion: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
+    # What the look shows, as stated by a direct edit; ``description`` stays the user's wish.
+    appearance: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=400)] | None = None
+
+
 class SaveCharacters(Action):
     action: Literal["save-characters"]
     characters: list[CharacterBrief] = Field(min_length=1, max_length=3)
     relationshipInputs: list[RelationshipInput] | None = Field(default=None, max_length=3)
+    # The alternate looks wished for each character; a character left out keeps its looks.
+    outfits: dict[CharacterId, list[OutfitInput]] | None = None
+
+    @model_validator(mode="after")
+    def bounded_outfits(self):
+        if any(len(rows) > 4 for rows in (self.outfits or {}).values()):
+            raise ValueError("a character has at most four alternate looks")
+        return self
 
     @model_validator(mode="after")
     def unique_characters(self):
@@ -245,15 +264,6 @@ class Retake(Action):
     character_id: CharacterId
     scope: Literal["image-retake", "voice-retake"]
     instruction: Text = ""
-
-
-class OutfitInput(Contract):
-    """An alternate look of one main character. ``default`` names the approved base portrait."""
-
-    id: Identifier | None = None
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
-    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
-    occasion: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
 
 
 class SaveOutfit(Action):

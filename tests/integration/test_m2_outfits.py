@@ -16,11 +16,13 @@ def outfit_worker(client):
     return client.post("/api/workers", json={"name": "qwen", "capabilities": ["m2_outfit_image", "m2_image"]}).json()["id"]
 
 
-def outfit_bundle(job, *, sha256=None, media=None):
+def outfit_bundle(job, *, sha256=None, media=None, occasion=None):
     payload = job["payload"]
     envelope = {"schema_version": 1, "kind": "m2_outfit_image", "result": {}, "trace": [],
                 "provenance": {"seed": payload["seed"], "outfit": {
-                    "id": payload["outfit"]["id"], "summary": "藍色の浴衣に白い帯を締めた姿。",
+                    "id": payload["outfit"]["id"],
+                    "summary": payload["outfit"].get("appearance", "藍色の浴衣に白い帯を締めた姿。"),
+                    "occasion": occasion or payload["outfit"].get("occasion"),
                     "reference_sha256": sha256 or payload["reference_image"]["sha256"]}}}
     data = io.BytesIO()
     with ZipFile(data, "w") as archive:
@@ -81,10 +83,50 @@ def test_changed_description_or_base_portrait_requires_a_new_image(tmp_path):
         action(client, project, "retake", character_id="character-1", scope="image-retake")
         run_one(client, worker_id, "m2_image")
         assert detail(client, project)["draft"]["characters"][0]["outfits"][0]["imagePendingChanges"]
+        # The look is redrawn from the new portrait automatically; until then nothing else may change.
         action(client, project, "approve", status=409)
+        job = claim(client, qwen)
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
         action(client, project, "delete-outfit", character_id="character-1", outfit_id="look1")
         approved = action(client, project, "approve")
         assert "outfits" not in approved["draft"]["approval"]["characters"][0]
+
+
+def test_unstated_occasion_is_filled_in_and_a_direct_edit_is_drawn_as_written(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        qwen = outfit_worker(client)
+        action(client, project, "save-outfit", character_id="character-1",
+               outfit={"name": "浴衣", "description": "涼しげに"})
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")
+        job = claim(client, qwen)
+        assert "appearance" not in job["payload"]["outfit"]
+        assert complete(client, job, qwen, outfit_bundle(job, occasion="夏祭りに出かける夜")).status_code == 200
+        (look,) = detail(client, project)["draft"]["characters"][0]["outfits"]
+        # The wish stays what the user wrote; what was made is kept beside it.
+        assert (look["description"], look["occasion"]) == ("涼しげに", "")
+        assert look["generatedOccasion"] == "夏祭りに出かける夜"
+        shown = {"id": "look1", "name": "夏の浴衣", "description": "涼しげに",
+                 "appearance": look["generatedDescription"]}
+        renamed = action(client, project, "save-outfit", character_id="character-1", outfit=shown)
+        assert not renamed["draft"]["characters"][0]["outfits"][0]["imagePendingChanges"]
+        edited = action(client, project, "save-outfit", character_id="character-1",
+                        outfit={**shown, "appearance": "白地に朝顔柄の浴衣と赤い帯。"})
+        (look,) = edited["draft"]["characters"][0]["outfits"]
+        assert look["imagePendingChanges"] and look["description"] == "涼しげに"
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")
+        job = claim(client, qwen)
+        assert job["payload"]["outfit"]["appearance"] == "白地に朝顔柄の浴衣と赤い帯。"
+        assert complete(client, job, qwen, outfit_bundle(job, occasion="夏祭りに出かける夜")).status_code == 200
+        approved = action(client, project, "approve")
+        row = approved["draft"]["approval"]["characters"][0]["outfits"][-1]
+        assert (row["description"], row["occasion"]) == ("白地に朝顔柄の浴衣と赤い帯。", "夏祭りに出かける夜")
+        # A new wish replaces the edited text with a fresh design.
+        wished = action(client, project, "save-outfit", character_id="character-1",
+                        outfit={"id": "look1", "name": "夏の浴衣", "description": "もっと華やかに"})
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")
+        assert wished["draft"]["characters"][0]["outfits"][0]["imagePendingChanges"]
+        assert "appearance" not in claim(client, qwen)["payload"]["outfit"]
 
 
 def test_character_without_looks_keeps_the_original_approval_shape(tmp_path):
@@ -98,3 +140,59 @@ def test_character_without_looks_keeps_the_original_approval_shape(tmp_path):
         named = action(client, project, "save-outfit", character_id="character-1",
                        outfit={"name": "浴衣", "description": ""})
         assert named["draft"]["characters"][0]["outfits"][-1]["imagePendingChanges"]
+
+
+def brief(client, project, outfits):
+    current = detail(client, project)
+    return action(client, project, "save-brief", world=current["draft"]["worldInput"],
+                  characters=[row["input"] for row in current["draft"]["characters"]], outfits=outfits)
+
+
+def test_look_wished_for_in_the_brief_is_drawn_after_the_base_portrait(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        from tests.integration.test_m2 import create, worker
+
+        project, identifier = create(client, prompt="異星の物語を自由に考える。"), worker(client)
+        qwen = outfit_worker(client)
+        saved = brief(client, project, {"character-1": [{"name": "浴衣", "description": "夏祭りっぽく"}]})
+        (look,) = saved["draft"]["characters"][0]["outfits"]
+        assert look["id"] == "look1" and look["imagePendingChanges"]
+        action(client, project, "generate-world")
+        run_one(client, identifier, "m2_world")
+        action(client, project, "confirm-world")
+        for kind in ("m2_character", "m2_image", "m2_voice"):
+            run_one(client, identifier, kind)
+        job = claim(client, qwen)
+        assert job["kind"] == "m2_outfit_image" and job["payload"]["outfit"]["description"] == "夏祭りっぽく"
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        current = detail(client, project)
+        assert not current["draft"]["characters"][0]["outfits"][0]["imagePendingChanges"]
+        assert claim(client, qwen) is None
+        approved = action(client, project, "approve")
+        assert approved["draft"]["approval"]["characters"][0]["outfits"][0]["id"] == "look1"
+        # Retaking the base portrait redraws the look from it without being asked.
+        action(client, project, "retake", character_id="character-1", scope="image-retake")
+        run_one(client, identifier, "m2_image")
+        again = claim(client, qwen)
+        assert again["kind"] == "m2_outfit_image"
+        assert again["payload"]["reference_image"]["artifact_id"] != job["payload"]["reference_image"]["artifact_id"]
+
+
+def test_brief_looks_are_edited_removed_and_kept_without_touching_the_cast(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        results = [row["resultVersion"] for row in detail(client, project)["draft"]["characters"]]
+        saved = brief(client, project, {"character-1": [{"name": "浴衣"}, {"name": "鎧", "occasion": "戦う時"}]})
+        looks = saved["draft"]["characters"][0]["outfits"]
+        assert [row["id"] for row in looks] == ["look1", "look2"]
+        assert not saved["draft"]["characters"][0]["pendingChanges"] and not saved["draft"]["worldPendingChanges"]
+        saved = brief(client, project, {"character-1": [{"id": "look2", "name": "鎧", "occasion": "決戦の時"}]})
+        (look,) = saved["draft"]["characters"][0]["outfits"]
+        assert (look["id"], look["occasion"]) == ("look2", "決戦の時")
+        untouched = brief(client, project, None)
+        assert untouched["draft"]["characters"][0]["outfits"] == saved["draft"]["characters"][0]["outfits"]
+        assert [row["resultVersion"] for row in untouched["draft"]["characters"]] == results
+        # No Qwen worker: the look waits, and the cast cannot be approved with it undrawn.
+        action(client, project, "confirm-world")
+        assert all(job["kind"] != "m2_outfit_image" for job in detail(client, project)["jobs"])
+        action(client, project, "approve", status=409)

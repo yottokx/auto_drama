@@ -11,7 +11,8 @@ export type M2Character = {
   voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]
 }
 export type M2Outfit = {
-  id: string; name: string; description?: string; occasion?: string; generatedDescription?: string | null
+  id: string; name: string; description?: string; occasion?: string
+  generatedDescription?: string | null; generatedOccasion?: string | null; descriptionEdited?: boolean
   imageArtifactId?: string | null; baseImageArtifactId?: string | null; imagePendingChanges?: boolean; imageUrl?: string | null
 }
 export type VoiceTest = { id: string; text: string; artifactId: string; url: string; sourceVoiceArtifactId: string; createdAt: string }
