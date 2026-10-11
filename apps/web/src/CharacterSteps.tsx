@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './Icons'
 import { Dialog, LockButton } from './PreviewComponents'
 import type { CharacterBrief, RevisionRequest, RevisionScope } from './wizardState'
-import { alternateLooks, BaseLookName, BriefLooks, LookDialog, LookPanel, LookTabs, type LookWish } from './CharacterOutfits'
+import { alternateLooks, BaseLookName, BriefLooks, LookDialog, LookPanel, LookTabs, type LookWish, type MaterialWish } from './CharacterOutfits'
+import { MaterialPicker, readySheets, SharedMaterials, useMaterials, type MaterialPerson } from './SharedMaterials'
 import { CharacterVoiceTrials } from './CharacterVoiceTrials'
 import { ImageGenerationDetails } from './ImageGenerationDetails'
 import type { M2Outfit, VoiceTest } from './m2Api'
@@ -72,9 +73,9 @@ function CharacterDimensions({ character, onChange }: { character: CharacterBrie
   </div>
 }
 
-export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, onBack, onSave, live = false, relationshipInputs, embedded = false, looks, onLooksChange }: {
+export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, onBack, onSave, live = false, relationshipInputs, embedded = false, looks, onLooksChange, materials }: {
   characters: CharacterBrief[]; onChange: CharacterChange; onAdd: () => string; onRemove: (id: string) => void; onNext?: () => void; onBack?: () => void; onSave?: () => void; live?: boolean; relationshipInputs?: ReactNode; embedded?: boolean
-  looks?: Record<string, LookWish[]>; onLooksChange?: (id: string, looks: LookWish[]) => void
+  looks?: Record<string, LookWish[]>; onLooksChange?: (id: string, looks: LookWish[]) => void; materials?: MaterialWish[]
 }) {
   const [selectedId, setSelectedId] = useState(characters[0]?.id ?? '')
   const character = characters.find(item => item.id === selectedId) ?? characters[0]
@@ -104,7 +105,7 @@ export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, 
           {(character.locked.appearance || character.locked.voice) && <p className="field-hint">固定された項目は、キャラクターの確認画面で固定を解除すると編集できます。</p>}
         </div>
       </details>
-      {onLooksChange && <BriefLooks looks={looks?.[character.id] ?? []} onChange={value => onLooksChange(character.id, value)}/>}
+      {onLooksChange && <BriefLooks looks={looks?.[character.id] ?? []} materials={materials} onChange={value => onLooksChange(character.id, value)}/>}
       <div className="char-input-tip"><span><Icon name="leaf" size={20}/></span><p>まだ出会っていない人物の、輪郭だけで大丈夫。<br/><strong>{embedded ? 'まず世界観を確認・確定してから、この指示をもとに設定・外見・声をつくります。' : '次の画面で、設定・外見・声をまとめて確認し、言葉で調整できます。'}</strong></p></div>
     </section>
     {relationshipInputs}
@@ -112,11 +113,15 @@ export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, 
   </div>
 }
 
-export function CharacterReview({ characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus, outfitActions }: {
+export function CharacterReview({ materialsProjectId = null, characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus, outfitActions }: {
   characters: CharacterBrief[]; requests: RevisionRequest[]; onChange: CharacterChange; onToggleLock: (id: string, scope: DetailScope) => void;
   onRequest: (scope: RevisionScope, instruction: string, characterId?: string) => boolean | Promise<boolean>; onBack: () => void; onApprove: () => void; onPendingChange?: (pending: boolean) => void;
   previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]; imagePending?: boolean }>
+  /** The work whose shared designs can be made and worn here. */
+  materialsProjectId?: string | null
   outfitActions?: {
+    /** Redraws a look, or the base portrait ('default'), wearing a shared design. */
+    dress?: (characterId: string, outfitId: string, materialImageId: string) => Promise<boolean>
     save: (characterId: string, outfit: LookWish) => Promise<boolean>
     // Adds a look and starts its image; resolves to the new look's id.
     add: (characterId: string, outfit: LookWish, existing: Set<string>) => Promise<string | null>
@@ -138,6 +143,8 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
   const [lookTabs, setLookTabs] = useState<Record<string, string>>({})
   const [addingLook, setAddingLook] = useState(false)
   const [lookEdit, setLookEdit] = useState<string | null>(null)
+  const [dressing, setDressing] = useState<{ outfitId: string; name: string } | null>(null)
+  const materialStore = useMaterials(materialsProjectId)
   const revisionPanel = useRef<HTMLDetailsElement>(null)
   const instructionInput = useRef<HTMLTextAreaElement>(null)
   const pendingCallback = useRef(onPendingChange)
@@ -170,6 +177,12 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
   const shownLook = looks.find(outfit => outfit.id === lookTabs[character.id])
   const baseReady = Boolean(assets?.image) && !assets?.imagePending && !resultUnavailable
   const lookKey = shownLook ? `${character.id}:${shownLook.id}` : null
+  const canDress = Boolean(outfitActions?.dress) && materialStore.canEdit && readySheets(materialStore.materials).length > 0
+  // Any finished portrait can lend its clothes to a shared design.
+  const materialPeople: MaterialPerson[] = characters.flatMap((item, index) => [
+    ...(previewAssets?.[item.id]?.image ? [{ id: item.id, name: characterName(item, index) }] : []),
+    ...alternateLooks(previewAssets?.[item.id]?.outfits).filter(outfit => outfit.imageUrl).map(outfit => ({ id: item.id, name: `${characterName(item, index)}（${outfit.name}）`, outfitId: outfit.id })),
+  ])
 
   function chooseScope(nextScope: EditScope) {
     setScope(nextScope); setRevisionOpen(true); setSavedMessage('')
@@ -240,12 +253,14 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
         <DetailHeader title="外見・立ち絵" icon="users" locked={character.locked.appearance} onToggle={() => toggleLock('appearance')} onEdit={() => lookKey ? setLookEdit(lookKey) : startEdit('appearance')} editing={lookKey ? lookEdit === lookKey : Boolean(appearanceEdit)} disabled={busy || resultUnavailable}/>
         {outfitActions && <LookTabs idPrefix={`look-${character.id}`} outfits={assets?.outfits ?? []} selected={shownLook?.id ?? 'default'} onSelect={id => setLookTabs(current => ({ ...current, [character.id]: id }))} onAdd={() => setAddingLook(true)}/>}
         <div id={`look-${character.id}-panel`} role={outfitActions ? 'tabpanel' : undefined}>
-        {outfitActions && shownLook ? <LookPanel characterId={character.id} characterName={characterName(character, characterIndex)} outfit={shownLook} baseImageArtifactId={assets?.imageArtifactId ?? null} baseReady={baseReady} busy={busy} editing={lookEdit === lookKey} onEditingChange={editing => setLookEdit(editing ? lookKey : null)} onSave={outfitActions.save} onDelete={outfitActions.remove} onGenerate={outfitActions.generate} onExpand={(name, image) => setPortrait({ name, image })}/> : <>
+        {outfitActions && shownLook ? <LookPanel characterId={character.id} characterName={characterName(character, characterIndex)} outfit={shownLook} baseImageArtifactId={assets?.imageArtifactId ?? null} baseReady={baseReady} busy={busy} editing={lookEdit === lookKey} onEditingChange={editing => setLookEdit(editing ? lookKey : null)} onSave={outfitActions.save} onDelete={outfitActions.remove} onGenerate={outfitActions.generate} onExpand={(name, image) => setPortrait({ name, image })} onDress={canDress ? () => setDressing({ outfitId: shownLook.id, name: `${characterName(character, characterIndex)}の${shownLook.name}` }) : undefined}/> : <>
         {assets?.image ? <figure className="char-result-portrait"><button type="button" className="char-portrait-expand" aria-label={`${characterName(character, characterIndex)}の立ち絵を拡大`} onClick={() => setPortrait({ name: characterName(character, characterIndex), image: assets.image! })}><img src={assets.image} alt={`${characterName(character, characterIndex)}の${live ? '立ち絵' : '立ち絵の参考素材'}`}/><span className="char-expand-hint">クリックで拡大</span></button><figcaption>{live ? '生成した立ち絵' : '立ち絵の参考素材'}</figcaption></figure> : <div className="char-image-placeholder" aria-label={generating ? '立ち絵は生成待ち・生成中' : '立ち絵は未生成'}><div className="char-portrait-outline"><Icon name="users" size={47}/></div><span>{generating ? '立ち絵は生成が完了すると表示されます' : '立ち絵はまだ生成されていません'}</span><small>{generating ? '生成待ち・生成中' : '未生成'}</small></div>}
         {assets?.image && assets.imageArtifactId && <ImageGenerationDetails key={assets.imageArtifactId} artifactId={assets.imageArtifactId}/>}
         {appearanceEdit ? <fieldset disabled={busy} className="char-inline-editor" aria-label="外見を編集"><label className="field-label">外見の設定<textarea autoFocus rows={5} value={appearanceEdit.appearance} disabled={character.locked.appearance} onChange={event => updateEdit('appearance', { appearance: event.target.value })}/></label><CharacterDimensions character={{ ...appearanceEdit, locked: character.locked }} onChange={(_id, patch) => updateEdit('appearance', patch)}/>{editActions('appearance')}</fieldset> : <><ResultText title="外見の設定" text={character.appearance}/>{character.height_cm != null && <p className="char-height-summary">身長 {character.height_cm} cm<span>表示用の目安</span></p>}</>}
         <div className="char-asset-actions"><span>素材の作り直し</span><button type="button" className="char-retake-button" disabled={busy || character.locked.appearance || resultUnavailable || unsavedEdits.length > 0} onClick={() => { setRetake('image-retake'); setRetakeInstruction('') }}><Icon name="refresh" size={14}/>立ち絵だけリテイク</button></div>
         <p className="char-retake-hint">人物の設定と外見を維持して、立ち絵だけ作り直します。</p>
+        {canDress && <><div className="char-asset-actions"><span>共通の素材</span><button type="button" className="char-retake-button" disabled={busy || character.locked.appearance || !baseReady || unsavedEdits.length > 0} onClick={() => setDressing({ outfitId: 'default', name: characterName(character, characterIndex) })}><Icon name="users" size={14}/>共通の素材を着せる</button></div>
+        <p className="char-retake-hint">いまの立ち絵をもとに、顔や髪を保ったまま服だけ描き直します。別バージョンも新しい立ち絵から作り直します。</p></>}
         {outfitActions && <BaseLookName characterId={character.id} outfits={assets?.outfits ?? []} busy={busy} onSave={outfitActions.save}/>}
         </>}
         </div>
@@ -260,6 +275,8 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
         {onCloneVoice && <CharacterVoiceTrials characterId={character.id} characterName={characterName(character, characterIndex)} characters={characters} onSelect={setSelectedId} referenceId={assets?.voiceArtifactId} tests={assets?.voiceTests ?? []} busy={busy} onGenerate={onCloneVoice} onPendingChange={setClonePending}/>}
       </section>
     </div>
+
+    {materialsProjectId !== null && live && <SharedMaterials store={materialStore} people={materialPeople} disabled={busy}/>}
 
     {relationshipResults}
 
@@ -287,6 +304,7 @@ export function CharacterReview({ characters, requests, onChange, onToggleLock, 
     <p className="char-complete-note">{live ? 'すべての設定と素材が揃うと確認を完了できます。承認した内容は作品の版として保存されます。' : '確認を完了すると、現在の設定と保存済みの指示をこのブラウザーに保存します。'}</p>
 
     {addingLook && outfitActions && <LookDialog characterName={characterName(character, characterIndex)} busy={busy} onClose={() => setAddingLook(false)} onSave={async look => { const before = new Set(looks.map(outfit => outfit.id)); const created = await outfitActions.add(character.id, look, before); if (created) setLookTabs(current => ({ ...current, [character.id]: created })); return Boolean(created) }}/>}
+    {dressing && outfitActions?.dress && <MaterialPicker title={`${dressing.name}に共通の素材を着せる`} materials={materialStore.materials} busy={busy} onClose={() => setDressing(null)} onPick={imageId => outfitActions.dress!(character.id, dressing.outfitId, imageId)}/>}
     {portrait && <Dialog title={`${portrait.name}の立ち絵`} className="char-portrait-dialog" onClose={() => setPortrait(null)}><img src={portrait.image} alt={`${portrait.name}の立ち絵（拡大）`}/></Dialog>}
     {retake && <Dialog title={scopeNames[retake]} onClose={() => { setRetake(null); setRetakeInstruction('') }}><p className="dialog-intro">{retake === 'image-retake' ? '人物の設定と外見のイメージを維持したまま、立ち絵の素材だけを作り直す指示です。' : '人物の設定と声のイメージを維持したまま、音声の素材だけを作り直す指示です。'}キャラクター自体を変えたい場合は「キャラクター全体」への修正指示を使えます。</p><label className="field-label">リテイクへの追加指示<span className="char-optional">任意</span><textarea autoFocus rows={4} value={retakeInstruction} onChange={event => setRetakeInstruction(event.target.value)} placeholder={retake === 'image-retake' ? '例：同じ服装で、少し顔を正面に向けて。' : '例：同じ声質で、もう少し間を置いて読んで。'}/></label><p className="dialog-info">{live ? '設定と他の素材を維持したまま、選択した素材のみを生成します。' : <>プレビューでは指示を保存します。{retake === 'image-retake' ? '画像' : '音声'}の再生成はまだ実行されません。</>}</p><div className="dialog-actions"><button type="button" className="button button-light" onClick={() => { setRetake(null); setRetakeInstruction('') }}>キャンセル</button><button type="button" className="button button-primary" disabled={busy} onClick={saveRetake}><Icon name="check" size={15}/>{live ? '指示して再生成' : '指示を保存（プレビュー）'}</button></div></Dialog>}
   </div>

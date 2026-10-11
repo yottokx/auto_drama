@@ -3,29 +3,64 @@ import { Icon } from './Icons'
 import { Dialog } from './PreviewComponents'
 import type { M2Outfit } from './m2Api'
 
-export type LookWish = { id?: string; name: string; description: string; occasion: string; appearance?: string }
+export type LookWish = { id?: string; name: string; description: string; occasion: string; appearance?: string; material?: string | null }
+/** A shared outfit or item declared with the world; a look may say it wears one. */
+export type MaterialWish = { id: string; name: string; description: string }
+export const MAX_MATERIALS = 8
+const baseLook = (material: string): LookWish => ({ id: 'default', name: '通常の姿', description: '', occasion: '', material })
 const empty: LookWish = { name: '', description: '', occasion: '' }
 const wishOf = (outfit?: M2Outfit): LookWish => outfit ? { name: outfit.name, description: outfit.description ?? '', occasion: outfit.occasion ?? '' } : empty
 const same = (left: LookWish, right: LookWish) => left.name === right.name && left.description === right.description && left.occasion === right.occasion
 export const alternateLooks = (outfits: M2Outfit[] | undefined) => (outfits ?? []).filter(outfit => outfit.id !== 'default')
 export const MAX_LOOKS = 4
 
-function LookFields({ value, onChange, disabled }: { value: LookWish; onChange: (patch: Partial<LookWish>) => void; disabled: boolean }) {
+function MaterialSelect({ label, value, materials, disabled, onChange }: { label: string; value: string; materials: MaterialWish[]; disabled: boolean; onChange: (id: string) => void }) {
+  return <label className="field-label">{label}<span className="char-optional">任意</span><select value={materials.some(material => material.id === value) ? value : ''} disabled={disabled} onChange={event => onChange(event.target.value)}>
+    <option value="">着せない</option>{materials.map(material => <option key={material.id} value={material.id}>{material.name}</option>)}</select></label>
+}
+
+/** STEP1: outfits and items that several characters share. Their pictures are made with the world. */
+export function BriefMaterials({ materials, onChange, disabled = false }: { materials: MaterialWish[]; onChange: (materials: MaterialWish[]) => void; disabled?: boolean }) {
+  return <details className="char-detail-inputs char-brief-looks" open={materials.length > 0 || undefined}>
+    <summary><span><Icon name="users" size={16}/>共通の素材（制服・おそろいの小物など）を指定する</span><span className="char-optional">任意{materials.length > 0 && `・${materials.length}件`}</span><Icon name="chevron" size={14}/></summary>
+    <div>
+      <p className="field-hint">複数の人物が同じデザインで身につける服や小物です。絵は世界観と一緒に作り、世界観の確認画面で見られます。誰が着るかは、下の各キャラクターの欄で選びます。</p>
+      {materials.map((material, index) => <fieldset className="char-inline-editor char-brief-look" key={material.id} disabled={disabled} aria-label={`共通の素材 ${index + 1}`}>
+        <label className="field-label">呼び名<input maxLength={40} value={material.name} placeholder="例：制服、部隊の戦闘服、おそろいの腕章" onChange={event => onChange(materials.map(item => item.id === material.id ? { ...item, name: event.target.value } : item))}/></label>
+        <label className="field-label">どんなものか<span className="char-optional">任意</span><textarea rows={2} maxLength={400} value={material.description} placeholder="例：紺のブレザーに赤いリボン。空欄でも呼び名と世界観から考えます。" onChange={event => onChange(materials.map(item => item.id === material.id ? { ...item, description: event.target.value } : item))}/></label>
+        <div className="char-edit-actions"><button type="button" className="button button-light" onClick={() => onChange(materials.filter(item => item.id !== material.id))}>この素材を削除</button></div>
+      </fieldset>)}
+      {materials.length < MAX_MATERIALS && <button type="button" className="char-retake-button" disabled={disabled} onClick={() => onChange([...materials, { id: `mat-${Math.random().toString(36).slice(2, 10)}`, name: '', description: '' }])}><Icon name="plus" size={14}/>共通の素材を追加</button>}
+    </div>
+  </details>
+}
+
+function LookFields({ value, onChange, disabled, materials = [] }: { value: LookWish; onChange: (patch: Partial<LookWish>) => void; disabled: boolean; materials?: MaterialWish[] }) {
   return <>
     <label className="field-label">呼び名<input maxLength={40} value={value.name} disabled={disabled} placeholder="例：私服、魔法少女の姿" onChange={event => onChange({ name: event.target.value })}/></label>
     <label className="field-label">どんな姿にしたいか<span className="char-optional">任意</span><textarea rows={3} maxLength={400} value={value.description} disabled={disabled} placeholder="例：星屑を散りばめた青いドレスの魔法少女。書き方は自由で、空欄でも呼び名から考えます。" onChange={event => onChange({ description: event.target.value })}/></label>
     <label className="field-label">どんな時の姿か<span className="char-optional">任意</span><textarea rows={2} maxLength={400} value={value.occasion} disabled={disabled} placeholder="例：学校のない休日。変身している間だけ。" onChange={event => onChange({ occasion: event.target.value })}/></label>
+    {materials.length > 0 && <MaterialSelect label="この姿で着る共通の素材" value={value.material ?? ''} materials={materials} disabled={disabled} onChange={material => onChange({ material: material || null })}/>}
   </>
 }
 
 /** STEP1: say which other looks this character has. Images are made in STEP3. */
-export function BriefLooks({ looks, onChange, disabled = false }: { looks: LookWish[]; onChange: (looks: LookWish[]) => void; disabled?: boolean }) {
-  return <details className="char-detail-inputs char-brief-looks" open={looks.length > 0 || undefined}>
-    <summary><span><Icon name="users" size={16}/>別バージョン（服装・変身など）を指定する</span><span className="char-optional">任意{looks.length > 0 && `・${looks.length}件`}</span><Icon name="chevron" size={14}/></summary>
+export function BriefLooks({ looks: all, onChange: emit, disabled = false, materials: declared = [] }: {
+  looks: LookWish[]; onChange: (looks: LookWish[]) => void; disabled?: boolean; materials?: MaterialWish[]
+}) {
+  // The list carries the base look only as "which shared material it wears".
+  const materials = declared.filter(material => material.name.trim())
+  const worn = all.find(look => look.id === 'default')?.material ?? ''
+  const looks = all.filter(look => look.id !== 'default')
+  const onChange = (next: LookWish[], base = worn) => emit([...(base ? [baseLook(base)] : []), ...next])
+  const used = looks.length > 0 || materials.some(material => material.id === worn)
+  return <details className="char-detail-inputs char-brief-looks" open={used || undefined}>
+    <summary><span><Icon name="users" size={16}/>{materials.length ? '服装（共通の素材・別バージョン）を指定する' : '別バージョン（服装・変身など）を指定する'}</span><span className="char-optional">任意{looks.length > 0 && `・${looks.length}件`}</span><Icon name="chevron" size={14}/></summary>
     <div>
-      <p className="field-hint">同じ人物の別の姿です。ここではどんな姿かを伝えるだけで、立ち絵はキャラクターの生成後に自動で作ります。指定した姿は本編のどこかで必ず登場します。</p>
+      {materials.length > 0 && <MaterialSelect label="通常の姿で着る共通の素材" value={worn} materials={materials} disabled={disabled} onChange={material => onChange(looks, material)}/>}
+      <p className="field-hint">別バージョンは同じ人物の別の姿です。ここではどんな姿かを伝えるだけで、立ち絵はキャラクターの生成後に自動で作ります。指定した姿は本編のどこかで必ず登場します。</p>
       {looks.map((look, index) => <fieldset className="char-inline-editor char-brief-look" key={look.id ?? `new-${index}`} disabled={disabled} aria-label={`別バージョン ${index + 1}`}>
-        <LookFields value={look} disabled={disabled} onChange={patch => onChange(looks.map((item, position) => position === index ? { ...item, ...patch } : item))}/>
+        <LookFields value={look} disabled={disabled} materials={materials} onChange={patch => onChange(looks.map((item, position) => position === index ? { ...item, ...patch } : item))}/>
         <div className="char-edit-actions"><button type="button" className="button button-light" onClick={() => onChange(looks.filter((_, position) => position !== index))}>この別バージョンを削除</button></div>
       </fieldset>)}
       {looks.length < MAX_LOOKS && <button type="button" className="char-retake-button" disabled={disabled} onClick={() => onChange([...looks, { ...empty }])}><Icon name="plus" size={14}/>別バージョンを追加</button>}
@@ -62,13 +97,15 @@ export function LookDialog({ characterName, busy, onSave, onClose }: {
   </Dialog>
 }
 
-export function LookPanel({ characterId, characterName, outfit, baseImageArtifactId, baseReady, busy, editing, onEditingChange, onSave, onDelete, onGenerate, onExpand }: {
+export function LookPanel({ characterId, characterName, outfit, baseImageArtifactId, baseReady, busy, editing, onEditingChange, onSave, onDelete, onGenerate, onExpand, onDress }: {
   characterId: string; characterName: string; outfit: M2Outfit; baseImageArtifactId: string | null; baseReady: boolean; busy: boolean
   editing: boolean; onEditingChange: (editing: boolean) => void
   onSave: (characterId: string, outfit: LookWish) => Promise<boolean>
   onDelete: (characterId: string, outfitId: string) => Promise<boolean>
   onGenerate: (characterId: string, outfitId: string) => Promise<boolean>
   onExpand: (name: string, image: string) => void
+  /** Opens the choice of a shared design to put on this look. */
+  onDress?: () => void
 }) {
   // What was made is shown as text; the user's wish is only the instruction it came from.
   const appearance = outfit.generatedDescription ?? ''
@@ -117,6 +154,7 @@ export function LookPanel({ characterId, characterName, outfit, baseImageArtifac
     </>}
     <div className="char-asset-actions"><span>素材の作り直し</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={() => setRetake(wish)}><Icon name="refresh" size={14}/>{outfit.imageArtifactId ? 'この姿の立ち絵を作り直す' : 'この姿の立ち絵を作る'}</button></div>
     <p className="char-retake-hint">通常の姿の立ち絵をもとに、顔や髪を保ったまま服装を描き直します。</p>
+    {onDress && <div className="char-asset-actions"><span>共通の素材</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={onDress}><Icon name="users" size={14}/>共通の素材を着せる</button></div>}
     <div className="char-asset-actions"><span>この別バージョン</span><button type="button" className="char-retake-button" disabled={busy || editing} onClick={() => { if (window.confirm(`${outfit.name}を削除しますか？`)) void onDelete(characterId, outfit.id) }}><Icon name="close" size={14}/>削除</button></div>
     {retake !== null && <Dialog title={`${label}の立ち絵を作り直す`} onClose={() => setRetake(null)}>
       <p className="dialog-intro">顔や髪を保ったまま、この姿の立ち絵を作り直します。どんな姿にしたいかを書き換えると、見た目も新しく考え直します。</p>

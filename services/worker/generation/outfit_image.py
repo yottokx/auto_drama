@@ -19,6 +19,7 @@ from .processes import gpu_lock
 
 KIND = "m2_outfit_image"
 REFERENCE = "outfit-reference.png"
+MATERIAL_REFERENCE = "material-reference.png"
 PROMPT_VERSION = 4
 _JAPANESE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 DESIGN_SCHEMA = {
@@ -84,6 +85,35 @@ def design_outfit(payload: dict, llm) -> dict:
     raise AssertionError("unreachable")
 
 
+KEEP = (
+    "Keep the same character identity, face, hairstyle, hair and eye colors, body proportions "
+    "and illustration style as reference image 1.\n"
+    "Keep the same standing pose, framing, body size and position in the image.\n"
+    "Show a single character with no cropped head or limbs.\n"
+    "This is an RGBA image with transparency. The image has an alpha channel and the "
+    "background is transparent.")
+
+
+def build_material_prompt(material: dict) -> str:
+    """Dress or equip the portrait with a shared design shown in reference image 2."""
+    if material.get("category") == "item":
+        return (
+            "Add the item shown in reference image 2 to the character from reference image 1, worn or "
+            f"held the way such an item naturally is: {material['outfit_en']}\n"
+            "Copy the item's shape, colors and details faithfully from reference image 2. Change nothing "
+            "else: keep the character's clothes, and move only what is needed to hold or wear the item.\n"
+            + KEEP)
+    # A picture alone loses to a base that already wears something similar; the words name the garments.
+    return (
+        "Dress the character from reference image 1 in exactly the same outfit that is shown in reference "
+        "image 2, a clothing design sheet without a person. Remove every piece of the clothing, footwear and "
+        "worn accessories shown in reference image 1 and copy the garments from reference image 2 "
+        "faithfully: the same garment types, cut, colors, patterns, buttons, emblem, necktie or ribbon, "
+        f"legwear and shoes. The outfit consists of: {material['outfit_en']}\n"
+        "Fit the outfit to the body of the character from reference image 1 and remove any hand-held items. "
+        "Use reference image 2 only for the outfit.\n" + KEEP)
+
+
 def build_prompt(outfit_en: str) -> str:
     # A plain "change the outfit" loses to the instruction to keep everything else when the
     # new look resembles the old one (a navy uniform and a "deep blue dress" came back unchanged).
@@ -115,6 +145,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     payload = job.get("payload")
     if job.get("kind") != KIND or not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported outfit image job or schema.")
+    if payload.get("material_sheet"):
+        from .material_image import generate_job as generate_sheet
+
+        return generate_sheet(job, work_dir)
     if type(payload.get("seed")) is not int or not 0 <= payload["seed"] < 2**63:
         raise ValueError("Invalid outfit image seed.")
     outfit, source = payload.get("outfit"), payload.get("reference_image")
@@ -142,25 +176,65 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
 
     config = pipeline.load_config()
     lock = pipeline.ROOT / "services/worker/cache/m2/gpu.lock"
+    material = payload.get("material_image")
     design_path = work / "outfit-design.json"
     if design_path.exists():
         design = json.loads(design_path.read_text(encoding="utf-8"))
+    elif material and outfit.get("id") == "default":
+        # The base look only puts the shared design on; there is nothing to design or to schedule.
+        design = {"outfit_en": material["outfit_en"], "summary_ja": material["summary_ja"],
+                  "occasion_ja": "", "model_id": None, "requests": 0}
+        write_json(design_path, design)
     else:
         # The text model finishes and leaves the GPU before the image model loads.
         llm_config = select_config(config, payload, pipeline.ROOT)
+        source_payload = payload if not material else {
+            **payload, "outfit": {**outfit, "appearance": material["summary_ja"]}}
         with gpu_lock(lock, config["gpu_lock_timeout_seconds"]), \
                 LocalLLM(pipeline.ROOT, llm_config, payload, work / "llm") as llm:
-            design = {**design_outfit(payload, llm), "model_id": llm_config["llm"]["model_id"],
+            design = {**design_outfit(source_payload, llm), "model_id": llm_config["llm"]["model_id"],
                       "requests": llm.requests}
+        if material:
+            design["outfit_en"] = material["outfit_en"]
         write_json(design_path, design)
+    width, height = _size(reference)
+    references = [{"path": str(reference), "name": "base portrait", "sha256": source["sha256"]}]
+    if material:
+        sheet = (work / MATERIAL_REFERENCE).resolve(strict=True)
+        if hashlib.sha256(sheet.read_bytes()).hexdigest() != material.get("sha256"):
+            raise ValueError("Shared material hash mismatch.")
+        references.append({"path": str(sheet), "name": "shared material", "sha256": material["sha256"]})
+    prompt = build_material_prompt(material) if material else build_prompt(design["outfit_en"])
+    image, report, identity = render(work, payload, config, prompt, references, width, height, fingerprint)
+    provenance = {"provider": "local", "seed": payload["seed"], "input_sha256": fingerprint,
+                  "model_configuration_identity": identity, "prompt": prompt,
+                  "outfit_prompt_version": PROMPT_VERSION,
+                  "outfit": {"id": outfit["id"], "reference_artifact_id": source.get("artifact_id"),
+                             "reference_sha256": source["sha256"], "description_en": design["outfit_en"],
+                             "summary": design["summary_ja"], "occasion": design.get("occasion_ja") or None,
+                             **({"material_artifact_id": material.get("artifact_id")} if material else {})},
+                  "llm": {"model_id": design["model_id"], "requests": design["requests"]},
+                  **{key: report["provenance"][key] for key in ("width", "height", "inference_seconds")}}
+    envelope = GenerationEnvelope(schema_version=1, kind=KIND, result={}, provenance=provenance,
+                                  trace=[]).model_dump(mode="json")
+    content = pipeline._bundle(envelope, {"image.png": image})
+    check_cancelled()
+    temporary = work / "result.zip.tmp"
+    temporary.write_bytes(content)
+    temporary.replace(work / "result.zip")
+    return content
+
+
+def render(work: Path, payload: dict, config: dict, prompt: str, references: list[dict],
+           width: int, height: int, fingerprint: str) -> tuple[bytes, dict, dict]:
+    """One transparent Qwen edit of the references; the child owns the GPU while it runs."""
+    lock = pipeline.ROOT / "services/worker/cache/m2/gpu.lock"
     settings = runtime_settings(config, pipeline.ROOT)
     identity = model_identity(settings, pipeline.ROOT)
     profile = EventCgProfile.model_validate(payload.get("cg_profile", {})).model_dump(mode="json")
-    width, height = _size(reference)
-    prompt = build_prompt(design["outfit_en"])
     generation = {
-        "schema_version": 1, "mode": "portrait", "prompt": prompt, "transparent": True,
-        "references": [{"path": str(reference), "name": "base portrait", "sha256": source["sha256"]}],
+        "schema_version": 1, "mode": "portrait" if len(references) == 1 else "scene", "prompt": prompt,
+        "transparent": True, "references": references,
         "model_path": settings["model_path"], "width": width, "height": height, "seed": payload["seed"],
         **{key: profile[key] for key in ("steps", "dtype", "cpu_offload", "use_kv_cache", "reference_resolution",
                                           "text_encoder_offload", "transformer_storage", "vae_tiling")}}
@@ -184,19 +258,4 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     image = (output / "image.png").read_bytes()
     if hashlib.sha256(image).hexdigest() != report["provenance"]["image_sha256"]:
         raise ValueError("Outfit image changed after child publication.")
-    provenance = {"provider": "local", "seed": payload["seed"], "input_sha256": fingerprint,
-                  "model_configuration_identity": identity, "prompt": prompt,
-                  "outfit_prompt_version": PROMPT_VERSION,
-                  "outfit": {"id": outfit["id"], "reference_artifact_id": source.get("artifact_id"),
-                             "reference_sha256": source["sha256"], "description_en": design["outfit_en"],
-                             "summary": design["summary_ja"], "occasion": design.get("occasion_ja")},
-                  "llm": {"model_id": design["model_id"], "requests": design["requests"]},
-                  **{key: report["provenance"][key] for key in ("width", "height", "inference_seconds")}}
-    envelope = GenerationEnvelope(schema_version=1, kind=KIND, result={}, provenance=provenance,
-                                  trace=[]).model_dump(mode="json")
-    content = pipeline._bundle(envelope, {"image.png": image})
-    check_cancelled()
-    temporary = work / "result.zip.tmp"
-    temporary.write_bytes(content)
-    temporary.replace(work / "result.zip")
-    return content
+    return image, report, identity

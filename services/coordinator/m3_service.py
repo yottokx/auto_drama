@@ -321,7 +321,8 @@ class M3Service(ChapterProduction):
             batch = []
             for row in connection.execute(
                 "SELECT target_id,descriptor FROM m3_requirement "
-                "WHERE production_id=? AND kind='m3_image' ORDER BY target_id", (production["id"],)
+                "WHERE production_id=? AND kind='m3_image' AND artifact_id IS NULL ORDER BY target_id",
+                (production["id"],)
             ):
                 source = json.loads(row["descriptor"])
                 if source.get("character_result"):
@@ -888,6 +889,8 @@ class M3Service(ChapterProduction):
                 {"reference_text": transcript},
                 voice["id"],
             )
+        # A planned supporting character was already drawn and voiced while the plan was reviewed.
+        ready = (self._approved_plan(connection, production) or {}).get("assets", {})
         for character in narrative.supporting_characters:
             if character.id not in used_characters:
                 continue
@@ -895,14 +898,17 @@ class M3Service(ChapterProduction):
                 "character_id": character.id,
                 "character_result": character.model_dump(mode="json"),
             }
-            self._requirement(connection, production, "m3_image", character.id, descriptor)
-            self._requirement(
-                connection,
-                production,
-                "m3_voice",
-                character.id,
-                {**descriptor, "reference_text": character.selfIntroduction},
-            )
+            made = ready.get(character.id, {})
+            for kind, key in (("m3_image", "image"), ("m3_voice", "voice")):
+                record = None
+                if key in made and made[key].get("reference_text", character.selfIntroduction) == character.selfIntroduction:
+                    record = required(connection, "artifact", made[key]["artifact_id"])
+                    if record["project_id"] != production["project_id"] or record["sha256"] != made[key]["sha256"]:
+                        raise ServiceError(422, "承認した構成の素材参照が作品・ハッシュと一致しません。")
+                self._requirement(
+                    connection, production, kind, character.id,
+                    {**descriptor, "reference_text": character.selfIntroduction} if key == "voice" else descriptor,
+                    record["id"] if record else None)
         for location in narrative.locations:
             self._requirement(
                 connection,

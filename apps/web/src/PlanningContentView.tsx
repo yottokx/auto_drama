@@ -1,4 +1,8 @@
-import type { CastLife, OutfitNames, PlanningContent, PlanningTab, PlotRoute } from './planningState'
+import { useState } from 'react'
+import { Icon } from './Icons'
+import { Dialog } from './PreviewComponents'
+import type { CastLife, OutfitNames, PlanningAsset, PlanningAssets, PlanningContent, PlanningTab, PlotRoute } from './planningState'
+import { MaterialPicker, readySheets, SharedMaterials, useMaterials } from './SharedMaterials'
 import type { CharacterBrief } from './wizardState'
 
 const routeLabels: Record<keyof PlotRoute, string> = {
@@ -19,15 +23,53 @@ function EverydayContext({ life }: { life: CastLife }) {
   </div>
 }
 
-export function PlanningContentView({ content, mainCharacters, tab, outfitNames = {} }: {
-  content: PlanningContent; mainCharacters: CharacterBrief[]; tab: PlanningTab; outfitNames?: OutfitNames
+export type AssetRetake = (characterId: string, kind: 'image' | 'voice', instruction: string) => Promise<boolean>
+const assetNames = { image: '立ち絵', voice: '声' } as const
+const working = (asset?: PlanningAsset) => asset?.status === 'pending' || asset?.status === 'running'
+
+/** The portrait and voice of one planned supporting character, made while the plan is reviewed. */
+function CharacterAssets({ name, image, voice, disabled, onRetake, onExpand, onDress }: {
+  name: string; image?: PlanningAsset; voice?: PlanningAsset; disabled: boolean
+  onRetake?: (kind: 'image' | 'voice') => void; onExpand: (url: string) => void; onDress?: () => void
 }) {
+  const note = (kind: 'image' | 'voice', asset?: PlanningAsset) => working(asset) ? `${assetNames[kind]}を生成中…`
+    : asset?.status === 'failed' ? asset.error || `${assetNames[kind]}を生成できませんでした。`
+    : asset?.status === 'omitted' ? '人型ではないため、立ち絵は使いません。' : `${assetNames[kind]}はまだありません。`
+  const retake = (kind: 'image' | 'voice', asset?: PlanningAsset) => onRetake && asset?.status !== 'omitted'
+    && <button type="button" className="button button-light" disabled={disabled || working(asset)} onClick={() => onRetake(kind)}><Icon name="refresh" size={14}/>{asset?.status === 'ready' ? `${assetNames[kind]}を作り直す` : `${assetNames[kind]}を作る`}</button>
+  return <div className="planning-read-assets">
+    <div className="planning-read-asset">{image?.url
+      ? <button type="button" className="planning-read-portrait" aria-label={`${name}の立ち絵を拡大`} onClick={() => onExpand(image.url!)}><img src={image.url} alt={`${name}の立ち絵`}/></button>
+      : <p className="planning-read-asset-note" role="status">{note('image', image)}</p>}{image?.url && working(image) && <p className="planning-read-asset-note" role="status">立ち絵を作り直し中…</p>}{retake('image', image)}
+      {onDress && image?.status === 'ready' && <button type="button" className="button button-light" disabled={disabled} onClick={onDress}><Icon name="users" size={14}/>共通の素材を着せる</button>}</div>
+    <div className="planning-read-asset">{voice?.url
+      ? <audio controls preload="metadata" src={voice.url} aria-label={`${name}の声`}>お使いのブラウザーは音声再生に対応していません。</audio>
+      : <p className="planning-read-asset-note" role="status">{note('voice', voice)}</p>}{retake('voice', voice)}</div>
+  </div>
+}
+
+export function PlanningContentView({ content, mainCharacters, tab, outfitNames = {}, assets, assetsDisabled = false, onRetakeAsset, materialsProjectId = null, onDressAsset }: {
+  content: PlanningContent; mainCharacters: CharacterBrief[]; tab: PlanningTab; outfitNames?: OutfitNames
+  assets?: PlanningAssets; assetsDisabled?: boolean; onRetakeAsset?: AssetRetake
+  /** Shared designs of the work, and how a planned character is redrawn wearing one. */
+  materialsProjectId?: string | null; onDressAsset?: (characterId: string, materialImageId: string) => Promise<boolean>
+}) {
+  const store = useMaterials(tab === 'cast' ? materialsProjectId : null)
+  const materials = materialsProjectId === null ? undefined : store
+  const [dressing, setDressing] = useState<{ id: string; name: string } | null>(null)
+  const [portrait, setPortrait] = useState<{ name: string; url: string } | null>(null)
+  const [retake, setRetake] = useState<{ id: string; name: string; kind: 'image' | 'voice' } | null>(null)
+  const [instruction, setInstruction] = useState('')
   const { cast_plan: cast, plot } = content
   const names = new Map([...mainCharacters, ...cast.supporting_characters].map(character => [character.id, character.name]))
   const name = (id: string) => names.get(id) || id
 
   if (tab === 'cast') return <div className="planning-read planning-read-cast">
-    <div className="planning-read-introduction"><p>登場予定のサブキャラ {cast.supporting_characters.length}人</p><span>人物像、外見、声、日常と他の人物との関わりを確認できます。</span></div>
+    <div className="planning-read-introduction"><p>登場予定のサブキャラ {cast.supporting_characters.length}人</p><span>人物像、外見、声、日常と他の人物との関わりを確認できます。{assets && '立ち絵と声はここで作り、本編でそのまま使います。'}</span></div>
+    {materials && assets && <SharedMaterials store={materials} disabled={assetsDisabled} people={[
+      ...mainCharacters.map(character => ({ id: character.id, name: character.name })),
+      ...cast.supporting_characters.filter(character => assets[character.id]?.image?.status === 'ready').map(character => ({ id: character.id, name: character.name, planned: true })),
+    ]}/>}
     {cast.supporting_characters.map((character, index) => <article className="planning-card planning-read-character" key={character.id}>
       <header className="planning-read-character-header"><span className="planning-read-number">{String(index + 1).padStart(2, '0')}</span><div><h3>{character.name}</h3><p className="planning-read-meta">{[
         character.age, character.gender,
@@ -35,6 +77,9 @@ export function PlanningContentView({ content, mainCharacters, tab, outfitNames 
         character.height_cm != null ? `${character.height_cm} cm` : '',
       ].filter(Boolean).join(' · ')}</p></div></header>
       <p className="planning-read-role">{character.role}</p>
+      {assets && <CharacterAssets name={character.name} image={assets[character.id]?.image} voice={assets[character.id]?.voice} disabled={assetsDisabled}
+        onRetake={onRetakeAsset && (kind => { setInstruction(''); setRetake({ id: character.id, name: character.name, kind }) })} onExpand={url => setPortrait({ name: character.name, url })}
+        onDress={materials && onDressAsset && materials.canEdit && readySheets(materials.materials).length ? () => setDressing({ id: character.id, name: character.name }) : undefined}/>}
       <ReadingBlock title="人物の設定" text={character.settings}/>
       <ReadingBlock title="補足設定" text={character.freeform}/>
       <div className="planning-read-columns"><ReadingBlock title="外見" text={character.appearance}/><ReadingBlock title="声・話し方" text={character.voice}/></div>
@@ -44,6 +89,13 @@ export function PlanningContentView({ content, mainCharacters, tab, outfitNames 
     </article>)}
     {!cast.supporting_characters.length && <div className="planning-read-empty"><p>登場予定のサブキャラは設定されていません。</p><span>追加したい場合は、AIへの修正指示で伝えられます。</span></div>}
     <section className="planning-card planning-read-relationships"><h3>サブキャラを含む関係性</h3>{cast.connections.length ? <dl>{cast.connections.map((connection, index) => <div key={index}><dt>{connection.character_ids.map(name).join(' と ')}</dt><dd>{connection.relationship}</dd></div>)}</dl> : <p className="planning-read-muted">サブキャラとの関係性は設定されていません。</p>}</section>
+    {portrait && <Dialog title={`${portrait.name}の立ち絵`} className="char-portrait-dialog" onClose={() => setPortrait(null)}><img src={portrait.url} alt={`${portrait.name}の立ち絵（拡大）`}/></Dialog>}
+    {dressing && materials && onDressAsset && <MaterialPicker title={`${dressing.name}に共通の素材を着せる`} materials={materials.materials} busy={assetsDisabled} onClose={() => setDressing(null)} onPick={imageId => onDressAsset(dressing.id, imageId)}/>}
+    {retake && onRetakeAsset && <Dialog title={`${retake.name}の${assetNames[retake.kind]}を作り直す`} onClose={() => setRetake(null)}>
+      <p className="dialog-intro">人物の設定はそのままで、{assetNames[retake.kind]}だけを作り直します。設定から変えたい場合は、直接編集かAIへの修正指示を使ってください。</p>
+      <label className="field-label">作り直しへの追加の希望<span className="char-optional">任意</span><textarea autoFocus rows={3} maxLength={2000} value={instruction} onChange={event => setInstruction(event.target.value)} placeholder={retake.kind === 'image' ? '例：もう少し柔らかい表情で。' : '例：もう少し落ち着いた話し方で。'}/></label>
+      <div className="dialog-actions"><button type="button" className="button button-light" onClick={() => setRetake(null)}>キャンセル</button><button type="button" className="button button-primary" disabled={assetsDisabled} onClick={() => void onRetakeAsset(retake.id, retake.kind, instruction.trim()).then(done => { if (done) setRetake(null) })}><Icon name="refresh" size={15}/>作り直す</button></div>
+    </Dialog>}
   </div>
 
   return <div className="planning-read planning-read-plot">

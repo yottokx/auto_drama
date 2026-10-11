@@ -15,7 +15,7 @@ Step = Literal["world-input", "world-review", "character-input", "character-revi
 Scope = Literal["settings", "appearance", "voice"]
 Kind = Literal[
     "m2_world", "m2_character", "m2_image", "m2_voice", "m2_relationships", "m2_voice_clone",
-    "m2_outfit_image",
+    "m2_outfit_image", "m2_material_image",
 ]
 SpokenText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
 BodyType = Literal["humanoid", "nonhumanoid", "unknown"]
@@ -178,6 +178,16 @@ class OutfitInput(Contract):
     occasion: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
     # What the look shows, as stated by a direct edit; ``description`` stays the user's wish.
     appearance: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=400)] | None = None
+    # A shared material declared in the brief that this look wears; ``default`` carries the base look's.
+    material: Identifier | None = None
+
+
+class MaterialWish(Contract):
+    """An outfit or item several characters share, declared with the world."""
+
+    id: Identifier
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ""
 
 
 class SaveCharacters(Action):
@@ -186,11 +196,15 @@ class SaveCharacters(Action):
     relationshipInputs: list[RelationshipInput] | None = Field(default=None, max_length=3)
     # The alternate looks wished for each character; a character left out keeps its looks.
     outfits: dict[CharacterId, list[OutfitInput]] | None = None
+    # The shared materials of the work; left out, they stay as they are.
+    materials: list[MaterialWish] | None = Field(default=None, max_length=8)
 
     @model_validator(mode="after")
     def bounded_outfits(self):
-        if any(len(rows) > 4 for rows in (self.outfits or {}).values()):
+        if any(len([row for row in rows if row.id != "default"]) > 4 for rows in (self.outfits or {}).values()):
             raise ValueError("a character has at most four alternate looks")
+        if self.materials is not None and len({row.id for row in self.materials}) != len(self.materials):
+            raise ValueError("shared materials need distinct identifiers")
         return self
 
     @model_validator(mode="after")
@@ -276,6 +290,9 @@ class OutfitAction(Action):
     action: Literal["delete-outfit", "generate-outfit"]
     character_id: CharacterId
     outfit_id: Identifier
+    # A shared design to put on this look; the base look is redrawn only this way.
+    material_image_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9]{1,64}$")] | None = None
+    clear_material: bool = False
 
 
 class GoTo(Action):

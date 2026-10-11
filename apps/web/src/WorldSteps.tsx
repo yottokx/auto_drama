@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon } from './Icons'
+import { SharedMaterials, useMaterials } from './SharedMaterials'
 import type { RevisionRequest, WorldBrief } from './wizardState'
 import './worldSteps.css'
 
@@ -79,7 +80,9 @@ function WorldResultBody({ text }: { text: string }) {
   })}</div>
 }
 
-export function WorldReview({ world, requests, onChange, onRequest, onBack, onConfirm, onPendingChange, live = false, canConfirm = true, sourceWorld, generating = false, worldConfirmed = false }: {
+export function WorldReview({ world, requests, onChange, onRequest, onBack, onConfirm, onPendingChange, live = false, canConfirm = true, sourceWorld, generating = false, worldConfirmed = false, materialsProjectId = null }: {
+  /** The work whose shared materials are reviewed together with the world. */
+  materialsProjectId?: string | null
   world: WorldBrief
   requests: RevisionRequest[]
   onChange: (patch: Partial<WorldBrief>) => void | boolean | Promise<boolean | void>
@@ -94,6 +97,7 @@ export function WorldReview({ world, requests, onChange, onRequest, onBack, onCo
   worldConfirmed?: boolean
 }) {
   const [editing, setEditing] = useState(false)
+  const materialStore = useMaterials(materialsProjectId)
   const [editDraft, setEditDraft] = useState(world)
   const [revisionOpen, setRevisionOpen] = useState(false)
   const [instruction, setInstruction] = useState('')
@@ -152,6 +156,7 @@ export function WorldReview({ world, requests, onChange, onRequest, onBack, onCo
       <p className="world-saved-message" role="status">{savedMessage}</p>
       {worldRequests.length > 0 && <details className="world-request-history world-paper"><summary>保存した修正指示 <span>{worldRequests.length}</span><Icon name="chevron" size={14} /></summary><p className="world-history-note">{live ? '生成・修正の指示履歴' : '指示を保存済み・本文には未反映'}</p><ol>{worldRequests.map((request, index) => <li key={request.id}><span>{String(index + 1).padStart(2, '0')}</span><p>{request.instruction}</p></li>)}</ol></details>}
     </div>
+    {materialsProjectId !== null && (materialStore.materials.length > 0 || materialStore.loaded) && <SharedMaterials store={materialStore} people={[]} disabled={generating}/>}
     <aside className="world-confirm-panel world-paper"><div className="world-confirm-mark"><Icon name="globe" size={24} /></div><span className="world-small-eyebrow">BEFORE THE CHARACTERS</span><h2>この世界から、<br />人物をつくる。</h2><p>世界観を読んで、イメージに合っていれば確定します。最初に伝えた人物の希望と、この世界観をもとにキャラクターをつくります。</p><div className="world-confirm-contents"><span>確認する内容</span><ul><li><Icon name="check" size={14} />舞台と世界のルール</li><li><Icon name="check" size={14} />物語の方向性と雰囲気</li><li><Icon name="check" size={14} />作品全体の構成</li></ul></div><button className="button button-primary world-confirm-button" disabled={editing || pending || !canConfirm} onClick={onConfirm}>{live ? '世界観を確定してキャラクターを生成' : '世界観を確定してキャラクターを確認'}<Icon name="arrow" size={16} /></button><p className="world-confirm-note">{editing || pending ? '編集中の内容を保存、またはキャンセルしてから確定してください。' : !canConfirm ? '生成の完了と、最新の入力の反映が必要です。' : live && worldConfirmed ? 'もう一度確定すると、キャラクター以降のSTEPを無効にして再生成します。再確定前の状態は変更履歴から戻せます。' : '世界観を変更すると、キャラクターの再生成が必要になります。'}</p><button className="world-back-button" onClick={onBack}><Icon name="back" size={15} />世界観・キャラクターの指示に戻る</button></aside>
   </div>
 }

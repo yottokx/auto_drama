@@ -32,6 +32,8 @@ export function PlanningReviewPanel() { return null }
 export function ChangeHistory() { return null }
 export function SettingsDialog() { return null }
 export function useM2Api() { return null }
+export function SharedMaterials() { return null }
+export function useMaterials() { return { materials: [], loaded: false } }
 export const activeJob = job => ['pending', 'running'].includes(job.status);
 `)
 async function moduleUrl(file, replacements = {}, suffix = '') {
@@ -44,7 +46,7 @@ async function moduleUrl(file, replacements = {}, suffix = '') {
 const hooks = await import(hooksUrl)
 const wizardUrl = await moduleUrl('wizardState.ts', { react: hooksUrl })
 const wizard = await import(wizardUrl)
-const worldUrl = await moduleUrl('WorldSteps.tsx', { react: hooksUrl, './Icons': childrenUrl })
+const worldUrl = await moduleUrl('WorldSteps.tsx', { react: hooksUrl, './Icons': childrenUrl, './SharedMaterials': childrenUrl })
 const { WorldReview } = await import(worldUrl)
 const { ProjectWorkspace } = await import(await moduleUrl('LiveWizardApp.tsx', {
   react: hooksUrl, './Icons': childrenUrl, './PreviewComponents': childrenUrl,

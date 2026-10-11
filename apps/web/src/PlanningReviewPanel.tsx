@@ -3,7 +3,7 @@ import { ApiError, errorMessage, request } from './api'
 import { Icon } from './Icons'
 import { Dialog } from './PreviewComponents'
 import {
-  canApprovePlanning, cancelPlanningTab, initialPlanningEditor, planningAction, planningActivity, planningDirty, planningTabDirty, receivePlanning,
+  canApprovePlanning, cancelPlanningTab, initialPlanningEditor, planningAction, planningActivity, planningAssetsPending, planningDirty, planningTabDirty, receivePlanning,
   type PlanningContent, type PlanningEditorState, type PlanningResponse, type PlanningTab, type RevisionTarget,
   type OutfitNames,
 } from './planningState'
@@ -173,6 +173,29 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
     }
   }
 
+  const retakeAsset = (character_id: string, kind: 'image' | 'voice', instruction: string) => changeAsset('', { character_id, kind, instruction })
+  const dressAsset = (character_id: string, material_image_id: string) => changeAsset('/dress', { character_id, material_image_id })
+  async function changeAsset(path: string, body: Record<string, unknown>) {
+    if (mutation.current || generating || setupInvalidated || !planning) return false
+    const controller = new AbortController()
+    controllers.current.add(controller)
+    mutation.current = true; sequence.current += 1; setMutating(true); setError(''); setNotice('')
+    try {
+      const result = await request<PlanningResponse>(`${endpoint}/assets${path}`, controller.signal,
+        { expected_revision: planning.revision, ...body })
+      if (!mounted.current || controller.signal.aborted) return false
+      // Only the media changed; local plan edits and instructions stay as they are.
+      accept(result)
+      return true
+    } catch (reason) {
+      if (mounted.current && !controller.signal.aborted) setError(errorMessage(reason))
+      return false
+    } finally {
+      controllers.current.delete(controller); mutation.current = false; sequence.current += 1
+      if (mounted.current) setMutating(false)
+    }
+  }
+
   async function reload() {
     if (mutation.current) return
     if (discardSetup) { onReloadSetup(); return }
@@ -193,7 +216,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
   }
 
   return <section className="planning-panel" aria-label="全体計画の確認" aria-busy={busy}>
-    <div className="planning-intro"><Icon name="book" size={20}/><div><p>全体プロットとサブキャラを確認し、必要に応じて修正してください。承認後は第1章から本編を制作します。</p><small>サブキャラの立ち絵・基準音声は本編制作で生成します。物語の進行に応じて登場人物が追加されることもあります。</small></div></div>
+    <div className="planning-intro"><Icon name="book" size={20}/><div><p>全体プロットとサブキャラを確認し、必要に応じて修正してください。承認後は第1章から本編を制作します。</p><small>サブキャラの立ち絵と声はこの画面で作り、「サブキャラ」タブで確認できます。物語の進行に応じて、本編制作で登場人物が追加されることもあります。</small></div></div>
     {!loaded && <p role="status">全体計画を読み込み中…</p>}
     {connectionError && <p className="m2-job-error" role="alert">{connectionError} 入力を保持して再接続を試みています。</p>}
     {error && <p className="m2-job-error" role="alert">{error}</p>}
@@ -220,7 +243,9 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
         {(['plot', 'cast'] as const).map(item => <section key={item} className="planning-tabpanel" role="tabpanel" id={`${panelId}-panel-${item}`} aria-labelledby={`${panelId}-tab-${item}`} hidden={tab !== item} tabIndex={0}>{tab === item && <>
           <div className="planning-toolbar"><p>{editing ? `${item === 'plot' ? 'プロット' : 'サブキャラ'}を直接編集中です。タブを切り替えても入力は保持されます。` : '内容を確認し、変更したいときは直接編集できます。'}</p>{!editing && <button className="button button-light" disabled={busy || state.conflict || setupInvalidated} onClick={beginEditing}>直接編集</button>}</div>
           {editing ? <PlanningContentEditor content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item} disabled={busy || state.conflict || setupInvalidated} onChange={content => { commit(previous => ({ ...previous, content })); setNotice('') }}/>
-            : <PlanningContentView content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item}/>}
+            : <PlanningContentView content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item}
+                assets={dirty ? undefined : planning.assets} assetsDisabled={busy || state.conflict || setupInvalidated} onRetakeAsset={planning.status === 'approved' ? undefined : retakeAsset}
+                materialsProjectId={planning.status === 'approved' ? null : projectId} onDressAsset={dressAsset}/>}
           {editing && <div className="planning-save"><p>{dirty ? '未保存の変更があります。保存すると、両方のタブで編集した内容をまとめて記録します。' : '保存したあとは、内容を読みやすい表示に戻します。'}</p><div><button className="button button-light" disabled={busy} onClick={cancelEditing}>編集を取り消す</button><button className="button button-primary" disabled={!dirty || busy || state.conflict || setupInvalidated} onClick={() => void mutate('save')}><Icon name="check" size={15}/>変更を保存する</button></div></div>}
         </>}</section>)}
         <section className="planning-revision" aria-label="AIへの修正指示"><div className="planning-revision-toggle"><button className="button button-light" aria-expanded={revisionOpen} aria-controls={`${panelId}-revision`} onClick={() => setRevisionOpen(previous => !previous)}><Icon name="spark" size={15}/>{revisionOpen ? '修正指示を閉じる' : 'AIに修正を指示'}</button>{!revisionOpen && state.instruction.trim() && <span>送信前の指示を保持しています。</span>}</div><div id={`${panelId}-revision`} hidden={!revisionOpen}>{revisionOpen && <><h3>AIに修正を指示する</h3><fieldset disabled={busy || state.conflict || setupInvalidated}>
@@ -233,6 +258,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
         </fieldset></>}</div></section>
       </>}
       {notice && <p className="planning-notice" role="status">{notice}</p>}
+      {state.content && planningAssetsPending(planning) && <p className="planning-notice" role="status">サブキャラの立ち絵と声を生成中です。完了すると承認できます。</p>}
       <EventCgPolicyEditor key={`${projectId}:${cgEpoch}`} projectId={projectId} disabled={busy || state.conflict || setupInvalidated} readonly={false} onStatusChange={setCgStatus}/>
       {planning.status === 'approved' && <p className="planning-notice">もう一度承認すると、現在の本編制作を無効にして第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}
       <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' && <button className="button button-light" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button>}<button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button></div>

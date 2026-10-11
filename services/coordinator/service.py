@@ -361,6 +361,14 @@ class Coordinator:
 
                 music = json.loads(job["payload"])["adjustment"].get("music")
                 (MusicAdjustmentService(self) if music else AdjustmentService(self)).validate_retry(connection, job)
+            elif json.loads(job["payload"]).get("planning_asset"):
+                from .planning_service import PlanningService
+
+                PlanningService(self).validate_asset_retry(connection, job)
+            elif json.loads(job["payload"]).get("material_image_job"):
+                from .material_service import MaterialService
+
+                MaterialService(self).validate_retry(connection, job)
             elif job["kind"].startswith("m2_"):
                 from .m2_service import M2Service
 

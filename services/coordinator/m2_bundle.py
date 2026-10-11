@@ -116,7 +116,7 @@ def validate_bundle(
     if not data or len(data) > MAX_BUNDLE_BYTES:
         raise ValueError("invalid result bundle size")
     expected = {"result.json"}
-    if kind in ("m2_image", "m2_outfit_image"):
+    if kind in ("m2_image", "m2_outfit_image", "m2_material_image"):
         expected.add("image.png")
     elif kind in ("m2_voice", "m2_voice_clone"):
         expected.add("voice.wav")
@@ -155,7 +155,8 @@ def validate_bundle(
     elif envelope["result"]:
         raise ValueError("media jobs cannot change character text")
     if "image.png" in files:
-        validate_png(files["image.png"])
+        # A design sheet drawn from words has a plain background; every edit is cut out.
+        validate_png(files["image.png"], require_transparency=kind != "m2_material_image")
     if "voice.wav" in files:
         validate_wav(files["voice.wav"])
     # Ensure metadata can be serialized without nonfinite numbers/unpaired surrogates.

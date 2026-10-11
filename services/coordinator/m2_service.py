@@ -560,7 +560,36 @@ class M2Service:
             descriptor["outfit"]["appearance"] = outfit["generatedDescription"]
             descriptor["outfit"]["occasion"] = outfit["occasion"] or outfit.get("generatedOccasion") or ""
         descriptor["reference_image"] = {"artifact_id": reference["id"], "sha256": reference["sha256"]}
+        if outfit.get("materialImageId") or outfit.get("materialBrief"):
+            material = self._material(connection, project_id, outfit)
+            if material is None:
+                raise ServiceError(409, "着せる共通の素材の絵がまだありません。")
+            descriptor["material_image"] = material
         return descriptor
+
+    def _material(self, connection, project_id: str, outfit: dict) -> dict | None:
+        """The sheet a look wears: the one chosen in review, else the one its brief names."""
+        from .material_service import MaterialService
+
+        materials = MaterialService(self.coordinator)
+        if outfit.get("materialImageId"):
+            return materials.reference(connection, project_id, outfit["materialImageId"])
+        return materials.brief_reference(connection, project_id, outfit["materialBrief"])
+
+    def material_ready(self, connection, project_id: str) -> None:
+        """A shared sheet was finished; draw the looks of an unapproved cast that waited for it."""
+        row = connection.execute("SELECT 1 FROM m2_draft WHERE project_id=?", (project_id,)).fetchone()
+        if row is None:
+            return
+        state = self._load(connection, project_id)
+        if state["activeJobId"] or state["queue"] or state["draft"]["approved"]:
+            return
+        for character in state["draft"]["characters"]:
+            state["queue"].extend(self._outfit_tasks(connection, project_id, state, character))
+        if state["queue"]:
+            state["draft"]["revision"] += 1
+            self._queue_next(connection, project_id, state)
+            self._save(connection, project_id, state)
 
     def _outfit_tasks(self, connection, project_id: str, state: dict, character: dict) -> list[dict]:
         """Looks wished for in the brief are drawn as soon as their base portrait is ready."""
@@ -569,12 +598,38 @@ class M2Service:
             return []
         queued = {(item["character_id"], item["outfit"]["id"]) for item in state["queue"]
                   if item["kind"] == "m2_outfit_image"}
+        base = next((item for item in character.get("outfits", []) if item["id"] == DEFAULT_OUTFIT), None)
+        if (base and base.get("materialBrief") and base.get("materialApplied") != base["materialBrief"]
+                and not character["locked"]["appearance"]):
+            # The base look puts its shared design on first; every other look is derived from the result.
+            if (character["id"], DEFAULT_OUTFIT) in queued or self._material(connection, project_id, base) is None:
+                return []
+            return [self._outfit_descriptor(connection, project_id, character, base)]
         tasks = []
         for outfit in self._stale_looks(character):
-            if (character["id"], outfit["id"]) not in queued:
-                outfit["imagePendingChanges"] = True
-                tasks.append(self._outfit_descriptor(connection, project_id, character, outfit))
+            if (character["id"], outfit["id"]) in queued:
+                continue
+            if outfit.get("materialBrief") and not outfit.get("materialImageId") \
+                    and self._material(connection, project_id, outfit) is None:
+                continue
+            outfit["imagePendingChanges"] = True
+            tasks.append(self._outfit_descriptor(connection, project_id, character, outfit))
         return tasks
+
+    def _sync_materials(self, connection, project_id: str, draft: dict, wishes) -> bool:
+        """Keep the shared materials declared in the brief; True if the declaration changed."""
+        if wishes is None:
+            return False
+        from .material_service import MaterialService
+
+        value = [wish.model_dump() for wish in wishes]
+        changed = value != draft.get("materials", [])
+        draft["materials"] = value
+        service = MaterialService(self.coordinator)
+        service.sync_brief(connection, project_id, value)
+        if draft.get("worldResult"):
+            service.ensure_sheets(connection, project_id, world=draft["worldResult"])
+        return changed
 
     def _sync_outfits(self, draft: dict, wishes: dict | None) -> bool:
         """Make each named character's alternate looks match the brief; True if anything changed."""
@@ -586,8 +641,23 @@ class M2Service:
             current = {item["id"]: item for item in self._alternates(character)}
             kept = [item for item in outfits if item["id"] == DEFAULT_OUTFIT]
             used = set(current) | {DEFAULT_OUTFIT}
-            for wish in wishes[character["id"]]:
-                value = wish.model_dump() if hasattr(wish, "model_dump") else dict(wish)
+            declared = {row["id"] for row in draft.get("materials", [])}
+            rows = [wish.model_dump() if hasattr(wish, "model_dump") else dict(wish) for wish in wishes[character["id"]]]
+            # The base look only says which shared material it wears.
+            worn = next((row.get("material") for row in rows if row["id"] == DEFAULT_OUTFIT), None)
+            worn = worn if worn in declared else None
+            if worn != (kept[0].get("materialBrief") if kept else None):
+                if not kept:
+                    kept.append({"id": DEFAULT_OUTFIT, "name": "通常の姿", "description": "", "occasion": "",
+                                 "imageArtifactId": None, "baseImageArtifactId": None, "imagePendingChanges": False})
+                kept[0].pop("materialApplied", None)
+                kept[0].pop("materialBrief", None)
+                if worn:
+                    kept[0]["materialBrief"] = worn
+                changed = True
+            for value in rows:
+                if value["id"] == DEFAULT_OUTFIT:
+                    continue
                 look = current.pop(value["id"], None) if value["id"] else None
                 if look is None:
                     identifier = next(f"look{n}" for n in range(1, 100) if f"look{n}" not in used)
@@ -599,6 +669,13 @@ class M2Service:
                     look["imagePendingChanges"] = True
                     if look.get("description") != value["description"]:
                         look.pop("descriptionEdited", None)
+                material = value.get("material") if value.get("material") in declared else None
+                if look.get("materialBrief") != material:
+                    look.pop("materialBrief", None)
+                    look.pop("materialImageId", None)
+                    if material:
+                        look["materialBrief"] = material
+                    look["imagePendingChanges"] = changed = True
                 fields = {key: value[key] for key in ("name", "description", "occasion")}
                 changed = changed or any(look.get(key) != item for key, item in fields.items())
                 look.update(fields)
@@ -638,16 +715,39 @@ class M2Service:
             current.update(name=value["name"], description=value["description"], occasion=value["occasion"])
             outfits.sort(key=lambda item: item["id"] != DEFAULT_OUTFIT)
             return
-        outfit = next((item for item in self._alternates(character) if item["id"] == body.outfit_id), None)
+        base = body.action == "generate-outfit" and body.outfit_id == DEFAULT_OUTFIT
+        outfit = next((item for item in (outfits if base else self._alternates(character))
+                       if item["id"] == body.outfit_id), None)
+        if base:
+            # The base look is only ever redrawn by putting a shared design on it.
+            if not body.material_image_id:
+                raise ServiceError(422, "着せる共通の素材を選んでください。")
+            if character["locked"]["appearance"]:
+                raise ServiceError(409, "外見の固定を解除してから操作してください。")
+            if outfit is None:
+                outfit = {"id": DEFAULT_OUTFIT, "name": "通常の姿", "description": "", "occasion": "",
+                          "imageArtifactId": None, "baseImageArtifactId": None, "imagePendingChanges": False}
+                outfits.insert(0, outfit)
         if outfit is None:
             raise ServiceError(404, "別バージョンが見つかりません。")
         if body.action == "delete-outfit":
             outfits.remove(outfit)
             return
+        if body.material_image_id:
+            outfit["materialImageId"] = body.material_image_id
+        elif body.clear_material:
+            outfit.pop("materialImageId", None)
         if not character["imageArtifactId"] or character["imagePendingChanges"] or character["pendingChanges"]:
             raise ServiceError(409, "現在の設定を反映した立ち絵を先に生成してください。")
         if not self._qwen_ready(connection):
             raise ServiceError(409, "別バージョンの立ち絵にはQwenの準備済みWorkerが必要です。Workerを起動してください。")
+        if base:
+            descriptor = self._outfit_descriptor(connection, project_id, character,
+                                                 outfit)
+            # One redraw; the base look does not stay tied to the design afterwards.
+            outfit.pop("materialImageId", None)
+            state["queue"] = [descriptor]
+            return
         outfit["imagePendingChanges"] = True
         state["queue"] = [self._outfit_descriptor(connection, project_id, character, outfit)]
 
@@ -729,7 +829,7 @@ class M2Service:
             payload["portrait_prompt_batch"] = copy.deepcopy(state["portraitPromptBatch"])
         else:
             state.pop("portraitPromptBatch", None)
-        for key in ("reference_voice", "dialogue_text", "reference_image", "outfit", "cg_profile"):
+        for key in ("reference_voice", "dialogue_text", "reference_image", "outfit", "cg_profile", "material_image"):
             if key in descriptor:
                 payload[key] = descriptor[key]
         identifier, run_id, now = uuid4().hex, uuid4().hex, self.clock()
@@ -841,7 +941,8 @@ class M2Service:
                     draft["relationshipInputs"],
                 )
                 self._save_characters(draft, body)
-                looks_changed = self._sync_outfits(draft, body.outfits)
+                materials_changed = self._sync_materials(connection, project_id, draft, body.materials)
+                looks_changed = self._sync_outfits(draft, body.outfits) or materials_changed
                 draft["worldInput"] = body.world.model_dump()
                 current = (
                     draft["worldInput"],
@@ -1361,6 +1462,8 @@ class M2Service:
             self._character(draft, payload["character_id"]) if payload["character_id"] else None
         )
         if job["kind"] == "m2_world":
+            from .material_service import MaterialService
+
             self._result(
                 connection,
                 job["project_id"],
@@ -1372,6 +1475,8 @@ class M2Service:
                 attempt=attempt,
             )
             draft["step"] = "world-review"
+            # The declared shared materials are drawn now, to be reviewed together with the world.
+            MaterialService(self.coordinator).ensure_sheets(connection, job["project_id"], world=draft["worldResult"])
         elif job["kind"] == "m2_character":
             result = envelope["result"]
             previous = character["result"]
@@ -1420,6 +1525,22 @@ class M2Service:
                 "version": record["version"],
                 "pendingChanges": False,
             }
+        elif job["kind"] == "m2_outfit_image" and payload["outfit"]["id"] == DEFAULT_OUTFIT:
+            # The base portrait wearing a shared design replaces it; every look is derived again.
+            record = self._artifact(
+                connection, job["project_id"], f"image-{character['id']}", "m2_image", "image.png",
+                "image/png", files["image.png"], provenance=envelope["provenance"], job=job, attempt=attempt)
+            character.update(imageArtifactId=record["id"], imagePendingChanges=False)
+            base = next(item for item in character["outfits"] if item["id"] == DEFAULT_OUTFIT)
+            base["generatedDescription"] = envelope["provenance"].get("outfit", {}).get("summary")
+            if base.get("materialBrief"):
+                base["materialApplied"] = base["materialBrief"]
+            self._stale_outfits(character)
+            state["queue"].extend(self._outfit_tasks(connection, job["project_id"], state, character))
+            self._artifact(
+                connection, job["project_id"], f"result-{job['id']}", "m2_metadata", "result.json",
+                "application/json", files["result.json"], provenance=envelope["provenance"],
+                job=job, attempt=attempt)
         elif job["kind"] == "m2_outfit_image":
             outfit = next(item for item in self._alternates(character)
                           if item["id"] == payload["outfit"]["id"])
@@ -1470,6 +1591,11 @@ class M2Service:
                 character[f"{prefix}ArtifactId"] = record["id"]
                 character[f"{prefix}PendingChanges"] = False
                 if is_image:
+                    # A newly drawn portrait wears what its settings say, not the shared design yet.
+                    for outfit in character.get("outfits", []):
+                        if outfit["id"] == DEFAULT_OUTFIT:
+                            outfit.pop("materialApplied", None)
+                            outfit.pop("generatedDescription", None)
                     self._stale_outfits(character)
                     state["queue"].extend(self._outfit_tasks(connection, job["project_id"], state, character))
             self._artifact(

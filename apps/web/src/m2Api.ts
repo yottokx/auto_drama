@@ -11,7 +11,7 @@ export type M2Character = {
   voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]
 }
 export type M2Outfit = {
-  id: string; name: string; description?: string; occasion?: string
+  id: string; name: string; description?: string; occasion?: string; materialBrief?: string | null
   generatedDescription?: string | null; generatedOccasion?: string | null; descriptionEdited?: boolean
   imageArtifactId?: string | null; baseImageArtifactId?: string | null; imagePendingChanges?: boolean; imageUrl?: string | null
 }
@@ -21,6 +21,7 @@ export type RelationshipPair = { characterIds: [string, string]; summary: string
 export type Relationships = { result: { pairs: RelationshipPair[] } | null; artifactId: string | null; version: number | null; pendingChanges: boolean }
 export type M2Draft = {
   revision: number; step: WizardStep; worldInput: WorldBrief; worldResult: WorldBrief | null
+  materials?: { id: string; name: string; description: string }[]
   worldConfirmed: boolean; worldPendingChanges?: boolean; characters: M2Character[]
   approved: boolean; hasProduction?: boolean; planningRequired?: boolean; planApproved?: boolean
   approval: Record<string, unknown> | null; requests: RevisionRequest[]

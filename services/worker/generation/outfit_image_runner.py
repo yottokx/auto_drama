@@ -1,4 +1,4 @@
-"""Qwen child for an alternate look of one portrait: a transparent, single-character edit."""
+"""Qwen child for edits of a portrait or a shared design sheet, with a transparent background."""
 from __future__ import annotations
 
 import argparse
@@ -16,11 +16,12 @@ class OutfitRuntime(QwenRuntime):
     def generate(self, request, progress):
         output = Path(request["output_dir"])
         validated = engine.validate_request(request["generation"])
-        if validated["mode"] != "portrait" or not validated["transparent"]:
-            raise ModelIdentityError("An outfit image is a transparent edit of one portrait.")
+        if not validated["transparent"]:
+            raise ModelIdentityError("An outfit image has a transparent background.")
         images, records = engine.normalize_references(validated["references"], output)
-        if validated["references"][0]["sha256"] != records[0]["original_sha256"]:
-            raise ModelIdentityError("Reference changed after the worker validated its hash.")
+        for source, record in zip(validated["references"], records, strict=True):
+            if source["sha256"] != record["original_sha256"]:
+                raise ModelIdentityError("Reference changed after the worker validated its hash.")
         reused = self.pipe is not None
         if not reused:
             try:
@@ -49,7 +50,7 @@ class OutfitRuntime(QwenRuntime):
         histogram = generated.getchannel("A").histogram()
         pixels = generated.width * generated.height
         if sum(histogram[:16]) / pixels < 0.05 or sum(histogram[240:]) / pixels < 0.05:
-            raise ValueError("The outfit image needs both a transparent background and a visible character.")
+            raise ValueError("The outfit image needs both a transparent background and a visible subject.")
         # The session protocol publishes two names; a portrait has a single rendition.
         for name in ("original.png", "image.png"):
             engine.atomic_image(generated, output / name)

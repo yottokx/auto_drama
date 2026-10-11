@@ -109,12 +109,14 @@ def create_app(
     from .m2_routes import router as m2_router
     from .m3_player import install_player_routes
     from .m3_routes import router as m3_router
+    from .material_service import router as material_router
     from .planning_routes import router as planning_router
     from .tts_settings import register_routes as register_tts_routes
 
     app.include_router(m2_router(service))
     app.include_router(m3_router(service))
     app.include_router(planning_router(service))
+    app.include_router(material_router(service))
     app.include_router(adjustment_router(service))
     app.include_router(event_cg_router(service))
     app.include_router(image_experiment_router(service))

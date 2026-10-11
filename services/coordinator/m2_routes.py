@@ -62,7 +62,19 @@ def router(coordinator: Callable[[], Coordinator]) -> APIRouter:
         with current.db.transaction() as connection:
             from .service import required
 
-            adjusted = json.loads(required(connection, "job", job_id)["payload"]).get("adjustment")
+            payload = json.loads(required(connection, "job", job_id)["payload"])
+            adjusted = payload.get("adjustment")
+        if payload.get("material_image_job"):
+            from .material_service import MaterialService
+
+            return await run_in_threadpool(
+                MaterialService(current.coordinator).complete, job_id, worker_id, lease_id, bytes(content))
+        if payload.get("planning_asset"):
+            # A planned supporting character dressed in a shared design, edited like a look.
+            from .planning_service import PlanningService
+
+            return await run_in_threadpool(
+                PlanningService(current.coordinator).complete_asset, job_id, worker_id, lease_id, bytes(content))
         if adjusted:
             # A finished work regenerates an alternate look with the same job kind as STEP3.
             from .adjustment_service import AdjustmentService

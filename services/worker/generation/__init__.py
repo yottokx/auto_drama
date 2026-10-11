@@ -10,6 +10,9 @@ def check_readiness() -> dict:
 
     status = pipeline.check_readiness()
     status["available_job_kinds"].extend(generation_kinds(status["available_job_kinds"]))
+    if "m2_image" in status["available_job_kinds"]:
+        # A shared design sheet drawn from words needs only the portrait model.
+        status["available_job_kinds"].append("m2_material_image")
     try:
         music = music_readiness(pipeline.load_config(), pipeline.ROOT)
     except (OSError, ValueError, KeyError) as exc:
@@ -41,6 +44,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
 
     prepare_job(job.get("kind"))
     prepare_event_cg(job.get("kind"))
+    if job.get("kind") == "m2_material_image":
+        from .material_image import generate_job as generate_material
+
+        return generate_material(job, work_dir)
     if job.get("kind") == "m2_outfit_image":
         from .outfit_image import generate_job as generate_outfit
 

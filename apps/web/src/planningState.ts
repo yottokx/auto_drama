@@ -22,11 +22,16 @@ export type PlanningContent = {
     chapters: PlotChapter[]
   }
 }
+export type PlanningAsset = { status: 'missing' | 'pending' | 'running' | 'failed' | 'cancelled' | 'ready' | 'omitted'; url: string | null; job_id: string | null; error: string | null }
+export type PlanningAssets = Record<string, { image?: PlanningAsset; voice?: PlanningAsset }>
 export type Planning = {
   id: string; revision: number; status: 'draft' | 'generating' | 'ready' | 'planned' | 'approved' | 'failed'
   content: PlanningContent | null; approval_id: string | null; active_job_id: string | null
-  jobs: Job[]; error: string | null
+  jobs: Job[]; error: string | null; assets?: PlanningAssets
 }
+/** Supporting portraits and voices are made during the review; approval waits for them. */
+export const planningAssetsPending = (planning: Planning | null) => Object.values(planning?.assets ?? {})
+  .some(row => [row.image, row.voice].some(asset => asset?.status === 'pending' || asset?.status === 'running'))
 export type PlanningResponse = { project_id: string; planning: Planning | null; legacy_production: boolean }
 export type RevisionTarget = 'all' | 'plot' | 'character' | 'relationships'
 export type PlanningTab = 'plot' | 'cast'
@@ -62,7 +67,7 @@ export function planningActivity(planning: Planning | null) {
 
 export function canApprovePlanning(state: PlanningEditorState, blocked = false): boolean {
   return Boolean(state.content && !blocked && !state.conflict && !planningDirty(state)
-    && !state.instruction.trim() && !planningActivity(state.latest).generating
+    && !state.instruction.trim() && !planningActivity(state.latest).generating && !planningAssetsPending(state.latest)
     && state.latest && ['ready', 'planned', 'failed', 'approved'].includes(state.latest.status))
 }
 

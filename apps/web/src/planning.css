@@ -123,3 +123,10 @@
 .planning-read-empty { padding: 25px; border: 1px dashed #d5dcc9; border-radius: 8px; background: #f9faf4; }
 @media (max-width: 600px) { .planning-card, .planning-revision, .planning-intro { padding: 18px; } .planning-subcard { padding: 13px; } .planning-field-grid, .planning-targets { grid-template-columns: 1fr; } .planning-footer > .button { width: 100%; justify-content: center; } .planning-save > div { width: 100%; } }
 @media (max-width: 600px) { .planning-read .planning-card { padding: 21px 18px; } .planning-read-columns, .planning-read-route { grid-template-columns: 1fr; gap: 18px; } .planning-read-change { grid-template-columns: 1fr; gap: 10px; padding: 15px; } .planning-read-arrow { transform: rotate(90deg); justify-self: start; margin: 2px 0; } .planning-read-core > h3, .planning-read-character-header h3 { font-size: 21px !important; } .planning-tab { padding: 10px 12px; } }
+.planning-read-assets { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr); gap: 22px; align-items: start; margin: 4px 0 22px; padding: 18px; border: 1px solid #e3e6d8; border-radius: 8px; background: #f8f9f2; }
+.planning-read-asset { display: grid; gap: 12px; justify-items: start; }
+.planning-read-portrait { width: 100%; padding: 0; border: 1px solid #dfe3d3; border-radius: 6px; background: #f1f2e9; cursor: zoom-in; overflow: hidden; }
+.planning-read-portrait img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: contain; }
+.planning-read-asset audio { width: 100%; max-width: 420px; }
+.planning-read .planning-read-asset-note { font-size: 12px; color: #797464; }
+@media (max-width: 600px) { .planning-read-assets { grid-template-columns: 1fr; } }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import zipfile
 import zlib
@@ -17,6 +18,17 @@ from .service import Coordinator, ServiceError, encode_json, public, required
 def plan_digest(content):
     from .m3_service import _checkpoint_digest
     return _checkpoint_digest(content)
+
+
+ASSET_JOBS = {"image": "m3_image", "voice": "m3_voice"}
+# Only these settings shape the asset; a change elsewhere in the plan keeps it.
+ASSET_FIELDS = {"image": ("id", "name", "age", "gender", "appearance", "height_cm", "body_type"),
+                "voice": ("id", "name", "age", "gender", "voice", "selfIntroduction")}
+
+
+def asset_source(character: dict, kind: str) -> str:
+    source = {key: character.get(key) for key in ASSET_FIELDS[kind]}
+    return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 class PlanningService:
@@ -75,8 +87,235 @@ class PlanningService:
         result["planning"] = {"id": row["id"], "revision": row["revision"], "status": status,
             "content": json.loads(row["content"]) if row["content"] else None,
             "approval_id": row["approved_plan_id"], "active_job_id": row["active_job_id"],
-            "jobs": jobs, "error": active["error"] if active else row["error"]}
+            "jobs": jobs, "error": active["error"] if active else row["error"],
+            "assets": self._asset_view(connection, row)}
         return result
+
+    def _assets(self, connection, row, content=None):
+        """The newest asset of each planned supporting character that matches its settings."""
+        content = content if content is not None else json.loads(row["content"]) if row["content"] else None
+        result = {}
+        for character in (content or {}).get("cast_plan", {}).get("supporting_characters", []):
+            for kind in ASSET_JOBS:
+                asset = connection.execute(
+                    "SELECT * FROM planning_asset WHERE planning_id=? AND character_id=? AND kind=? "
+                    "AND source_sha256=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+                    (row["id"], character["id"], kind, asset_source(character, kind))).fetchone()
+                result[(character["id"], kind)] = (character, dict(asset) if asset else None)
+        return result
+
+    def _asset_view(self, connection, row):
+        view = {}
+        for (cid, kind), (_character, asset) in self._assets(connection, row).items():
+            job = required(connection, "job", asset["job_id"]) if asset and asset["job_id"] else None
+            artifact = required(connection, "artifact", asset["artifact_id"]) if asset and asset["artifact_id"] else None
+            omitted = bool(artifact and artifact["kind"] == "portrait_omission")
+            previous = None if artifact else connection.execute(
+                "SELECT a.* FROM planning_asset p JOIN artifact a ON a.id=p.artifact_id WHERE p.planning_id=? "
+                "AND p.character_id=? AND p.kind=? AND p.source_sha256=? AND a.kind!='portrait_omission' "
+                "ORDER BY p.created_at DESC,p.rowid DESC LIMIT 1",
+                (row["id"], cid, kind, asset["source_sha256"] if asset else "")).fetchone()
+            shown = artifact if artifact and not omitted else previous
+            view.setdefault(cid, {})[kind] = {
+                "status": ("omitted" if omitted else "ready" if artifact else job["status"] if job else "missing"),
+                "url": f"/api/artifacts/{shown['id']}/content" if shown else None,
+                "job_id": job["id"] if job else None, "error": job["error"] if job else None}
+        return view
+
+    def _sync_assets(self, connection, row, content):
+        """Supporting characters are drawn and voiced as soon as the plan names them."""
+        for (_cid, kind), (character, asset) in self._assets(connection, row, content).items():
+            if asset is None:
+                self._enqueue_asset(connection, row, character, kind)
+
+    def _enqueue_asset(self, connection, row, character, kind, *, instruction=""):
+        from .llm_settings import execution_settings
+        from .tts_settings import TTSService
+
+        first = connection.execute(
+            "SELECT j.* FROM job j JOIN planning_job p ON p.job_id=j.id "
+            "WHERE p.planning_id=? ORDER BY j.created_at,j.id LIMIT 1", (row["id"],)).fetchone()
+        frozen = json.loads(first["payload"]) if first else {}
+        asset_id, identifier, run_id, now = uuid4().hex, uuid4().hex, uuid4().hex, self.clock()
+        profile = M2Service(self.coordinator)._profile(connection)
+        # Voice models stay the ones the plan was made with, as they do for the chapters.
+        tts_profile = frozen.get("tts_profile") or TTSService(self.coordinator).profile(connection)
+        payload = {"schema_version": 1, "approval_snapshot": self._snapshot(connection, row),
+                   "character_id": character["id"], "character_result": character, "profile": profile,
+                   **({"tts_profile": tts_profile} if tts_profile is not None else {}),
+                   "seed": int(identifier[:8], 16) & 0x7FFFFFFF, "instruction": instruction,
+                   "planning_asset": {"planning_id": row["id"], "asset_id": asset_id},
+                   **({"reference_text": character["selfIntroduction"]} if kind == "voice" else {})}
+        settings = {"schema_version": 1, "seed": payload["seed"],
+                    **({"tts_profile": tts_profile} if tts_profile is not None else {}),
+                    **execution_settings(self.coordinator, connection, payload, kind=ASSET_JOBS[kind], profile=profile)}
+        connection.execute(
+            "INSERT INTO generation_run(id,project_id,settings_version,story_revision_id,policy,status,created_at) "
+            "VALUES (?,?,?,?,?,'pending',?)", (run_id, row["project_id"], row["revision"], row["id"],
+                json.dumps({"mode": "planning-asset"}), now))
+        connection.execute(
+            "INSERT INTO job(id,project_id,run_id,kind,payload,settings_snapshot,priority,status,max_attempts,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,'pending',3,?,?)",
+            # Every portrait before the first voice, so each model is loaded once.
+            (identifier, row["project_id"], run_id, ASSET_JOBS[kind], json.dumps(payload, ensure_ascii=False),
+             json.dumps(settings, ensure_ascii=False), 100 if kind == "image" else 99, now, now))
+        connection.execute("INSERT INTO planning_asset VALUES (?,?,?,?,?,?,NULL,?)", (
+            asset_id, row["id"], character["id"], kind, asset_source(character, kind), identifier, now))
+
+    def approved_assets(self, connection, row, content):
+        """References frozen into an approval; a character whose asset is absent is made in production."""
+        result = {}
+        for (cid, kind), (character, asset) in self._assets(connection, row, content).items():
+            if not asset or not asset["artifact_id"]:
+                job = required(connection, "job", asset["job_id"]) if asset and asset["job_id"] else None
+                if job and job["status"] in {"pending", "running"}:
+                    raise ServiceError(409, "サブキャラの立ち絵と声を生成中です。完了してから承認してください。")
+                continue
+            artifact = required(connection, "artifact", asset["artifact_id"])
+            result.setdefault(cid, {})[kind] = {
+                "artifact_id": artifact["id"], "sha256": artifact["sha256"],
+                **({"reference_text": character["selfIntroduction"]} if kind == "voice" else {})}
+        return result
+
+    def retake_asset(self, project_id, body):
+        with self.db.transaction() as connection:
+            self.coordinator._recover(connection)
+            row, _state = self._current(connection, project_id)
+            if row["revision"] != body.expected_revision:
+                raise ServiceError(409, "構成が更新されました。最新の版を確認してください。")
+            if row["approved_plan_id"]:
+                raise ServiceError(409, "承認済みの構成の素材は、完成後の調整で変更できます。")
+            found = self._assets(connection, row).get((body.character_id, body.kind))
+            if found is None:
+                raise ServiceError(422, "登場予定のサブキャラを指定してください。")
+            character, asset = found
+            job = required(connection, "job", asset["job_id"]) if asset and asset["job_id"] else None
+            if job and job["status"] in {"pending", "running"}:
+                raise ServiceError(409, "この素材は生成中です。")
+            self._enqueue_asset(connection, row, character, body.kind, instruction=body.instruction or "")
+            return self._view(connection, project_id)
+
+    def dress_asset(self, project_id, body):
+        """Redraw a planned supporting character's portrait wearing a shared design."""
+        from .event_cg_settings import EventCgSettings
+        from .llm_settings import execution_settings
+        from .material_service import MaterialService
+
+        with self.db.transaction() as connection:
+            self.coordinator._recover(connection)
+            row, _state = self._current(connection, project_id)
+            if row["revision"] != body.expected_revision:
+                raise ServiceError(409, "構成が更新されました。最新の版を確認してください。")
+            if row["approved_plan_id"]:
+                raise ServiceError(409, "承認済みの構成の素材は、完成後の調整で変更できます。")
+            found = self._assets(connection, row).get((body.character_id, "image"))
+            if found is None:
+                raise ServiceError(422, "登場予定のサブキャラを指定してください。")
+            character, asset = found
+            current = required(connection, "artifact", asset["artifact_id"]) if asset and asset["artifact_id"] else None
+            if current is None or current["kind"] != "character":
+                raise ServiceError(409, "この人物の立ち絵ができてから着せてください。")
+            material = MaterialService(self.coordinator).reference(connection, project_id, body.material_image_id)
+            if material is None:
+                raise ServiceError(409, "着せる共通の素材の絵がまだありません。")
+            if not M2Service(self.coordinator)._qwen_ready(connection):
+                raise ServiceError(409, "着せ替えには、画像編集の準備ができたWorkerが必要です。")
+            asset_id, identifier, run_id, now = uuid4().hex, uuid4().hex, uuid4().hex, self.clock()
+            profile = M2Service(self.coordinator)._profile(connection)
+            snapshot = self._snapshot(connection, row)
+            payload = {"schema_version": 1, "seed": int(identifier[:8], 16) & 0x7FFFFFFF,
+                       "character_id": character["id"], "character_result": character,
+                       "world_result": snapshot["world"]["result"], "profile": profile,
+                       "cg_profile": EventCgSettings(self.coordinator).settings(connection)["profile"],
+                       "outfit": {"id": "default", "name": "通常の姿", "description": "", "occasion": ""},
+                       "reference_image": {"artifact_id": current["id"], "sha256": current["sha256"]},
+                       "material_image": material,
+                       "planning_asset": {"planning_id": row["id"], "asset_id": asset_id}}
+            settings = {"schema_version": 1, "seed": payload["seed"], **execution_settings(
+                self.coordinator, connection, payload, kind="m2_outfit_image", profile=profile)}
+            connection.execute(
+                "INSERT INTO generation_run(id,project_id,settings_version,story_revision_id,policy,status,created_at) "
+                "VALUES (?,?,?,?,?,'pending',?)", (run_id, row["project_id"], row["revision"], row["id"],
+                    json.dumps({"mode": "planning-asset"}), now))
+            connection.execute(
+                "INSERT INTO job(id,project_id,run_id,kind,payload,settings_snapshot,priority,status,max_attempts,created_at,updated_at) "
+                "VALUES (?,?,?,'m2_outfit_image',?,?,100,'pending',3,?,?)",
+                (identifier, row["project_id"], run_id, json.dumps(payload, ensure_ascii=False),
+                 json.dumps(settings, ensure_ascii=False), now, now))
+            connection.execute("INSERT INTO planning_asset VALUES (?,?,?,?,?,?,NULL,?)", (
+                asset_id, row["id"], character["id"], "image", asset_source(character, "image"), identifier, now))
+            return self._view(connection, project_id)
+
+    def validate_asset_retry(self, connection, job):
+        link = json.loads(job["payload"])["planning_asset"]
+        row = self.selected(connection, job["project_id"])
+        asset = required(connection, "planning_asset", link["asset_id"])
+        current = self._assets(connection, row).get((asset["character_id"], asset["kind"])) if row else None
+        if (not row or row["id"] != link["planning_id"] or row["approved_plan_id"]
+                or not current or not current[1] or current[1]["id"] != asset["id"]):
+            raise ServiceError(409, "以前の構成版の素材は再試行できません。")
+
+    def complete_asset(self, job_id, worker_id, lease_id, data):
+        import wave
+
+        from packages.contracts.portrait_recovery import PortraitOmission
+
+        from .m3_bundle import validate_bundle
+        with self.db.transaction() as connection:
+            job, _ = self.coordinator._lease(connection, job_id, worker_id, lease_id, completed_ok=True)
+            if job["status"] == "completed":
+                return self.coordinator._duplicate(connection, job, data)
+            payload = json.loads(job["payload"])
+        try:
+            if job["kind"] == "m2_outfit_image":
+                from .m2_bundle import validate_bundle as validate_edit
+
+                envelope, files = validate_edit(data, job["kind"], payload["character_id"])
+                if envelope["provenance"].get("outfit", {}).get("reference_sha256") != payload["reference_image"]["sha256"]:
+                    raise ValueError("the portrait was edited from another picture")
+            else:
+                envelope, files = validate_bundle(data, job["kind"])
+            omission = None
+            if job["kind"] == "m3_image" and envelope["result"]:
+                omission = PortraitOmission.model_validate(envelope["result"]["portrait"])
+                omission.validate_source(payload["character_result"])
+                if omission.character_id != payload["character_id"]:
+                    raise ValueError("Portrait omission belongs to another character")
+            if (job["kind"] == "m3_voice"
+                    and envelope["provenance"].get("voice", {}).get("reference_text") != payload["reference_text"]):
+                raise ValueError("reference speech changed")
+            filename = "voice.wav" if job["kind"] == "m3_voice" else "image.png"
+            if omission is None and filename not in files:
+                raise ValueError("the asset itself is missing")
+        except (ValueError, KeyError, TypeError, AttributeError, zipfile.BadZipFile, EOFError, zlib.error,
+                wave.Error, RuntimeError) as exc:
+            raise ServiceError(422, "生成結果の素材・音声情報が入力と一致しません。") from exc
+        with self.db.transaction() as connection:
+            job, attempt = self.coordinator._lease(connection, job_id, worker_id, lease_id, completed_ok=True)
+            if job["status"] == "completed":
+                return self.coordinator._duplicate(connection, job, data)
+            asset = required(connection, "planning_asset", payload["planning_asset"]["asset_id"])
+            store = M2Service(self.coordinator)._artifact
+            if omission is not None:
+                record = store(connection, job["project_id"], "planning-asset-" + asset["id"], "portrait_omission",
+                               "portrait-omission.json", "application/json", encode_json(omission.model_dump()),
+                               provenance=envelope["provenance"], job=job, attempt=attempt)
+            else:
+                record = store(connection, job["project_id"], "planning-asset-" + asset["id"],
+                               "audio" if filename == "voice.wav" else "character", filename,
+                               "audio/wav" if filename == "voice.wav" else "image/png", files[filename],
+                               provenance=envelope["provenance"], job=job, attempt=attempt)
+            bundle = self.coordinator._register_artifact(connection, job["project_id"],
+                "planning-asset-job-" + job_id, "m3_bundle", "result.zip", "application/zip", self.store.put(data),
+                source_job_id=job_id, source_attempt_id=attempt["id"])
+            now = self.clock()
+            connection.execute("UPDATE planning_asset SET artifact_id=? WHERE id=?", (record["id"], asset["id"]))
+            connection.execute("UPDATE job_attempt SET status='completed',ended_at=? WHERE id=?", (now, attempt["id"]))
+            connection.execute("UPDATE job SET status='completed',result_artifact_id=?,updated_at=?,error=NULL WHERE id=?",
+                               (bundle["id"], now, job_id))
+            connection.execute("UPDATE generation_run SET status='completed' WHERE id=?", (job["run_id"],))
+            connection.execute("UPDATE worker SET last_seen_at=? WHERE id=?", (now, worker_id))
+            return {"job": public(required(connection, "job", job_id)), "artifact": public(bundle)}
 
     def project(self, project_id):
         with self.db.transaction() as connection:
@@ -249,9 +488,12 @@ class PlanningService:
                         "profile", "tts_profile", "seed", "profiles", "script_options", "workflow_limits",
                         "story_workflow_version", "workflow_policy", "generator_protocol", "planning_protocol",
                     ) if key in payload}
+                    assets = self.approved_assets(connection, row, content)
                     approved = {"schema_version": 1, "approval_id": identifier,
                         "main_approval_id": row["main_approval_id"], "content": content,
-                        "sha256": plan_digest(content), "generation": generation}
+                        "sha256": plan_digest(content), "generation": generation,
+                        # Outside the content, so the plan's identity does not depend on its media.
+                        **({"assets": assets} if assets else {})}
                     artifact = M2Service(self.coordinator)._artifact(connection, project_id,
                         "planning-approval-" + identifier, "planning_approval", "plan.json", "application/json",
                         encode_json(approved), provenance={"planning_protocol": planning_protocol()})
@@ -271,6 +513,8 @@ class PlanningService:
                     state["draft"].update(planApproved=False, step="planning-review")
                     if body.action != "save":
                         self._enqueue(connection, required(connection, "planning_draft", row["id"]), body=body)
+                    else:
+                        self._sync_assets(connection, required(connection, "planning_draft", row["id"]), content)
                 state["draft"]["revision"] += 1
                 M2Service(self.coordinator)._save(connection, project_id, state)
             result = self._view(connection, project_id)
@@ -308,6 +552,7 @@ class PlanningService:
             connection.execute("UPDATE planning_draft SET content=?,revision=revision+1,status='ready',"
                 "active_job_id=NULL,error=NULL,updated_at=? WHERE id=?",
                 (json.dumps(content, ensure_ascii=False), now, row["id"]))
+            self._sync_assets(connection, row, content)
             connection.execute("UPDATE job_attempt SET status='completed',ended_at=? WHERE id=?", (now, attempt["id"]))
             connection.execute("UPDATE job SET status='completed',result_artifact_id=?,updated_at=?,error=NULL WHERE id=?",
                                (artifact["id"], now, job_id))
