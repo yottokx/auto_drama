@@ -361,7 +361,10 @@ class PlanningService:
                 "seed": int(uuid4().hex[:8], 16) & 0x7FFFFFFF, "story_workflow_version": 2,
                 "workflow_policy": "script_continuation_v1",
                 "generator_protocol": generator_protocol("causal", "script_continuation_v1"),
-                "planning_protocol": planning_protocol()}
+                "planning_protocol": planning_protocol(),
+                # A planned supporting character is drawn and voiced in this step, so the plot uses each
+                # one. Plans started earlier carry no such option and keep the wording they were made with.
+                "script_options": {"planned_cast_appears": True}}
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
             "planning_revision": row["revision"], "approval_snapshot": self._snapshot(connection, row),
             **generation}

@@ -158,6 +158,10 @@ class CommonPlanRun(ScriptRun):
         def check_revision(row):
             combine(row)
 
+        if self.options.planned_cast_appears and target in {"all", "plot"} and not number:
+            # Supporting characters added or replaced by a revision would otherwise stay out of the old events.
+            scope += ("予定サブキャラは全員、いずれかの章のeventsのstepsで実際に行動させます。"
+                      "一度も登場しない人物を残さず、追加・変更した人物の出番もプロットへ入れます。")
         if outfits:
             scope += OUTFIT_ALLOCATION + "current_common_planのoutfit_appearancesは、指示で変えない限り維持します。"
         value = self.structured("common-plan-revision", "script-outline", 1, instruction + scope,

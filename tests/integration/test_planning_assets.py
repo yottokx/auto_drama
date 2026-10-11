@@ -93,3 +93,26 @@ def test_retake_and_edit_redo_only_what_changed(tmp_path):
             "image": "ready", "voice": "pending"}
         (job,) = finish(client, media)
         assert job["kind"] == "m3_voice"
+
+
+def test_a_new_plan_asks_for_every_planned_character_and_an_earlier_one_keeps_its_wording(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        project = action(client, project, "approve")
+        worker = plan_worker(client)
+        job = claim(client, worker)
+        assert job["payload"]["script_options"] == {"planned_cast_appears": True}
+        complete_plan(client, job, worker)
+        # A plan begun before this option existed has none; revising it must not introduce it.
+        with client.app.state.coordinator.db.transaction() as connection:
+            import json
+
+            row = connection.execute("SELECT payload,settings_snapshot FROM job WHERE id=?", (job["id"],)).fetchone()
+            payload, settings = json.loads(row["payload"]), json.loads(row["settings_snapshot"])
+            payload.pop("script_options")
+            settings.pop("script_options", None)
+            connection.execute("UPDATE job SET payload=?,settings_snapshot=? WHERE id=?",
+                               (json.dumps(payload, ensure_ascii=False), json.dumps(settings), job["id"]))
+        plan_action(client, project, "revise", target="plot", instruction="第1章をもう少し穏やかに。")
+        revised = claim(client, worker)
+        assert "script_options" not in revised["payload"]

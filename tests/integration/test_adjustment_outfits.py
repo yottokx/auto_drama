@@ -95,3 +95,13 @@ def test_look_is_regenerated_from_the_chosen_base_portrait_and_replaced(tmp_path
         _, look = look_of(script)
         asset = next(item for item in script["assets"] if item["id"] == look["image_asset_id"])
         assert client.get(f"/api/artifacts/{asset['artifact_id']}/content").content == png(77)
+        # The finished work keeps listing the edited look it publishes, even once the cast review drops it.
+        draft = client.get(f"/api/m2/projects/{project}").json()["draft"]
+        name = draft["characters"][0]["result"]["name"]
+        look_name = next(row["name"] for row in draft["characters"][0]["outfits"] if row["id"] == "look1")
+        removed = client.post(f"/api/m2/projects/{project}/actions", json={
+            "action": "delete-outfit", "expected_revision": draft["revision"],
+            "character_id": "character-1", "outfit_id": "look1"})
+        assert removed.status_code == 200, removed.text
+        usage = client.get(f"/api/image-editing/projects/{project}").json()
+        assert {"name": name, "look": look_name} in usage["portraits"]

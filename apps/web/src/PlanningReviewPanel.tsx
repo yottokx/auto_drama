@@ -104,7 +104,8 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
   const remoteStepChanged = serverStep !== 'planning-review'
   const { generating, failed } = planningActivity(planning)
   const activePlanningJob = planning?.jobs.find(job => job.id === planning.active_job_id)
-  const busy = mutating || Boolean(generating)
+  // While supporting portraits and voices are being made, the server refuses changes to the plan.
+  const busy = mutating || Boolean(generating) || planningAssetsPending(planning)
   const canApprove = canApprovePlanning(state, mutating || setupInvalidated) && (!imageEditing || cgStatus.canApprove)
   const selectedCharacter = state.content?.cast_plan.supporting_characters.find(character => character.id === characterId)?.id
     ?? state.content?.cast_plan.supporting_characters[0]?.id
@@ -260,7 +261,7 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
         </fieldset></>}</div></section>
       </>}
       {notice && <p className="planning-notice" role="status">{notice}</p>}
-      {state.content && planningAssetsPending(planning) && <p className="planning-notice" role="status">サブキャラの立ち絵と声を生成中です。完了すると承認できます。</p>}
+      {state.content && planningAssetsPending(planning) && <p className="planning-notice" role="status">サブキャラの立ち絵と声を生成中です。完了すると、修正と承認ができます。</p>}
       {imageEditing ? <EventCgPolicyEditor key={`${projectId}:${cgEpoch}`} projectId={projectId} disabled={busy || state.conflict || setupInvalidated} readonly={false} onStatusChange={setCgStatus}/>
         : <p className="planning-notice">この作品は画像編集を使わない設定のため、イベントCGは作りません。</p>}
       {planning.status === 'approved' && <p className="planning-notice">もう一度承認すると、現在の本編制作を無効にして第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}

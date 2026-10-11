@@ -16,6 +16,9 @@ class ScriptOptions(Contract):
     target_body_characters: int = Field(default=4000, ge=1, le=100000, strict=True)
     target_dialogue_characters: int = Field(default=2000, ge=1, le=100000, strict=True)
     scene_tokens: SceneTokenPolicy = Field(default_factory=SceneTokenPolicy)
+    # Set for plans made since supporting characters are drawn and voiced during the plan review.
+    # Absent from a saved plan when unset, so earlier plans keep their identity and their wording.
+    planned_cast_appears: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def dialogue_fits_body(self):
@@ -33,7 +36,9 @@ class ScriptOptions(Contract):
     def for_stage(self, stage):
         scale = f"完成作品は会話中心のビジュアルノベル、1話（1章）約{self.target_episode_minutes}分を目指します。"
         if stage in {"cast", "chain", "allocation"}:
-            return scale + {
+            appears = ("キャスト計画のサブキャラは、全員がいずれかの出来事のstepsで実際に行動します。"
+                       "一度も登場しない人物を残しません。" if self.planned_cast_appears and stage == "chain" else "")
+            return scale + appears + {
                 "cast": "今回は人物と関係の設定だけを短い項目で作ります。本文や全台詞は書きません。",
                 "chain": "今回は出来事の因果を計画します。各行動・結果は具体的な1〜2文で、全台詞や演出論は書きません。",
                 "allocation": "今回は章の役割と少数の会話材料だけを短く記します。本文の分量をこの回答へ要求していません。",

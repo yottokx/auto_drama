@@ -68,7 +68,36 @@ def usage(coordinator, connection, project_id: str) -> dict:
             if kind == "image" and asset and _edited(connection, asset["artifact_id"]):
                 portraits.append({"name": character["name"], "look": "通常の姿"})
     selection = connection.execute(
-        "SELECT production_id FROM project_history_state WHERE project_id=?", (project_id,)).fetchone()
+        "SELECT production_id,edition_id FROM project_history_state WHERE project_id=?", (project_id,)).fetchone()
+    if selection and selection["edition_id"]:
+        # A finished work shows what its adjustments chose, which may differ from the cast review.
+        names = {character["id"]: (character.get("result") or character["input"]).get("name") or "キャラクター"
+                 for character in draft["characters"]}
+        looks = {(character["id"], outfit["id"]): outfit["name"]
+                 for character in draft["characters"] for outfit in character.get("outfits", [])}
+        if row is not None and row["content"]:
+            names.update({value["id"]: value["name"] for value in
+                          json.loads(row["content"])["cast_plan"]["supporting_characters"]})
+        if selection["production_id"]:
+            # The names the work was produced with outlast later changes to the cast review.
+            from .m3_service import M3Service
+
+            snapshot = M3Service(coordinator)._snapshot(
+                connection, required(connection, "m3_production", selection["production_id"]))
+            for character in snapshot["characters"]:
+                names[character["id"]] = character["result"]["name"]
+                looks.update({(character["id"], outfit["id"]): outfit["name"] for outfit in character.get("outfits", [])})
+        edition = required(connection, "publication_edition", selection["edition_id"])
+        for value in json.loads(edition["state"])["characters"]:
+            if not value.get("image_candidate_id"):
+                continue
+            candidate = required(connection, "adjustment_candidate", value["image_candidate_id"])
+            if not _edited(connection, candidate["artifact_id"]):
+                continue
+            cid, _, oid = value["character_id"].partition("--")
+            item = {"name": names.get(cid, cid), "look": looks.get((cid, oid), oid) if oid else "通常の姿"}
+            if item not in portraits:
+                portraits.append(item)
     event_cgs = 0
     if selection and selection["production_id"]:
         event_cgs = connection.execute(
