@@ -16,7 +16,9 @@ import { llmProgressItems } from './productionState'
 import type { CharacterBrief, WizardStep } from './wizardState'
 import './planning.css'
 
-export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, mainApprovalId, setupApproved, serverStep, onRefresh, onReloadSetup, onPendingChange, onApproved, onBack, onProduction }: {
+export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharacters, outfitNames, mainApprovalId, setupApproved, serverStep, onRefresh, onReloadSetup, onPendingChange, onApproved, onBack, onProduction }: {
+  /** False when the work forgoes the image editing model, and so has no event CGs to set up. */
+  imageEditing?: boolean
   projectId: string; mainCharacters: CharacterBrief[]; outfitNames?: OutfitNames; onPendingChange: (pending: boolean) => void
   mainApprovalId: string | null; setupApproved: boolean; serverStep: WizardStep
   onRefresh: () => Promise<void>; onReloadSetup: () => void
@@ -103,7 +105,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
   const { generating, failed } = planningActivity(planning)
   const activePlanningJob = planning?.jobs.find(job => job.id === planning.active_job_id)
   const busy = mutating || Boolean(generating)
-  const canApprove = canApprovePlanning(state, mutating || setupInvalidated) && cgStatus.canApprove
+  const canApprove = canApprovePlanning(state, mutating || setupInvalidated) && (!imageEditing || cgStatus.canApprove)
   const selectedCharacter = state.content?.cast_plan.supporting_characters.find(character => character.id === characterId)?.id
     ?? state.content?.cast_plan.supporting_characters[0]?.id
   const editing = Boolean(editBaselines[tab])
@@ -147,7 +149,7 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
       } else {
         const body = planningAction(current.current, action, { target, characterId: selectedCharacter, ...(chapter ? { chapterNumber: Number(chapter) } : {}) })
         result = await request<PlanningResponse>(`${endpoint}/actions`, controller.signal, action === 'approve'
-          ? { ...body, reconfirm: planning?.status === 'approved', expected_event_cg_policy_revision: cgStatus.policy!.revision } : body)
+          ? { ...body, reconfirm: planning?.status === 'approved', ...(imageEditing ? { expected_event_cg_policy_revision: cgStatus.policy!.revision } : {}) } : body)
       }
       if (!mounted.current || controller.signal.aborted) return
       accept(result, true, action === 'revise')
@@ -259,7 +261,8 @@ export function PlanningReviewPanel({ projectId, mainCharacters, outfitNames, ma
       </>}
       {notice && <p className="planning-notice" role="status">{notice}</p>}
       {state.content && planningAssetsPending(planning) && <p className="planning-notice" role="status">サブキャラの立ち絵と声を生成中です。完了すると承認できます。</p>}
-      <EventCgPolicyEditor key={`${projectId}:${cgEpoch}`} projectId={projectId} disabled={busy || state.conflict || setupInvalidated} readonly={false} onStatusChange={setCgStatus}/>
+      {imageEditing ? <EventCgPolicyEditor key={`${projectId}:${cgEpoch}`} projectId={projectId} disabled={busy || state.conflict || setupInvalidated} readonly={false} onStatusChange={setCgStatus}/>
+        : <p className="planning-notice">この作品は画像編集を使わない設定のため、イベントCGは作りません。</p>}
       {planning.status === 'approved' && <p className="planning-notice">もう一度承認すると、現在の本編制作を無効にして第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}
       <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' && <button className="button button-light" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button>}<button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button></div>
     </>}

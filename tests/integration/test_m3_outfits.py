@@ -38,7 +38,7 @@ def test_planned_look_is_published_and_changed_on_stage(tmp_path):
         assert chapters[0]["outfit_appearances"][0]["outfit_id"] == "look1"
         job = claim(client, worker)
         assert job["kind"] == "m3_narrative"
-        assert job["payload"]["approval_snapshot"]["characters"][0]["outfits"][0]["id"] == "look1"
+        assert job["payload"]["approval_snapshot"]["characters"][0]["outfits"][-1]["id"] == "look1"
         result = narrative(job["payload"]["approval_snapshot"])
         first, second = result["scenes"]
         first["plan"]["outfits"] = [{"character_id": "character-1", "outfit_id": "default", "change_to": "look1"}]

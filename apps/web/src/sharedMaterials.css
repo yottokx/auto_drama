@@ -27,4 +27,3 @@
 .material-picker input { position: absolute; opacity: 0; }
 .material-picker label:focus-within { outline: 2px solid #7f9a6b; outline-offset: 2px; }
 .material-picker img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; background: #f4f5ec; border-radius: 5px; }
-.edit-model-tag { display: inline-block; padding: 1px 7px; border: 1px solid #d9d2bd; border-radius: 999px; background: #f7f3e6; color: #8a7d57; font-size: 10px; font-weight: 400; line-height: 1.7; white-space: nowrap; vertical-align: middle; }

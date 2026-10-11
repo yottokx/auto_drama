@@ -325,6 +325,13 @@ class AdoptImage(Action):
     artifact_id: ArtifactRef
 
 
+class SetImageEditing(Action):
+    """Whether this work may use the image editing model at all."""
+
+    action: Literal["set-image-editing"]
+    enabled: bool = Field(strict=True)
+
+
 class GoTo(Action):
     action: Literal["go-to"]
     step: Step
@@ -360,6 +367,7 @@ M2Action = Annotated[
     | OutfitAction
     | EditImage
     | AdoptImage
+    | SetImageEditing
     | GoTo
     | SaveRelationships
     | GenerateRelationships

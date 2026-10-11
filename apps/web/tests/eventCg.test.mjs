@@ -58,6 +58,7 @@ const { EventCgStatus, EventCgPlanDetails } = await import(await moduleUrl('Prod
   react: hooksUrl, './api': apiUrl, './eventCgState': stateUrl, './productionState': productionStateUrl,
   './Icons': dataUrl('export const Icon = () => null'), './PlotReview': dataUrl('export const PlotReview = () => null'),
   './GenerationProgress': dataUrl('export const GenerationProgress = () => null'),
+  './ImageEditingNotice': dataUrl('export const ImageEditingNotice = () => null'),
 }))
 
 const policy = { max_cgs: 0, max_variants_per_cg: 0, revision: 3 }

@@ -85,7 +85,7 @@ export function EventCgPolicyEditor({ projectId, disabled, readonly, onStatusCha
   }
 
   return <section className="event-cg-policy" aria-label="イベントCGの自動生成">
-    <div className="event-cg-heading"><h3>イベントCG</h3><span>任意</span></div>
+    <div className="event-cg-heading"><h3>イベントCG<span className="edit-model-tag">画像編集</span></h3><span>任意</span></div>
     <p>AIが印象的な場面を選び、人物の立ち絵を参照した一枚絵を生成します。生成にはQwen-Image-2.1の準備と、追加の時間・メモリが必要です。</p>
     {!policy ? <p role="status">CG設定を読み込み中…</p> : <>
       <fieldset className="event-cg-fields" disabled={disabled || readonly || saving || conflict}>

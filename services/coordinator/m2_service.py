@@ -561,9 +561,40 @@ class M2Service:
             if not outfit.get("handPicked"):
                 outfit["imagePendingChanges"] = True
 
-    def _qwen_ready(self, connection) -> bool:
+    def _qwen_ready(self, connection, draft: dict | None = None) -> bool:
+        from .image_editing import enabled
+
+        # A work that forgoes the editing model behaves as if no worker offered it.
+        if draft is not None and not enabled(draft):
+            return False
         return any("m2_outfit_image" in json.loads(worker["capabilities"]) for worker in connection.execute(
             "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.clock() - 90,)))
+
+    @staticmethod
+    def _approved_outfits(character: dict, reference) -> list[dict]:
+        """The looks an approval hands to the story: what each shows, not how it was requested."""
+        rows = list(character["outfits"])
+        if not any(row["id"] == DEFAULT_OUTFIT for row in rows):
+            rows.insert(0, {"id": DEFAULT_OUTFIT, "name": "通常の姿", "description": "", "occasion": ""})
+        result = []
+        for outfit in rows:
+            base = outfit["id"] == DEFAULT_OUTFIT
+            # The base look is told as the character's appearance, so the story can tell its
+            # clothes from those of the other looks.
+            description = (outfit.get("generatedDescription") or outfit["description"]
+                           or (character["result"]["appearance"][:400] if base else ""))
+            result.append({
+                "id": outfit["id"], "name": outfit["name"], "description": description,
+                "occasion": outfit["occasion"] or outfit.get("generatedOccasion") or "",
+                **({} if base else {"image": reference(outfit["imageArtifactId"])})})
+        return result
+
+    @staticmethod
+    def _uses_looks(draft: dict) -> bool:
+        """Alternate looks exist only through the editing model; without it the story has none."""
+        from .image_editing import enabled
+
+        return enabled(draft)
 
     @classmethod
     def _stale_looks(cls, character: dict) -> list[dict]:
@@ -622,7 +653,7 @@ class M2Service:
     def _outfit_tasks(self, connection, project_id: str, state: dict, character: dict) -> list[dict]:
         """Looks wished for in the brief are drawn as soon as their base portrait is ready."""
         if (not character["imageArtifactId"] or character["imagePendingChanges"] or character["pendingChanges"]
-                or not self._qwen_ready(connection)):
+                or not self._qwen_ready(connection, state["draft"])):
             return []
         queued = {(item["character_id"], item["outfit"]["id"]) for item in state["queue"]
                   if item["kind"] == "m2_outfit_image"}
@@ -743,7 +774,7 @@ class M2Service:
                 outfit.update(imageArtifactId=record["id"], imagePendingChanges=False, handPicked=True,
                               baseImageArtifactId=character["imageArtifactId"])
             return
-        if not self._qwen_ready(connection):
+        if not self._qwen_ready(connection, state["draft"]):
             raise ServiceError(409, "絵をもとにした修正には、画像編集の準備ができたWorkerが必要です。")
         current = character["imageArtifactId"] if base else outfit.get("imageArtifactId")
         source = body.base_artifact_id or current
@@ -821,8 +852,8 @@ class M2Service:
             outfit.pop("materialImageId", None)
         if not character["imageArtifactId"] or character["imagePendingChanges"] or character["pendingChanges"]:
             raise ServiceError(409, "現在の設定を反映した立ち絵を先に生成してください。")
-        if not self._qwen_ready(connection):
-            raise ServiceError(409, "別バージョンの立ち絵にはQwenの準備済みWorkerが必要です。Workerを起動してください。")
+        if not self._qwen_ready(connection, state["draft"]):
+            raise ServiceError(409, "別バージョンの立ち絵には、画像編集の準備ができたWorkerが必要です。")
         if base:
             descriptor = self._outfit_descriptor(connection, project_id, character,
                                                  outfit)
@@ -1115,6 +1146,13 @@ class M2Service:
                     draft["worldConfirmationArtifactId"] = record["id"]
                 draft["worldConfirmed"], draft["step"] = True, "character-review"
                 self._queue_characters(state, force=reconfirm, connection=connection, project_id=project_id)
+            elif name == "set-image-editing":
+                # A choice about the whole work, open from the first brief on.
+                draft["imageEditing"] = body.enabled
+                if body.enabled:
+                    # Looks that waited while editing was off are drawn now.
+                    for character in draft["characters"]:
+                        state["queue"].extend(self._outfit_tasks(connection, project_id, state, character))
             else:
                 self._world_confirmed(draft)
                 self._character_action(connection, project_id, state, body)
@@ -1215,7 +1253,7 @@ class M2Service:
     def _needs_cast_generation(self, draft: dict) -> bool:
         return any(
             not character["result"] or character["pendingChanges"] or self._missing_media(character)
-            or self._stale_looks(character)
+            or (self._uses_looks(draft) and self._stale_looks(character))
             for character in draft["characters"]
         ) or (
             len(draft["characters"]) >= 2
@@ -1431,7 +1469,7 @@ class M2Service:
             raise ServiceError(
                 409, "全キャラクターの設定・立ち絵・音声を生成して確認してください。"
             )
-        if any(self._stale_looks(value) for value in draft["characters"]):
+        if self._uses_looks(draft) and any(self._stale_looks(value) for value in draft["characters"]):
             raise ServiceError(409, "別バージョンの立ち絵を現在の立ち絵から生成するか、削除してください。")
         relationships = draft["relationships"]
         if len(draft["characters"]) >= 2:
@@ -1482,16 +1520,8 @@ class M2Service:
                     "image": reference(value["imageArtifactId"]),
                     "voice": reference(value["voiceArtifactId"]),
                     # Present only for a character with an alternate look.
-                    **({"outfits": [
-                        {**{key: outfit[key] for key in ("id", "name", "description", "occasion")},
-                         # The story is told what the adopted image shows, not how it was requested.
-                         **({"description": outfit["generatedDescription"]}
-                            if outfit.get("generatedDescription") else {}),
-                         **({"occasion": outfit["generatedOccasion"]}
-                            if not outfit["occasion"] and outfit.get("generatedOccasion") else {}),
-                         **({"image": reference(outfit["imageArtifactId"])}
-                            if outfit["id"] != DEFAULT_OUTFIT else {})}
-                        for outfit in value["outfits"]]} if self._alternates(value) else {}),
+                    **({"outfits": self._approved_outfits(value, reference)}
+                       if self._alternates(value) and self._uses_looks(draft) else {}),
                 }
                 for value in draft["characters"]
             ],

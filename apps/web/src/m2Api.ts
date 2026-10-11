@@ -21,7 +21,7 @@ export type RelationshipPair = { characterIds: [string, string]; summary: string
 export type Relationships = { result: { pairs: RelationshipPair[] } | null; artifactId: string | null; version: number | null; pendingChanges: boolean }
 export type M2Draft = {
   revision: number; step: WizardStep; worldInput: WorldBrief; worldResult: WorldBrief | null
-  materials?: { id: string; name: string; description: string }[]
+  materials?: { id: string; name: string; description: string }[]; imageEditing?: boolean
   worldConfirmed: boolean; worldPendingChanges?: boolean; characters: M2Character[]
   approved: boolean; hasProduction?: boolean; planningRequired?: boolean; planApproved?: boolean
   approval: Record<string, unknown> | null; requests: RevisionRequest[]

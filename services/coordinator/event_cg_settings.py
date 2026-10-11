@@ -64,7 +64,11 @@ class EventCgSettings:
         policy = self.policy(connection, project_id)
         if expected_revision is not None and expected_revision != policy["revision"]:
             raise ServiceError(409, "イベントCG設定が更新されました。最新の設定を確認してください。")
-        if policy["max_cgs"] == 0:
+        from .image_editing import enabled
+        from .m2_service import M2Service
+
+        # An event CG is drawn by the editing model; a work that forgoes it has none.
+        if policy["max_cgs"] == 0 or not enabled(M2Service._load(connection, project_id)["draft"]):
             return EventCgPolicy(planning_version=LENIENT_RULES_VERSION,
                                  max_variants_per_cg=policy["max_variants_per_cg"])
         settings = self.settings(connection)

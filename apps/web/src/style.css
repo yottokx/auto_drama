@@ -47,3 +47,13 @@
 @media(max-width:570px){.character-description{font-size:11px}.character-role{font-size:9px}.character-voice>h4{font-size:11px}.voice-description{font-size:10px}.voice-edit{font-size:9px}.audio-caption{font-size:8px}.lock-button{font-size:9px}.cast-footnote>p{font-size:10px}.world-copy>p{font-size:12px}.world-copy>h3{font-size:16px}.page-heading p{font-size:11px}}
 .skip-link{top:0;left:16px;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%)}
 .skip-link:focus{top:8px;width:auto;height:auto;padding:12px;clip-path:none}
+/* Marks an operation or picture of the image editing model; hidden when that model needs no care. */
+.edit-model-tag { display: inline-block; margin: 0 6px; padding: 1px 7px; border: 1px solid #d9d2bd; border-radius: 999px; background: #f7f3e6; color: #8a7d57; font-size: 10px; font-weight: 400; line-height: 1.7; white-space: nowrap; vertical-align: middle; }
+:root[data-edit-caution="off"] .edit-model-tag { display: none; }
+.image-editing-notice { margin: 18px 0; padding: 12px 16px; border: 1px solid #e2dcc8; border-radius: 8px; background: #fbf9f0; color: #6f6750; font-size: 12px; line-height: 1.9; }
+.image-editing-notice > summary { cursor: pointer; }
+.image-editing-notice ul { margin: 8px 0 8px 22px; padding: 0; }
+.image-editing-notice p { margin: 6px 0 0; }
+.image-editing-setting { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0 0; padding: 14px 16px; border: 1px solid #e3e6d8; border-radius: 8px; background: #fbfcf6; font-size: 13px; color: #56614b; line-height: 1.8; cursor: pointer; }
+.image-editing-setting input { margin-top: 5px; }
+.image-editing-setting small { display: block; font-size: 11px; color: #797464; }

@@ -10,7 +10,7 @@ export type MaterialImage = {
   summary: string | null; category: 'outfit' | 'item' | null; error: string | null
 }
 export type Material = { id: string; name: string; description: string; images: MaterialImage[] }
-type MaterialsResponse = { project_id: string; materials: Material[]; can_draw: boolean; can_edit: boolean }
+type MaterialsResponse = { project_id: string; materials: Material[]; can_draw: boolean; can_edit: boolean; edit_caution?: boolean }
 /** A finished portrait a design can be taken from. */
 export type MaterialPerson = { id: string; name: string; outfitId?: string; planned?: boolean }
 type Source = { image_id?: string; character_id?: string; outfit_id?: string; planned?: boolean }
@@ -35,7 +35,7 @@ export function useMaterials(projectId: string | null) {
       const version = sequence.current
       try {
         const next = await request<MaterialsResponse>(url, controller.signal)
-        if (!stopped && version === sequence.current) { setState(next); setError('') }
+        if (!stopped && version === sequence.current) { setState(next); setError(''); document.documentElement.dataset.editCaution = next.edit_caution === false ? 'off' : 'on' }
       } catch (reason) {
         if (!stopped && !controller.signal.aborted) setError(errorMessage(reason))
       } finally {

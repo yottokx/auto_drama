@@ -245,3 +245,69 @@ def test_a_picture_is_edited_in_words_and_an_earlier_one_is_taken_back(tmp_path)
         action(client, project, "approve")
         action(client, project, "adopt-image", status=404, character_id="character-1", outfit_id="default",
                artifact_id="0" * 32)
+
+
+def editing(client, project_id):
+    response = client.get(f"/api/image-editing/projects/{project_id}")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_edited_pictures_are_listed_and_a_work_can_forgo_the_editing_model(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        project_id = project["project"]["id"]
+        _anima, qwen = workers(client)
+        assert editing(client, project_id) == {
+            "project_id": project_id, "enabled": True, "model": "Qwen-Image-2.1", "caution": True,
+            "portraits": [], "event_cgs": 0}
+        action(client, project, "save-outfit", character_id="character-1", outfit=LOOK)
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")
+        job = claim(client, qwen)
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        action(client, project, "edit-image", character_id="character-1", outfit_id="default", instruction="髪を短く")
+        job = claim(client, qwen)
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        job = claim(client, qwen)
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        name = detail(client, project)["draft"]["characters"][0]["result"]["name"]
+        assert editing(client, project_id)["portraits"] == [
+            {"name": name, "look": "通常の姿"}, {"name": name, "look": "浴衣"}]
+        # Without the editing model the look is neither required nor part of the approval.
+        off = action(client, project, "set-image-editing", enabled=False)
+        assert off["draft"]["imageEditing"] is False and not editing(client, project_id)["enabled"]
+        action(client, project, "generate-outfit", status=409, character_id="character-1", outfit_id="look1")
+        action(client, project, "edit-image", status=409, character_id="character-1", outfit_id="default",
+               instruction="髪を長く")
+        approved = action(client, project, "approve")
+        assert "outfits" not in approved["draft"]["approval"]["characters"][0]
+        # The edited base portrait is still in use, and the list keeps saying so.
+        assert editing(client, project_id)["portraits"][0] == {"name": name, "look": "通常の姿"}
+
+
+def test_the_editing_model_can_be_forgone_before_the_world_exists(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        from tests.integration.test_m2 import create
+
+        project = create(client, prompt="異星の物語を自由に考える。")
+        off = action(client, project, "set-image-editing", enabled=False)
+        assert off["draft"]["imageEditing"] is False and off["draft"]["step"] == "world-input"
+
+
+def test_a_work_without_the_editing_model_has_no_event_cgs_even_when_some_are_allowed(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        from tests.integration.planning_fixtures import complete_and_approve_plan
+
+        project, _ = ready(client)
+        project_id = project["project"]["id"]
+        saved = client.put(f"/api/event-cg/projects/{project_id}/policy",
+                           json={"max_cgs": 2, "max_variants_per_cg": 0, "expected_revision": 0})
+        assert saved.status_code == 200, saved.text
+        action(client, project, "set-image-editing", enabled=False)
+        action(client, project, "approve")
+        # With CGs allowed and no editing worker, approval would stop; forgoing the model lifts that.
+        complete_and_approve_plan(client, project)
+        with client.app.state.coordinator.db.transaction() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM event_cg_production").fetchone()[0] == 0
+            kinds = {row[0] for row in connection.execute("SELECT kind FROM job WHERE project_id=?", (project_id,))}
+        assert not {kind for kind in kinds if "event_cg" in kind}

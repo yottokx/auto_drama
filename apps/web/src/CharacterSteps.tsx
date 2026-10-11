@@ -3,6 +3,7 @@ import { Icon, type IconName } from './Icons'
 import { Dialog, LockButton } from './PreviewComponents'
 import type { CharacterBrief, RevisionRequest, RevisionScope } from './wizardState'
 import { alternateLooks, BaseLookName, BriefLooks, LookDialog, LookPanel, LookTabs, type LookWish, type MaterialWish } from './CharacterOutfits'
+import { ImageEditingNotice } from './ImageEditingNotice'
 import { EditTag, ImageEditDialog, MaterialPicker, readySheets, SharedMaterials, useMaterials, type ImageEdit, type MaterialPerson, type PortraitVersion } from './SharedMaterials'
 import { CharacterVoiceTrials } from './CharacterVoiceTrials'
 import { ImageGenerationDetails } from './ImageGenerationDetails'
@@ -286,6 +287,7 @@ export function CharacterReview({ materialsProjectId = null, characters, request
     </div>
 
     {materialsProjectId !== null && live && <SharedMaterials store={materialStore} people={materialPeople} disabled={busy}/>}
+    {materialsProjectId !== null && live && <ImageEditingNotice projectId={materialsProjectId} refreshKey={characters.map(item => previewAssets?.[item.id]?.imageArtifactId ?? '').join(':') + ':' + characters.map(item => (previewAssets?.[item.id]?.outfits ?? []).map(outfit => outfit.imageArtifactId ?? '').join(',')).join(':')}/>}
 
     {relationshipResults}
 

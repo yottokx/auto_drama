@@ -218,7 +218,7 @@ class PlanningService:
             material = MaterialService(self.coordinator).reference(connection, project_id, body.material_image_id)
             if material is None:
                 raise ServiceError(409, "着せる共通の素材の絵がまだありません。")
-            if not M2Service(self.coordinator)._qwen_ready(connection):
+            if not M2Service(self.coordinator)._qwen_ready(connection, _state["draft"]):
                 raise ServiceError(409, "着せ替えには、画像編集の準備ができたWorkerが必要です。")
             asset_id, identifier, run_id, now = uuid4().hex, uuid4().hex, uuid4().hex, self.clock()
             profile = M2Service(self.coordinator)._profile(connection)

@@ -19,6 +19,13 @@ function MaterialSelect({ label, value, materials, disabled, onChange }: { label
     <option value="">着せない</option>{materials.map(material => <option key={material.id} value={material.id}>{material.name}</option>)}</select></label>
 }
 
+/** STEP1: whether this work may use the image editing model at all. */
+export function ImageEditingSetting({ enabled, disabled = false, onChange }: { enabled: boolean; disabled?: boolean; onChange: (enabled: boolean) => void }) {
+  return <label className="image-editing-setting"><input type="checkbox" checked={!enabled} disabled={disabled} onChange={event => onChange(!event.target.checked)}/>
+    <span>この作品では画像編集を使わない<span className="edit-model-tag">画像編集</span>
+      <small>別バージョン、共通の素材の着せ替え、絵をもとにした修正、イベントCGを作りません。立ち絵と背景は、文章から描くモデルだけで作ります。</small></span></label>
+}
+
 /** STEP1: outfits and items that several characters share. Their pictures are made with the world. */
 export function BriefMaterials({ materials, onChange, disabled = false }: { materials: MaterialWish[]; onChange: (materials: MaterialWish[]) => void; disabled?: boolean }) {
   return <details className="char-detail-inputs char-brief-looks" open={materials.length > 0 || undefined}>
@@ -58,7 +65,7 @@ export function BriefLooks({ looks: all, onChange: emit, disabled = false, mater
     <summary><span><Icon name="users" size={16}/>{materials.length ? '服装（共通の素材・別バージョン）を指定する' : '別バージョン（服装・変身など）を指定する'}</span><span className="char-optional">任意{looks.length > 0 && `・${looks.length}件`}</span><Icon name="chevron" size={14}/></summary>
     <div>
       {materials.length > 0 && <MaterialSelect label="通常の姿で着る共通の素材" value={worn} materials={materials} disabled={disabled} onChange={material => onChange(looks, material)}/>}
-      <p className="field-hint">別バージョンは同じ人物の別の姿です。ここではどんな姿かを伝えるだけで、立ち絵はキャラクターの生成後に自動で作ります。指定した姿は本編のどこかで必ず登場します。</p>
+      <p className="field-hint"><span className="edit-model-tag">画像編集</span>別バージョンは同じ人物の別の姿です。ここではどんな姿かを伝えるだけで、立ち絵はキャラクターの生成後に自動で作ります。指定した姿は本編のどこかで必ず登場します。</p>
       {looks.map((look, index) => <fieldset className="char-inline-editor char-brief-look" key={look.id ?? `new-${index}`} disabled={disabled} aria-label={`別バージョン ${index + 1}`}>
         <LookFields value={look} disabled={disabled} materials={materials} onChange={patch => onChange(looks.map((item, position) => position === index ? { ...item, ...patch } : item))}/>
         <div className="char-edit-actions"><button type="button" className="button button-light" onClick={() => onChange(looks.filter((_, position) => position !== index))}>この別バージョンを削除</button></div>
@@ -89,7 +96,7 @@ export function LookDialog({ characterName, busy, onSave, onClose }: {
 }) {
   const [value, setValue] = useState<LookWish>(empty)
   return <Dialog title={`${characterName}の別バージョンを追加`} onClose={onClose}>
-    <p className="dialog-intro">同じ人物の別の姿を、いまの立ち絵をもとに作ります。作成した別バージョンは本編のどこかで必ず登場し、場面に合わせて立ち絵が切り替わります。</p>
+    <p className="dialog-intro"><span className="edit-model-tag">画像編集</span>同じ人物の別の姿を、いまの立ち絵をもとに作ります。作成した別バージョンは本編のどこかで必ず登場し、場面に合わせて立ち絵が切り替わります。</p>
     <form className="char-step" onSubmit={event => { event.preventDefault(); if (!busy && value.name.trim()) void onSave({ ...value, name: value.name.trim() }).then(saved => { if (saved) onClose() }) }}>
       <LookFields value={value} disabled={busy} onChange={patch => setValue(current => ({ ...current, ...patch }))}/>
       <div className="dialog-actions"><button type="button" className="button button-light" onClick={onClose}>キャンセル</button><button type="submit" className="button button-primary" disabled={busy || !value.name.trim()}>追加して立ち絵を作る</button></div>
@@ -155,7 +162,7 @@ export function LookPanel({ characterId, characterName, outfit, baseImageArtifac
       {wish.trim() && <details className="char-input-reference"><summary>入力した指示<Icon name="chevron" size={13}/></summary><p>{wish}</p></details>}
     </>}
     <div className="char-asset-actions"><span>素材の作り直し</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={() => setRetake(wish)}><Icon name="refresh" size={14}/>{outfit.imageArtifactId ? 'この姿の立ち絵を作り直す' : 'この姿の立ち絵を作る'}</button></div>
-    <p className="char-retake-hint">通常の姿の立ち絵をもとに、顔や髪を保ったまま服装を描き直します。</p>
+    <p className="char-retake-hint">通常の姿の立ち絵をもとに、顔や髪を保ったまま服装を描き直します。<span className="edit-model-tag">画像編集</span></p>
     {onEdit && <div className="char-asset-actions"><span>部分的な修正</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={onEdit}><Icon name="edit" size={14}/>絵をもとに直す</button></div>}
     {outfit.handPicked && outfit.baseImageArtifactId !== baseImageArtifactId && <p className="char-retake-hint">この姿は手で直した絵なので、通常の姿の立ち絵が変わっても作り直しません。</p>}
     {onDress && <div className="char-asset-actions"><span>共通の素材</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={onDress}><Icon name="users" size={14}/>共通の素材を着せる</button></div>}

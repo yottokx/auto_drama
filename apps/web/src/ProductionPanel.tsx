@@ -3,6 +3,7 @@ import { errorMessage, request } from './api'
 import { Icon } from './Icons'
 import { PlotReview } from './PlotReview'
 import { GenerationProgress } from './GenerationProgress'
+import { ImageEditingNotice } from './ImageEditingNotice'
 import { eventCgBudgetCompleted, eventCgImagePlanText, type EventCgSummary } from './eventCgState'
 import { chapterGenerationProgress, chapterStatusNames, coordinatorNeedsRestart, jobNames, productionCurrentProgress, productionView, serverRestartMessage, type CoordinatorHealth, type Production, type ProductionResponse } from './productionState'
 import './production.css'
@@ -137,6 +138,7 @@ function ProductionPanelContent({ projectId, approved, chapterCount, onPendingCh
     <div className="production-heading"><span className="production-symbol"><Icon name={view.publishedCount ? 'play' : 'film'} size={25}/></span><div><p className="eyebrow">YOUR STORY · {view.chapters.length || chapterCount} CHAPTERS</p><h2 id="production-heading">{view.title}</h2></div></div>
     <p className="production-description">{needsServerRestart ? '再起動後、この画面で続きの章の制作を再開できます。完成済みの章は保持されます。' : view.historyFrozen ? '履歴から復元した状態です。自動では再開しません。完成した版を使う場合は、ページ下部の「変更履歴・元に戻す」から選んでください。' : view.complete ? 'すべての章の台本・素材・組み立てが完成しました。各章を別のタブで鑑賞・書き出しできます。' : '完成した章から鑑賞でき、鑑賞中も後続の章を制作します。プロットと前章までの本文を引き継いで進めるため、追加の承認は必要ありません。'}</p>
     {needsServerRestart && <p className="m2-job-error" role="alert">{serverRestartMessage}</p>}
+    <ImageEditingNotice projectId={projectId} refreshKey={view.publishedCount}/>
     {error && <p className="m2-job-error" role="alert">{error}</p>}
     {!loaded && !error && <p role="status">制作状況を読み込み中…</p>}
     {production?.event_cg && <EventCgStatus value={production.event_cg}/>}

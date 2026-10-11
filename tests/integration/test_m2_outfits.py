@@ -169,7 +169,10 @@ def test_look_wished_for_in_the_brief_is_drawn_after_the_base_portrait(tmp_path)
         assert not current["draft"]["characters"][0]["outfits"][0]["imagePendingChanges"]
         assert claim(client, qwen) is None
         approved = action(client, project, "approve")
-        assert approved["draft"]["approval"]["characters"][0]["outfits"][0]["id"] == "look1"
+        assert approved["draft"]["approval"]["characters"][0]["outfits"][-1]["id"] == "look1"
+        # The story is told what the base look shows, taken from the character's appearance.
+        base = approved["draft"]["approval"]["characters"][0]["outfits"][0]
+        assert base["id"] == "default" and base["description"] == approved["draft"]["characters"][0]["result"]["appearance"]
         # Retaking the base portrait redraws the look from it without being asked.
         action(client, project, "retake", character_id="character-1", scope="image-retake")
         run_one(client, identifier, "m2_image")

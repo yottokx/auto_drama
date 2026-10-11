@@ -139,8 +139,18 @@ class MaterialService:
                     "error": job["error"] if job and job["status"] == "failed" else None})
             materials.append({"id": material["id"], "name": material["name"], "brief_id": material["brief_id"],
                               "description": material["description"], "images": images})
+        from .image_editing import edit_model
+
         return {"project_id": project_id, "materials": materials,
-                "can_draw": self._capable(connection, TEXT_KIND), "can_edit": self._capable(connection, EDIT_KIND)}
+                "can_draw": self._capable(connection, TEXT_KIND),
+                "can_edit": self._capable(connection, EDIT_KIND) and self._editing(connection, project_id),
+                "edit_caution": bool(edit_model()["output_caution"])}
+
+    @staticmethod
+    def _editing(connection, project_id) -> bool:
+        from .image_editing import enabled
+
+        return enabled(M2Service._load(connection, project_id)["draft"])
 
     def project(self, project_id):
         with self.db.transaction() as connection:
@@ -190,6 +200,8 @@ class MaterialService:
         from .llm_settings import execution_settings
 
         kind = TEXT_KIND if image["mode"] == "text" else EDIT_KIND
+        if kind == EDIT_KIND and not self._editing(connection, project_id):
+            raise ServiceError(409, "この作品は画像編集を使わない設定です。")
         if not self._capable(connection, kind):
             raise ServiceError(409, "立ち絵を作れるWorkerを起動してください。" if kind == TEXT_KIND
                                else "絵をもとにした作成には、画像編集の準備ができたWorkerが必要です。")

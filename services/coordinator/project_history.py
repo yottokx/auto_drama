@@ -25,6 +25,8 @@ LABELS = {
     "save-characters": "メインキャラの指示を保存", "generate-characters": "メインキャラを生成",
     "revise-character": "キャラクターを修正", "edit-character": "キャラクターを編集",
     "toggle-lock": "キャラクターの固定を変更", "retake": "素材をリテイク",
+    "edit-image": "絵をもとに修正", "adopt-image": "以前の絵に戻す",
+    "set-image-editing": "画像編集を使うかを変更",
     "save-relationships": "関係性の指示を保存", "generate-relationships": "関係性を生成・修正",
     "clone-voice": "台詞の音声を試す", "approve": "メインキャラを確定・全体構成を生成",
 }
