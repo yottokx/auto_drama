@@ -147,6 +147,38 @@ export function SharedMaterials({ store, people, disabled = false }: { store: Ma
   </details>
 }
 
+export type PortraitVersion = { artifactId: string; url: string; outfitId: string }
+export type ImageEdit = { instruction: string; baseArtifactId?: string; materialImageId?: string }
+
+/** Redraw a look from any earlier picture of the person, saying only what should change. */
+export function ImageEditDialog({ title, history, currentId, outfitId, materials, busy = false, onEdit, onAdopt, onClose }: {
+  title: string; history: PortraitVersion[]; currentId: string | null; outfitId: string; materials: Material[]; busy?: boolean
+  onEdit: (edit: ImageEdit) => Promise<boolean>; onAdopt?: (artifactId: string) => Promise<boolean>; onClose: () => void
+}) {
+  // The current picture first; every other picture of this person, rejected ones included, after it.
+  const versions = [...history.filter(item => item.artifactId === currentId), ...history.filter(item => item.artifactId !== currentId)]
+  const [base, setBase] = useState(currentId ?? versions[0]?.artifactId ?? '')
+  const [instruction, setInstruction] = useState('')
+  const [material, setMaterial] = useState('')
+  const sheets = readySheets(materials)
+  const chosen = versions.find(item => item.artifactId === base)
+  // Going back is offered only for a picture that was made as this very look.
+  const canAdopt = Boolean(onAdopt && chosen && chosen.artifactId !== currentId && chosen.outfitId === outfitId)
+  const done = (result: Promise<boolean>) => void result.then(ok => { if (ok) onClose() })
+  return <Dialog title={title} wide onClose={onClose}>
+    <p className="dialog-intro">選んだ絵をもとに、伝えたところだけを描き直します。顔や髪、言っていない部分はそのまま残します。<EditTag/></p>
+    <fieldset className="material-modes"><legend>もとにする絵</legend>
+      <div className="material-picker" role="radiogroup" aria-label="もとにする絵">{versions.map((item, index) => <label key={item.artifactId} className={base === item.artifactId ? 'is-selected' : ''}>
+        <input type="radio" name="edit-base" checked={base === item.artifactId} onChange={() => setBase(item.artifactId)}/><img src={item.url} alt=""/><span>{item.artifactId === currentId ? 'いまの絵' : `以前の絵 ${index}`}</span></label>)}</div>
+    </fieldset>
+    <label className="field-label">どう直したいか<textarea autoFocus rows={3} maxLength={1000} value={instruction} placeholder="例：髪を肩までの長さに。リボンを赤に。少し微笑んだ表情に。" onChange={event => setInstruction(event.target.value)}/></label>
+    {sheets.length > 0 && <label className="field-label">共通の素材も着せる<span className="char-optional">任意</span><select value={material} onChange={event => setMaterial(event.target.value)}><option value="">着せない</option>{sheets.map(({ material: owner, image }) => <option key={image.id} value={image.id}>{imageName(owner, image)}</option>)}</select></label>}
+    <div className="dialog-actions"><button type="button" className="button button-light" onClick={onClose}>キャンセル</button>
+      {canAdopt && <button type="button" className="button button-light" disabled={busy} onClick={() => done(onAdopt!(base))}><Icon name="back" size={15}/>この絵に戻す</button>}
+      <button type="button" className="button button-primary" disabled={busy || !base || (!instruction.trim() && !material)} onClick={() => done(onEdit({ instruction: instruction.trim(), ...(base !== currentId ? { baseArtifactId: base } : {}), ...(material ? { materialImageId: material } : {}) }))}><Icon name="check" size={15}/>この内容で直す</button></div>
+  </Dialog>
+}
+
 /** Choose which finished sheet a look or portrait wears. */
 export function MaterialPicker({ title, materials, busy = false, onPick, onClose }: {
   title: string; materials: Material[]; busy?: boolean; onPick: (imageId: string) => Promise<boolean>; onClose: () => void

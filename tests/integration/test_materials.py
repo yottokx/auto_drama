@@ -173,6 +173,12 @@ def test_material_declared_in_the_brief_is_drawn_with_the_world_and_worn_without
         assert job["payload"]["reference_image"]["artifact_id"] == dressed != drawn
         assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
         assert claim(client, qwen) is None
+        # Going back to the undressed portrait is a choice; it is not dressed again behind the user's back.
+        action(client, project, "adopt-image", character_id="character-1", outfit_id="default", artifact_id=drawn)
+        job = claim(client, qwen)
+        assert job["payload"]["outfit"]["name"] == "私服" and job["payload"]["reference_image"]["artifact_id"] == drawn
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        assert claim(client, qwen) is None
         action(client, project, "approve")
 
 
@@ -202,3 +208,40 @@ def test_a_sheet_added_later_dresses_the_waiting_look(tmp_path):
         assert complete(client, job, anima, sheet_bundle(job)).status_code == 200
         job = claim(client, qwen)
         assert job["payload"]["outfit"]["name"] == "体操服" and job["payload"]["material_image"]["outfit_en"]
+
+
+def test_a_picture_is_edited_in_words_and_an_earlier_one_is_taken_back(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        _anima, qwen = workers(client)
+        first = detail(client, project)["draft"]["characters"][0]["imageArtifactId"]
+        action(client, project, "edit-image", status=422, character_id="character-1", outfit_id="default")
+        action(client, project, "edit-image", character_id="character-1", outfit_id="default", instruction="髪を短く")
+        job = claim(client, qwen)
+        assert job["payload"]["edit"] == {"instruction": "髪を短く"} and job["payload"]["outfit"]["id"] == "default"
+        assert job["payload"]["reference_image"]["artifact_id"] == first
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        character = detail(client, project)["draft"]["characters"][0]
+        edited = character["imageArtifactId"]
+        assert edited != first
+        history = detail(client, project)["imageHistory"]["character-1"]
+        assert [row["artifactId"] for row in history] == [edited, first]
+        # A look edited by hand from a rejected picture stays when the base portrait changes.
+        action(client, project, "save-outfit", character_id="character-1", outfit=LOOK)
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")
+        job = claim(client, qwen)
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        action(client, project, "edit-image", character_id="character-1", outfit_id="look1",
+               instruction="帯を赤に", base_artifact_id=first)
+        job = claim(client, qwen)
+        assert job["payload"]["reference_image"]["artifact_id"] == first
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        look = detail(client, project)["draft"]["characters"][0]["outfits"][-1]
+        assert look["handPicked"] and not look["imagePendingChanges"]
+        action(client, project, "adopt-image", character_id="character-1", outfit_id="default", artifact_id=first)
+        character = detail(client, project)["draft"]["characters"][0]
+        assert character["imageArtifactId"] == first and claim(client, qwen) is None
+        assert not character["outfits"][-1]["imagePendingChanges"]
+        action(client, project, "approve")
+        action(client, project, "adopt-image", status=404, character_id="character-1", outfit_id="default",
+               artifact_id="0" * 32)

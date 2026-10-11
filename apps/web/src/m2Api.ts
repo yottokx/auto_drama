@@ -12,7 +12,7 @@ export type M2Character = {
 }
 export type M2Outfit = {
   id: string; name: string; description?: string; occasion?: string; materialBrief?: string | null
-  generatedDescription?: string | null; generatedOccasion?: string | null; descriptionEdited?: boolean
+  generatedDescription?: string | null; generatedOccasion?: string | null; descriptionEdited?: boolean; handPicked?: boolean
   imageArtifactId?: string | null; baseImageArtifactId?: string | null; imagePendingChanges?: boolean; imageUrl?: string | null
 }
 export type VoiceTest = { id: string; text: string; artifactId: string; url: string; sourceVoiceArtifactId: string; createdAt: string }
@@ -28,7 +28,7 @@ export type M2Draft = {
   activeJobId?: string | null; remainingJobCount?: number
   relationshipInputs?: RelationshipInput[]; relationships?: Relationships
 }
-export type M2Detail = { project: Project; draft: M2Draft; jobs: Job[] }
+export type M2Detail = { project: Project; draft: M2Draft; jobs: Job[]; imageHistory?: Record<string, { artifactId: string; url: string; outfitId: string }[]> }
 export const activeJob = (job: Job) => job.status === 'pending' || job.status === 'running'
 const selectedKey = 'auto-drama:m2-selected-project:v1'
 

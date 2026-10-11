@@ -97,7 +97,7 @@ export function LookDialog({ characterName, busy, onSave, onClose }: {
   </Dialog>
 }
 
-export function LookPanel({ characterId, characterName, outfit, baseImageArtifactId, baseReady, busy, editing, onEditingChange, onSave, onDelete, onGenerate, onExpand, onDress }: {
+export function LookPanel({ characterId, characterName, outfit, baseImageArtifactId, baseReady, busy, editing, onEditingChange, onSave, onDelete, onGenerate, onExpand, onDress, onEdit }: {
   characterId: string; characterName: string; outfit: M2Outfit; baseImageArtifactId: string | null; baseReady: boolean; busy: boolean
   editing: boolean; onEditingChange: (editing: boolean) => void
   onSave: (characterId: string, outfit: LookWish) => Promise<boolean>
@@ -106,6 +106,8 @@ export function LookPanel({ characterId, characterName, outfit, baseImageArtifac
   onExpand: (name: string, image: string) => void
   /** Opens the choice of a shared design to put on this look. */
   onDress?: () => void
+  /** Opens the edit of this look from any picture of the person. */
+  onEdit?: () => void
 }) {
   // What was made is shown as text; the user's wish is only the instruction it came from.
   const appearance = outfit.generatedDescription ?? ''
@@ -116,7 +118,7 @@ export function LookPanel({ characterId, characterName, outfit, baseImageArtifac
   useEffect(() => { setDraft(null); setRetake(null) }, [characterId, outfit.id])
   useEffect(() => { if (!editing) setDraft(null) }, [editing])
   const value = draft ?? { name: outfit.name, appearance, occasion }
-  const stale = !outfit.imageArtifactId || outfit.imagePendingChanges || outfit.baseImageArtifactId !== baseImageArtifactId
+  const stale = !outfit.imageArtifactId || outfit.imagePendingChanges || (outfit.baseImageArtifactId !== baseImageArtifactId && !outfit.handPicked)
   const label = `${characterName}の${outfit.name}`
   const redraw = Boolean(value.appearance.trim()) && value.appearance.trim() !== appearance
   async function saveEdit() {
@@ -154,6 +156,8 @@ export function LookPanel({ characterId, characterName, outfit, baseImageArtifac
     </>}
     <div className="char-asset-actions"><span>素材の作り直し</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={() => setRetake(wish)}><Icon name="refresh" size={14}/>{outfit.imageArtifactId ? 'この姿の立ち絵を作り直す' : 'この姿の立ち絵を作る'}</button></div>
     <p className="char-retake-hint">通常の姿の立ち絵をもとに、顔や髪を保ったまま服装を描き直します。</p>
+    {onEdit && <div className="char-asset-actions"><span>部分的な修正</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={onEdit}><Icon name="edit" size={14}/>絵をもとに直す</button></div>}
+    {outfit.handPicked && outfit.baseImageArtifactId !== baseImageArtifactId && <p className="char-retake-hint">この姿は手で直した絵なので、通常の姿の立ち絵が変わっても作り直しません。</p>}
     {onDress && <div className="char-asset-actions"><span>共通の素材</span><button type="button" className="char-retake-button" disabled={busy || editing || !baseReady} onClick={onDress}><Icon name="users" size={14}/>共通の素材を着せる</button></div>}
     <div className="char-asset-actions"><span>この別バージョン</span><button type="button" className="char-retake-button" disabled={busy || editing} onClick={() => { if (window.confirm(`${outfit.name}を削除しますか？`)) void onDelete(characterId, outfit.id) }}><Icon name="close" size={14}/>削除</button></div>
     {retake !== null && <Dialog title={`${label}の立ち絵を作り直す`} onClose={() => setRetake(null)}>

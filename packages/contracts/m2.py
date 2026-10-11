@@ -295,6 +295,36 @@ class OutfitAction(Action):
     clear_material: bool = False
 
 
+ArtifactRef = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9]{1,64}$")]
+
+
+class EditImage(Action):
+    """Redraw a look from a chosen picture of the same character, changing only what is wished."""
+
+    action: Literal["edit-image"]
+    character_id: CharacterId
+    outfit_id: Identifier
+    instruction: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
+    # Any earlier picture of this character, rejected ones included; the current one when left out.
+    base_artifact_id: ArtifactRef | None = None
+    material_image_id: ArtifactRef | None = None
+
+    @model_validator(mode="after")
+    def something_to_do(self):
+        if not self.instruction and not self.material_image_id:
+            raise ValueError("an edit needs a wish or a shared material")
+        return self
+
+
+class AdoptImage(Action):
+    """Go back to an earlier picture of a look without drawing anything."""
+
+    action: Literal["adopt-image"]
+    character_id: CharacterId
+    outfit_id: Identifier
+    artifact_id: ArtifactRef
+
+
 class GoTo(Action):
     action: Literal["go-to"]
     step: Step
@@ -328,6 +358,8 @@ M2Action = Annotated[
     | Retake
     | SaveOutfit
     | OutfitAction
+    | EditImage
+    | AdoptImage
     | GoTo
     | SaveRelationships
     | GenerateRelationships
