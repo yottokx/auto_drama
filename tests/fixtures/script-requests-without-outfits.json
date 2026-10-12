@@ -60,16 +60,16 @@
   "plot": "7b1ed1afb6668c995d7a51c37d134829eb94eb5e994e2979fb8edd1d041dbc13",
   "chapters": [
     {
-      "narrative.json": "28a6f0f68a6f6807028847f001323da29ce4132a49928bb9422647b9341d3f44",
-      "script.json": "672a2c0414e2368d47bd0407ca90fdeacf96a5ede8c629f770dba0a40910bc97"
+      "narrative.json": "2b9f2b57e841da397050f879159fc14d3ef13aed2b2c5bca6b4a56c20abf5696",
+      "script.json": "023538b1a536af8e2e3fca500bc136ac785da5ad8e500f4b2b93b8382aa30857"
     },
     {
-      "narrative.json": "9c2facd0fe1fa947c094c041b71d11d3e02ac9ccc7c9f344ebf2b125440dcd58",
-      "script.json": "2b49a46f5aab251bf1a81588b3b8e3091c2baa8021abb68086c54de7d70b1c30"
+      "narrative.json": "42ba4fbfd47e6ff315a11eb3734a597727840d035f7c3419e49e8bebbc42f32f",
+      "script.json": "890ff50802f2af96d21cea040f004a97b6d7686170480da59713c49ac5733a5f"
     },
     {
-      "narrative.json": "c380340cb28df412445fe103b53cbb8befe9b061f1c8e7c33a639cb528757e74",
-      "script.json": "1afd6a537b4f32ca9c19aa915790006bce4f3966bea5443eab3b0d8b1f0f151f"
+      "narrative.json": "9c7ca2bbb5d66a9d9a8c098b15911fd0954c86e1c586bef31a8ee2ba43824550",
+      "script.json": "2bf14dbd124c0f2fc5f441526b6b8ed80b57c346771d24082d7501426ba0a4e8"
     }
   ]
 }

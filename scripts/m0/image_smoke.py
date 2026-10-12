@@ -74,8 +74,8 @@ def main() -> None:
     )
     parser.add_argument("--model-dir", type=Path, default=RUNTIME / "models/anima-base-v1-diffusers")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "private/m0/image")
-    parser.add_argument("--width", type=int, help="Default: character 768; background 1280.")
-    parser.add_argument("--height", type=int, help="Default: character 1024; background 720.")
+    parser.add_argument("--width", type=int, help="Default: character 1152; background 1280.")
+    parser.add_argument("--height", type=int, help="Default: character 1536; background 720.")
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--guidance-scale", type=float, default=4.0)
     parser.add_argument("--seed", type=int, default=20260922)
@@ -86,8 +86,8 @@ def main() -> None:
         from scripts.m0.image_runner import serve
 
         raise SystemExit(serve(sys.stdin, sys.stdout))
-    args.width = args.width if args.width is not None else (768 if args.mode == "character" else 1280)
-    args.height = args.height if args.height is not None else (1024 if args.mode == "character" else 720)
+    args.width = args.width if args.width is not None else (1152 if args.mode == "character" else 1280)
+    args.height = args.height if args.height is not None else (1536 if args.mode == "character" else 720)
     try:
         prompt, negative = resolve_prompts(args.mode, args.prompt, args.negative_prompt)
     except ValueError as exc:
@@ -147,6 +147,8 @@ def main() -> None:
             raise RuntimeError(f"Failed to load required Anima components: {missing}")
         pipe.update_components(guider=ClassifierFreeGuidance(guidance_scale=args.guidance_scale))
         pipe.to("cuda")
+        # As in the resident runtime: decoding in tiles keeps the peak at the resident level.
+        pipe.vae.enable_tiling()
         print(f"Generating {args.width}x{args.height}, {args.steps} steps, seed={args.seed}...", flush=True)
         with torch.inference_mode():
             generated = pipe(prompt=prompt, negative_prompt=negative, width=args.width, height=args.height,
@@ -191,7 +193,7 @@ def main() -> None:
         "prompt": prompt, "negative_prompt": negative, "seed": args.seed,
         "width": args.width, "height": args.height, "steps": args.steps, "guidance_scale": args.guidance_scale,
         "elapsed_seconds": round(time.monotonic() - started, 3), "gpu": torch.cuda.get_device_name(),
-        "gpu_allocated_before": baseline, "gpu_peak_allocated": peak, "gpu_allocated_after_unload": released,
+        "vae_tiling": True, "gpu_allocated_before": baseline, "gpu_peak_allocated": peak, "gpu_allocated_after_unload": released,
         "gpu_process_exit_required_for_context_release": True,
         **removal_report,
         "artifacts": {name: digest(args.output_dir / name) for name in artifacts},

@@ -33,8 +33,8 @@
     "model_dir": "services/worker/runtimes/diffusers/models/anima-converted-generation-20260922-104112",
     "positive_prompt_prefix": "masterpiece, best quality, score_7, safe",
     "negative_prompt": "worst quality, low quality, score_1, score_2, score_3, artist name, blurry, jpeg artifacts, chromatic aberration, cropped, text",
-    "width": 768,
-    "height": 1024,
+    "width": 1152,
+    "height": 1536,
     "steps": 30,
     "guidance_scale": 4.0,
     "timeout_seconds": 900

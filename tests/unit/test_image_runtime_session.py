@@ -14,7 +14,8 @@ from scripts.m0 import image_runner
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
-    calls = SimpleNamespace(loads=[], components=[], generates=[], guiders=[], removals=[], removal_sessions=[], unloads=[])
+    calls = SimpleNamespace(loads=[], components=[], generates=[], guiders=[], removals=[], removal_sessions=[], unloads=[],
+                            tiling=[])
     model = tmp_path / "anima"
     model.mkdir()
     (model / "modular_model_index.json").write_text("{}")
@@ -55,6 +56,7 @@ def runtime(tmp_path, monkeypatch):
             self.components = dict.fromkeys(image_runner.COMPONENTS)
             for name in image_runner.COMPONENTS:
                 setattr(self, name, object())
+            self.vae = SimpleNamespace(enable_tiling=lambda: calls.tiling.append(True))
 
         def load_components(self, **kwargs):
             calls.components.append(kwargs)
@@ -126,6 +128,8 @@ def test_anima_and_cpu_cutout_weights_reused_across_portraits_then_backgrounds(r
     for value in requests:
         session.generate(value)
     assert len(runtime.loads) == len(runtime.components) == len(runtime.removal_sessions) == 1
+    # The decode is tiled once, when the model is loaded, for portraits and backgrounds alike.
+    assert runtime.tiling == [True]
     assert len(runtime.removals) == 2
     assert runtime.guiders == [2, 3, 4, 5]
     assert [generation["seed"] for generation in runtime.generates] == [10, 11, 12, 13]
