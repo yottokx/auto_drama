@@ -86,3 +86,46 @@ def test_missing_foreign_or_old_freeform_identity_is_rejected(kind):
 def test_non_object_image_records_raise_repairable_validation_error(row):
     with pytest.raises(ValueError, match="exact supplied order"):
         visuals.compile_images({"images": [row]}, IDS, IMAGES)
+
+
+def test_fixed_text_sets_one_drawn_style_and_scale_for_the_whole_picture():
+    base, variant = (image["prompt"] for image in visuals.compile_images(directions(), IDS, IMAGES))
+    head = base.splitlines()[0]
+    assert head.startswith("Create one coherent full-scene illustration using the individual character references.")
+    # Stated positively: the image model ignores "not a photograph".
+    assert "hand-painted anime background art" in head and "sharp focus" in head
+    assert "photograph" not in base
+    assert "Environment, as hand-painted anime background art: a worn cockpit on a spaceship." in base
+    assert "Lighting: dim blue and orange light." in base
+    for prompt in (base, variant):
+        assert "proportionally smaller, at one consistent scale" in prompt
+    # A variant edits the finished base picture, so it does not restate the style.
+    assert "Art style of the whole picture" not in variant.splitlines()[0]
+
+
+@pytest.mark.parametrize("environment,crowd", [
+    ("a worn cockpit on a spaceship", False),
+    ("a quiet street with greenery", False),
+    ("a station square, bustling with people in the background", True),
+    ("station ticket gate area with crowds", True),
+    ("a classroom after school with a few students", True),
+])
+def test_background_people_are_named_only_when_the_place_has_them(environment, crowd):
+    """Mentioning background people, even conditionally, makes the image model add some."""
+    answer = directions()
+    for image in answer["images"]:
+        image["environment"] = environment
+    for image in visuals.compile_images(answer, IDS, IMAGES):
+        tail = image["prompt"].splitlines()[-1]
+        assert ("background people" in tail) is crowd
+        assert tail.endswith("watermarks, further main characters or montage." if crowd
+                             else "watermarks, extra people or montage.")
+
+
+def test_writer_states_whom_a_held_object_is_turned_toward_not_what_the_viewer_sees():
+    assert "whom its screen or pages are turned toward" in visuals.SYSTEM
+    assert "Never state what the viewer of the picture sees of it" in visuals.SYSTEM
+    assert "never add an object for it" in visuals.SYSTEM
+    assert "without lens effects such as blur" in visuals.SYSTEM
+    # Both instruction sets are versioned apart from every earlier one.
+    assert len({visuals.VERSION, visuals.STAGING_VERSION, 2, 3}) == 4

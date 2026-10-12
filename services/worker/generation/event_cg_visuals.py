@@ -9,10 +9,21 @@ import re
 
 from scripts.audio.prompts import _clean_llm_content
 
-VERSION = 2
-STAGING_VERSION = 3
+# 4/5: whole-picture art style, one scale, background people named only where the place has
+# them, and held screens or pages described by whom they are turned toward.
+VERSION = 4
+STAGING_VERSION = 5
 _JAPANESE = re.compile(r"[\u3040-\u30ff\u3400-\u9fff]")
 _REFERENCE = re.compile(r"\breference\b|\bimage\s*#?\s*\d+", re.IGNORECASE)
+# Naming background people at all makes the image model add some, even conditionally worded,
+# so the fixed text mentions them only when the place description already has them.
+_CROWD = re.compile(r"\b(crowd|crowds|crowded|people|passers-by|passersby|pedestrians|bustling|commuters|"
+                    r"students|shoppers)\b", re.IGNORECASE)
+# The image model follows a stated art style but ignores "not a photograph"; said positively,
+# an outdoor city scene keeps the references' drawn look instead of turning photographic.
+_STYLE = ("Art style of the whole picture: 2D cel-shaded anime with clean line art and flat colors. "
+          "The background is hand-painted anime background art in the same style as the characters, "
+          "drawn in sharp focus.")
 
 
 def _object(properties):
@@ -52,7 +63,15 @@ SYSTEM = (
     "visible behavior, never quote or render it. Choose one frozen moment, no montage, writing or speech bubbles. "
     "Each variant starts from the SAME base scene. Keep the base background, camera, character positions, "
     "clothing and body proportions. Change only its specified expressions, gazes and small gestures. "
-    "Keep important faces above the lower message box. Do not invent extra people."
+    "Keep important faces above the lower message box. Do not invent extra people. "
+    # The model knows who is looking at an object but misjudges which side the viewer would see,
+    # and the image model draws whatever side is stated. Ask only for what it knows.
+    "When a person holds something that is being looked at or shown (for example a phone, book, letter, "
+    "photo or tablet), state in that person's action whom its screen or pages are turned toward: the holder "
+    "('toward herself'), 'the other person' or 'the others'. A phone or camera taking a picture is turned "
+    "with its screen toward the holder. Never state what the viewer of the picture sees of it. Do this only "
+    "for a held object the scene already has; never add an object for it. "
+    "Describe the place itself in environment, without lens effects such as blur, bokeh or depth of field."
 )
 
 
@@ -107,10 +126,17 @@ def compile_images(answer: dict, character_ids: list[str], image_ids: list[str])
                 "camera, character positions, clothing and proportions. Change only the specified expressions, "
                 "gazes and small gestures. The remaining reference images identify the individual characters.")]
         else:
-            parts = ["Create one coherent full-scene illustration using the individual character references."]
+            parts = ["Create one coherent full-scene illustration using the individual character references. "
+                     + _STYLE]
+        crowd = False
         for field in ("environment", "lighting", "framing"):
             fragment = _fragment(row[field], field, 500 if field == "environment" else 240, character_ids)
-            if fragment:
+            if not fragment:
+                continue
+            if field == "environment":
+                crowd = bool(_CROWD.search(fragment))
+                parts.append(f"Environment, as hand-painted anime background art: {fragment}.")
+            else:
                 parts.append(f"{field.capitalize()}: {fragment}.")
         for cid in character_ids:
             person = people[cid]
@@ -139,8 +165,12 @@ def compile_images(answer: dict, character_ids: list[str], image_ids: list[str])
             parts.append(" ".join(description))
         parts.append("Preserve each referenced person's distinct face, hairstyle, hair and eye colors, "
             "clothing details, body proportions and illustration style. Do not swap or blend identities. "
-            "Keep faces above the lower message area. No text, lettering, captions, speech bubbles, "
-            "watermarks, extra people or montage.")
+            "The referenced characters stand on the same ground as their surroundings; whatever is farther "
+            "away is proportionally smaller, at one consistent scale. "
+            + ("The background people the environment mentions are distant, small and simply drawn in the "
+               "same style. " if crowd else "")
+            + "Keep faces above the lower message area. No text, lettering, captions, speech bubbles, "
+            "watermarks, " + ("further main characters" if crowd else "extra people") + " or montage.")
         prompt = "\n".join(parts)
         if len(prompt) > 10000:
             raise ValueError("Compiled CG visual directions exceed the prompt limit.")

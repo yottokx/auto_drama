@@ -372,7 +372,7 @@ def test_legacy_freeform_numbering_retries_to_character_keyed_directions():
     assert len(llm.messages) == 3
     assert "Reference image 2 character:" in result["cgs"][0]["variants"][0]["prompt"]
     assert llm.trace[-1]["type"] == "event_cg_visual_directions"
-    assert llm.trace[-1]["version"] == 2
+    assert llm.trace[-1]["version"] == cg.event_cg_visuals.VERSION == 4
 
 
 

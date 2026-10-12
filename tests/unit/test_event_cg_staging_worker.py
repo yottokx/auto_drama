@@ -86,7 +86,7 @@ def test_staged_selection_preserves_reasons_and_passes_separate_image_intervals(
     assert visual_source["common_composition"] == choice["composition"]
     assert "Never move a later embrace" in llm.messages[1][1][0]["content"]
     assert llm.trace[-1]["type"] == "event_cg_image_intervals"
-    assert llm.trace[-2]["version"] == 3
+    assert llm.trace[-2]["version"] == cg.event_cg_visuals.STAGING_VERSION == 5
 
 
 def test_six_lines_split_three_ways_are_repaired_to_one_safe_image():
