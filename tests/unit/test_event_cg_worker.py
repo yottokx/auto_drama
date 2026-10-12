@@ -318,7 +318,7 @@ def test_worker_fetches_only_artifact_ids_and_keeps_original_bytes(tmp_path):
 
 
 def test_missing_optional_qwen_does_not_import_gpu(tmp_path):
-    assert cg.check_readiness({}, tmp_path) == {"ready": False, "errors": []}
+    assert cg.check_readiness({}, tmp_path) == {"ready": False, "errors": [], "models": []}
 
 
 def test_zero_allowance_does_not_query_llm():

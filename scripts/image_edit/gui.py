@@ -528,6 +528,10 @@ class ImageEditTestApp(CgProposalTab):
         self.setup_button.pack(side="left", padx=4)
         self.prepare_button = ttk.Button(actions, text="② モデルを取得", command=self.prepare_model)
         self.prepare_button.pack(side="left", padx=4)
+        # The 8-step checkpoint the worker can use instead; it lives beside the standard model.
+        self.prepare_turbo_button = ttk.Button(actions, text="③ Turboを取得",
+                                               command=lambda: self.prepare_model("turbo"))
+        self.prepare_turbo_button.pack(side="left", padx=4)
         ttk.Button(actions, text="現在のログを開く", command=self.open_log).pack(
             side="left", padx=4
         )
@@ -1088,7 +1092,7 @@ class ImageEditTestApp(CgProposalTab):
         return str(python)
 
     def _busy_buttons(self):
-        return (self.generate_button, self.setup_button, self.prepare_button,
+        return (self.generate_button, self.setup_button, self.prepare_button, self.prepare_turbo_button,
                 self.scene_prompt_button, self.cg_propose_button, self.cg_all_button)
 
     def _start_process(self, command, run_dir, kind, request=None):
@@ -1176,9 +1180,11 @@ class ImageEditTestApp(CgProposalTab):
         except (OSError, ValueError) as exc:
             messagebox.showerror("環境準備", str(exc))
 
-    def prepare_model(self):
+    def prepare_model(self, model="standard"):
         try:
             run_dir = new_run(Path(self.output.get().strip()).expanduser().resolve(), "prepare")
+            # Turbo goes to its own fixed folder; the path field names the model this window draws with.
+            target = ["--model-dir", self.model_path.get().strip()] if model == "standard" else []
             self._start_process(
                 [
                     self._runtime_python(),
@@ -1186,8 +1192,9 @@ class ImageEditTestApp(CgProposalTab):
                     "-X",
                     "utf8",
                     str(Path(__file__).with_name("prepare.py")),
-                    "--model-dir",
-                    self.model_path.get().strip(),
+                    "--model",
+                    model,
+                    *target,
                     "--status-dir",
                     str(run_dir),
                 ],

@@ -81,6 +81,23 @@ class MaterialService:
         return {"image_id": row["id"], "artifact_id": artifact["id"], "sha256": artifact["sha256"],
                 "outfit_en": detail["outfit_en"], "summary_ja": detail["summary"], "category": detail["category"]}
 
+    @staticmethod
+    def _redesign(connection, image: dict) -> None:
+        """The next drawing of this sheet decides its design anew; the present picture stays usable."""
+        if image["detail"]:
+            connection.execute("UPDATE shared_material_image SET detail=? WHERE id=?", (
+                json.dumps({**json.loads(image["detail"]), "version": 0}, ensure_ascii=False), image["id"]))
+
+    def _describe(self, connection, material: dict, name: str, description: str) -> None:
+        if (name, description) != (material["name"], material["description"]):
+            # Sheets that took their design from the material's own words follow its new words.
+            for image in connection.execute(
+                    "SELECT * FROM shared_material_image WHERE material_id=? AND removed=0 AND wish='' "
+                    "AND mode='text'", (material["id"],)).fetchall():
+                self._redesign(connection, dict(image))
+        connection.execute("UPDATE shared_material SET name=?,description=? WHERE id=?",
+                           (name, description, material["id"]))
+
     def sync_brief(self, connection, project_id, wishes: list[dict]) -> None:
         """Make the materials declared in the brief exist; their sheets are drawn once the world is known."""
         declared = {row["brief_id"]: dict(row) for row in connection.execute(
@@ -92,15 +109,29 @@ class MaterialService:
                     "INSERT INTO shared_material (id,project_id,name,description,created_at,brief_id) VALUES (?,?,?,?,?,?)",
                     (uuid4().hex, project_id, wish["name"], wish["description"], self.clock(), wish["id"]))
             else:
-                connection.execute("UPDATE shared_material SET name=?,description=? WHERE id=?",
-                                   (wish["name"], wish["description"], current["id"]))
+                self._describe(connection, current, wish["name"], wish["description"])
         for row in declared.values():
             connection.execute("UPDATE shared_material SET removed=1 WHERE id=?", (row["id"],))
 
-    def ensure_sheets(self, connection, project_id, *, world=None) -> None:
-        """Draw the first sheet of every declared material that has none, when a worker can."""
+    def ensure_sheets(self, connection, project_id, *, world=None, redraw=False) -> None:
+        """Draw the first sheet of every declared material that has none, when a worker can.
+
+        With ``redraw`` the world itself was made anew, so the sheets that were drawn from the
+        material's own words are designed and drawn again for it.
+        """
         if not self._capable(connection, TEXT_KIND):
             return
+        if redraw:
+            for image in connection.execute(
+                    "SELECT i.*,m.id AS owner FROM shared_material_image i JOIN shared_material m ON m.id=i.material_id "
+                    "WHERE m.project_id=? AND m.removed=0 AND m.brief_id IS NOT NULL AND i.removed=0 "
+                    "AND i.mode='text' AND i.wish='' ORDER BY i.created_at,i.rowid", (project_id,)).fetchall():
+                job = required(connection, "job", image["job_id"]) if image["job_id"] else None
+                if job and job["status"] in {"pending", "running"}:
+                    continue
+                self._redesign(connection, dict(image))
+                self._enqueue(connection, project_id, required(connection, "shared_material", image["owner"]),
+                              required(connection, "shared_material_image", image["id"]), world=world)
         for material in connection.execute(
                 "SELECT * FROM shared_material m WHERE project_id=? AND removed=0 AND brief_id IS NOT NULL "
                 "AND NOT EXISTS (SELECT 1 FROM shared_material_image i WHERE i.material_id=m.id AND i.removed=0) "
@@ -211,6 +242,9 @@ class MaterialService:
                  # What a portrait wears is taken as drawn; the material's own words would overrule it.
                  "wish": image["wish"] or ("" if image["mode"] == "extract" else material["description"]),
                  **source.get("words", {})}
+        if image["detail"]:
+            # Drawing again keeps what the sheet was decided to be; a changed wish clears this first.
+            sheet["design"] = json.loads(image["detail"])
         identifier, run_id, now = uuid4().hex, uuid4().hex, self.clock()
         profile = M2Service(self.coordinator)._profile(connection)
         payload = {"schema_version": 1, "seed": int(identifier[:8], 16) & 0x7FFFFFFF, "character_id": None,
@@ -275,8 +309,7 @@ class MaterialService:
                     name = (body.name or "").strip()
                     if not name:
                         raise ServiceError(422, "素材の呼び名を入力してください。")
-                    connection.execute("UPDATE shared_material SET name=?,description=? WHERE id=?",
-                                       (name, (body.description or "").strip(), material["id"]))
+                    self._describe(connection, material, name, (body.description or "").strip())
                 elif body.action == "delete-material":
                     connection.execute("UPDATE shared_material SET removed=1 WHERE id=?", (material["id"],))
                 else:
@@ -291,9 +324,13 @@ class MaterialService:
                     if job and job["status"] in {"pending", "running"}:
                         raise ServiceError(409, "この絵は作成中です。")
                     if body.wish is not None or body.label is not None:
-                        connection.execute("UPDATE shared_material_image SET wish=?,label=? WHERE id=?", (
-                            (body.wish if body.wish is not None else image["wish"]).strip(),
-                            (body.label if body.label is not None else image["label"]).strip(), image["id"]))
+                        wish = (body.wish if body.wish is not None else image["wish"]).strip()
+                        label = (body.label if body.label is not None else image["label"]).strip()
+                        # A different wish asks for a different design, not for the same one drawn again.
+                        if (wish, label) != (image["wish"], image["label"]):
+                            self._redesign(connection, image)
+                        connection.execute("UPDATE shared_material_image SET wish=?,label=? WHERE id=?",
+                                           (wish, label, image["id"]))
                     self._enqueue(connection, project_id, material,
                                   required(connection, "shared_material_image", image["id"]))
             return self._view(connection, project_id)
@@ -337,8 +374,9 @@ class MaterialService:
             now = self.clock()
             if image["job_id"] == job_id:
                 connection.execute("UPDATE shared_material_image SET artifact_id=?,detail=? WHERE id=?", (
-                    record["id"], json.dumps({key: detail[key] for key in ("category", "outfit_en", "summary")},
-                                             ensure_ascii=False), image["id"]))
+                    record["id"], json.dumps({key: detail[key] for key in
+                                              ("category", "outfit_en", "summary", "change_en", "version")
+                                              if key in detail}, ensure_ascii=False), image["id"]))
             connection.execute("UPDATE job_attempt SET status='completed',ended_at=? WHERE id=?", (now, attempt["id"]))
             connection.execute("UPDATE job SET status='completed',result_artifact_id=?,updated_at=?,error=NULL WHERE id=?",
                                (bundle["id"], now, job_id))

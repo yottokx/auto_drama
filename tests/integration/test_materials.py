@@ -311,3 +311,89 @@ def test_a_work_without_the_editing_model_has_no_event_cgs_even_when_some_are_al
             assert connection.execute("SELECT COUNT(*) FROM event_cg_production").fetchone()[0] == 0
             kinds = {row[0] for row in connection.execute("SELECT kind FROM job WHERE project_id=?", (project_id,))}
         assert not {kind for kind in kinds if "event_cg" in kind}
+
+
+def test_drawing_a_sheet_again_keeps_its_design_until_the_wish_changes(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        project_id = project["project"]["id"]
+        anima, _qwen = workers(client)
+
+        def draw(**body):
+            materials(client, project_id, **body)
+            job = claim(client, anima)
+            data = sheet_bundle(job)
+            # A worker of the current design wording marks what it decided.
+            with ZipFile(io.BytesIO(data)) as archive:
+                envelope = json.loads(archive.read("result.json"))
+            envelope["provenance"]["material"].update(version=2, change_en="")
+            packed = io.BytesIO()
+            with ZipFile(packed, "w") as archive:
+                archive.writestr("result.json", json.dumps(envelope, ensure_ascii=False))
+                archive.writestr("image.png", png(210))
+            assert complete(client, job, anima, packed.getvalue()).status_code == 200
+            return job["payload"]["material_sheet"]
+
+        first = draw(action="add-material", name="制服", description="紺のブレザー")
+        assert "design" not in first
+        (material,) = materials(client, project_id)
+        again = draw(action="retake-image", image_id=material["images"][0]["id"])
+        assert again["design"]["outfit_en"] == "a navy blazer, a plaid skirt" and again["design"]["version"] == 2
+        changed = draw(action="retake-image", image_id=material["images"][0]["id"], wish="緑のブレザーに")
+        assert changed["design"]["version"] == 0 and changed["wish"] == "緑のブレザーに"
+        materials(client, project_id, action="save-material", material_id=material["id"], name="制服", description="紺のブレザー")
+        materials(client, project_id, action="add-image", material_id=material["id"], label="夏服", mode="text")
+        claim(client, anima)
+
+
+def test_a_world_made_again_redraws_its_materials_and_dresses_the_cast_in_them(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        from tests.integration.test_m2 import create, run_one, worker
+
+        project, main = create(client, prompt="異星の物語を自由に考える。"), worker(client)
+        project_id = project["project"]["id"]
+        anima, qwen = workers(client)
+        current = detail(client, project)
+        action(client, project, "save-brief", world=current["draft"]["worldInput"],
+               characters=[row["input"] for row in current["draft"]["characters"]],
+               materials=[{"id": "mat-a", "name": "制服"}],
+               outfits={"character-1": [{"id": "default", "name": "通常の姿", "material": "mat-a"}]})
+        action(client, project, "generate-world")
+        run_one(client, main, "m2_world")
+        job = claim(client, anima)
+        assert complete(client, job, anima, sheet_bundle(job)).status_code == 200
+        first_sheet = materials(client, project_id)[0]["images"][0]["url"]
+        action(client, project, "confirm-world")
+        for kind in ("m2_character", "m2_image", "m2_voice"):
+            run_one(client, main, kind)
+        plain = detail(client, project)["draft"]["characters"][0]["imageArtifactId"]
+        job = claim(client, qwen)
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        # Revising the world in words keeps the sheet that was already looked at.
+        action(client, project, "generate-world", instruction="もう少し明るい雰囲気に。")
+        run_one(client, main, "m2_world")
+        assert claim(client, anima) is None
+        # Making the world again from the brief makes its materials again, without being asked.
+        action(client, project, "generate-world")
+        run_one(client, main, "m2_world")
+        job = claim(client, anima)
+        assert job["payload"]["material_sheet"]["name"] == "制服"
+        assert complete(client, job, anima, sheet_bundle(job)).status_code == 200
+        assert materials(client, project_id)[0]["images"][0]["url"] != first_sheet
+        # A sheet drawn again by hand is put on the portrait again, from the portrait as it was drawn.
+        materials(client, project_id, action="retake-image", image_id=materials(client, project_id)[0]["images"][0]["id"])
+        job = claim(client, anima)
+        assert complete(client, job, anima, sheet_bundle(job)).status_code == 200
+        action(client, project, "confirm-world")
+        while job := claim(client, main):
+            assert complete(client, job, main).status_code == 200
+        job = claim(client, qwen)
+        assert job["payload"]["outfit"]["id"] == "default" and job["payload"]["material_image"]["artifact_id"] in \
+            materials(client, project_id)[0]["images"][0]["url"]
+        assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200
+        materials(client, project_id, action="retake-image", image_id=materials(client, project_id)[0]["images"][0]["id"])
+        job = claim(client, anima)
+        assert complete(client, job, anima, sheet_bundle(job)).status_code == 200
+        job = claim(client, qwen)
+        assert job["payload"]["outfit"]["id"] == "default"
+        assert job["payload"]["reference_image"]["artifact_id"] == plain

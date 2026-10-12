@@ -282,73 +282,117 @@ test('image settings distinguish disconnected workers from connected workers wit
       if (value.workers.length === 0) {
         assert.match(text(tree), /接続中のワーカーがありません。ワーカーを起動してから再読み込み/)
         assert.equal(list, null)
-        assert.doesNotMatch(text(tree), /CG未準備/)
+        assert.doesNotMatch(text(tree), /未準備/)
       } else if (!value.ready) {
-        assert.match(text(tree), /ワーカーは接続していますが、イベントCGを生成する準備ができていません/)
-        assert.match(text(list), /local画像生成環境を準備してください。CG未準備/)
+        assert.match(text(tree), /ワーカーは接続していますが、このモデルを使う準備ができていません/)
+        assert.match(text(list), /local画像生成環境を準備してください。未準備/)
         assert.doesNotMatch(text(tree), /接続中のワーカーがありません/)
       } else {
-        assert.match(text(tree), /接続中のワーカーでイベントCGを生成できます/)
-        assert.match(text(list), /制作PCCG生成可能/)
-        assert.doesNotMatch(text(tree), /CG未準備/)
+        assert.match(text(tree), /接続中のワーカーで、このモデルを使えます/)
+        assert.match(text(list), /制作PC使用可能/)
+        assert.doesNotMatch(text(tree), /未準備/)
       }
     } finally { hooks.dispose() }
   }
 })
 
-test('image settings list memory configurations with their guides and save the chosen one', async () => {
-  const configurations = [
-    { id: 'vram32', label: '32GB：標準', vram_gb: 32, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'native', vae_tiling: false, peak_vram_gib: 22.8, time_ratio: 1, quality: '基準。' },
-    { id: 'vram16_8bit', label: '16GB：8ビット・速度優先', vram_gb: 16, reference_resolution: 768, use_kv_cache: true, transformer_storage: 'fp8', vae_tiling: true, peak_vram_gib: 12.8, time_ratio: 0.8, quality: '8ビット。' },
-  ]
+const cgConfigurations = [
+  { id: 'vram32', label: '32GB', vram_gb: 32, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'native', vae_tiling: false, peak_vram_gib: 22.8, time_ratio: 1, quality: '基準。' },
+  { id: 'vram24_8bit', label: '24GB', vram_gb: 24, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'fp8', vae_tiling: true, peak_vram_gib: 16.2, time_ratio: 0.9, quality: '8ビット。' },
+  { id: 'vram12_8bit', label: '12GB', vram_gb: 12, reference_resolution: 768, use_kv_cache: false, transformer_storage: 'fp8', vae_tiling: true, peak_vram_gib: 9.2, time_ratio: 1.2, quality: '8ビット。' },
+]
+const cgModels = [
+  { id: 'standard', label: '標準', name: 'Qwen-Image-2.1', revision: 'd26bb61231c349cf6b7896fa83353113880e1ba3', steps: 40, available: true },
+  { id: 'turbo', label: 'Turbo', name: 'Qwen-Image-2.1-Turbo', revision: 'd65dbc9a7e8f6b5479e33dee6030eaab2a906509', steps: 8, available: true },
+]
+const cgRadios = (tree, name) => {
+  const found = []
+  walk(tree, node => { if (node.type === 'input' && node.props.type === 'radio' && node.props.name === name) found.push(node); return false })
+  return found
+}
+
+test('image settings offer only the downloaded models and the memory settings each can run with', async () => {
   const sizes = [{ width: 960, height: 640 }, { width: 1536, height: 1024 }]
-  // A profile saved before the options existed corresponds to the standard configuration.
-  api.respondWith(async () => ({ ...settings, configuration: 'vram32', configurations, sizes }))
-  assert.equal(state.eventCgConfigurationId(settings.profile, configurations), 'vram32')
-  assert.equal(state.eventCgConfigurationId({ ...settings.profile, reference_resolution: 768 }, configurations), null)
+  const models = [cgModels[0], { ...cgModels[1], available: false }]
+  // A profile saved before the options existed corresponds to the standard model at 16 bits.
+  api.respondWith(async () => ({ ...settings, configuration: 'vram32', configurations: cgConfigurations, models, sizes }))
+  assert.equal(state.eventCgConfigurationId(settings.profile, cgConfigurations), 'vram32')
+  assert.equal(state.eventCgConfigurationId({ ...settings.profile, reference_resolution: 768 }, cgConfigurations), null)
+  assert.deepEqual(state.eventCgTiers(cgConfigurations, 'fp8').map(item => item.id), ['vram24_8bit', 'vram12_8bit'])
   const originalFetch = globalThis.fetch
   const writes = []
   globalThis.fetch = async (path, options) => {
     writes.push({ path, method: options.method, body: JSON.parse(options.body) })
-    return { ok: true, status: 200, json: async () => ({ ...settings, revision: 3, profile: writes.at(-1).body.profile, configurations, sizes }) }
+    return { ok: true, status: 200, json: async () => ({ ...settings, revision: 3, profile: writes.at(-1).body.profile, configurations: cgConfigurations, models, sizes }) }
   }
   const h = harness(EventCgSettings, { visible: true, onBusyChange() {} })
-  const radios = tree => {
-    const found = []
-    walk(tree, node => { if (node.type === 'input' && node.props.type === 'radio') found.push(node); return false })
-    return found
-  }
   try {
     let tree = await h.settle()
-    assert.match(text(tree), /32GB：標準VRAM 約22\.8GB時間 基準基準。/)
-    assert.match(text(tree), /16GB：8ビット・速度優先VRAM 約12\.8GB時間 基準の約0\.8倍8ビット。/)
-    assert.match(text(tree), /実際の秒数はGPUなどの構成によって変わります/)
-    assert.doesNotMatch(text(tree), /約\d+秒|RTX/)
-    assert.doesNotMatch(text(tree), /CPUオフロード|KVキャッシュ/)
-    assert.deepEqual(radios(tree).map(node => node.props.checked), [true, false])
+    // Turbo is on no connected worker, so it is not offered; neither are another precision's settings.
+    assert.match(text(tree), /16ビット（標準）8ビット（標準）/)
+    assert.doesNotMatch(text(tree), /Turbo/)
+    assert.deepEqual(cgRadios(tree, 'event-cg-model').map(node => node.props.checked), [true, false])
+    assert.match(text(tree), /ワーカーのVRAM.*32GB/)
+    assert.equal(cgRadios(tree, 'event-cg-configuration').length, 1)
+    // Only the card size is shown: no measurements, speeds or internal switches.
+    assert.doesNotMatch(text(tree), /VRAM 約|時間 基準|約\d+秒|RTX|fp8|CPUオフロード|KVキャッシュ|参照解像度/)
     assert.equal(element(tree, 'button', '画像設定を保存').props.disabled, true)
-    radios(tree)[1].props.onChange()
+    cgRadios(tree, 'event-cg-model')[1].props.onChange()
+    tree = await h.settle()
+    assert.deepEqual(cgRadios(tree, 'event-cg-model').map(node => node.props.checked), [false, true])
+    assert.match(text(tree), /ワーカーのVRAM.*24GB12GB/)
+    assert.deepEqual(cgRadios(tree, 'event-cg-configuration').map(node => node.props.checked), [true, false])
+    cgRadios(tree, 'event-cg-configuration')[1].props.onChange()
     tree = await h.settle()
     walk(element(tree, 'label', '画像サイズ'), node => node.type === 'select').props.onChange({ target: { value: '1536x1024' } })
     tree = await h.settle()
-    assert.deepEqual(radios(tree).map(node => node.props.checked), [false, true])
-    assert.match(text(tree), /8ビット（fp8）で保持/)
     element(tree, 'form', '').props.onSubmit({ preventDefault() {} })
     tree = await h.settle()
     assert.equal(writes[0].method, 'PUT')
     assert.deepEqual(writes[0].body, { expected_revision: 2, profile: { ...settings.profile, width: 1536, height: 1024,
-      cpu_offload: true, text_encoder_offload: 'layers', reference_resolution: 768, use_kv_cache: true,
+      cpu_offload: true, text_encoder_offload: 'layers', reference_resolution: 768, use_kv_cache: false,
       transformer_storage: 'fp8', vae_tiling: true } })
     assert.match(text(tree), /画像設定を保存しました/)
   } finally { globalThis.fetch = originalFetch; hooks.dispose() }
 })
 
+test('choosing Turbo saves its model, revision and fixed schedule, and keeps the card size', async () => {
+  api.respondWith(async () => ({ ...settings, configurations: cgConfigurations, models: cgModels }))
+  const originalFetch = globalThis.fetch
+  const writes = []
+  globalThis.fetch = async (path, options) => {
+    writes.push(JSON.parse(options.body))
+    return { ok: true, status: 200, json: async () => ({ ...settings, revision: 3, profile: writes.at(-1).profile, configurations: cgConfigurations, models: cgModels }) }
+  }
+  const h = harness(EventCgSettings, { visible: true, onBusyChange() {} })
+  try {
+    let tree = await h.settle()
+    assert.match(text(tree), /16ビット（標準）16ビット（Turbo）8ビット（標準）8ビット（Turbo）/)
+    assert.match(text(tree), /推論ステップ数/)
+    cgRadios(tree, 'event-cg-model')[1].props.onChange()
+    tree = await h.settle()
+    // Turbo runs its own schedule, so the step count is not the user's to set.
+    assert.doesNotMatch(text(tree), /推論ステップ数/)
+    assert.deepEqual(cgRadios(tree, 'event-cg-configuration').map(node => node.props.checked), [true])
+    element(tree, 'form', '').props.onSubmit({ preventDefault() {} })
+    tree = await h.settle()
+    assert.deepEqual(writes[0].profile, { ...settings.profile, model: 'turbo', steps: 8,
+      model_revision: 'd65dbc9a7e8f6b5479e33dee6030eaab2a906509' })
+    // Returning to the standard model restores its step count and drops the model field again.
+    cgRadios(tree, 'event-cg-model')[0].props.onChange()
+    tree = await h.settle()
+    element(tree, 'form', '').props.onSubmit({ preventDefault() {} })
+    tree = await h.settle()
+    assert.deepEqual(writes[1].profile, settings.profile)
+  } finally { globalThis.fetch = originalFetch; hooks.dispose() }
+})
+
 test('a profile outside the listed configurations is reported instead of silently matched', async () => {
-  const configurations = [{ id: 'vram32', label: '32GB：標準', vram_gb: 32, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'native', vae_tiling: false, peak_vram_gib: 22.8, time_ratio: 1, quality: '基準。' }]
+  const configurations = [{ id: 'vram32', label: '32GB', vram_gb: 32, reference_resolution: 1024, use_kv_cache: true, transformer_storage: 'native', vae_tiling: false, peak_vram_gib: 22.8, time_ratio: 1, quality: '基準。' }]
   api.respondWith(async () => ({ ...settings, profile: { ...settings.profile, transformer_storage: 'fp8' }, configurations }))
   const h = harness(EventCgSettings, { visible: true, onBusyChange() {} })
   try {
     const tree = await h.settle()
-    assert.match(text(tree), /一覧のどの構成とも一致しません/)
+    assert.match(text(tree), /一覧のどれとも一致しません/)
   } finally { hooks.dispose() }
 })

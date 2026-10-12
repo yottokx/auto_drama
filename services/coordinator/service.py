@@ -496,6 +496,12 @@ class Coordinator:
                 if row["kind"] not in capabilities:
                     return False
                 payload = json.loads(row["payload"])
+                if row["kind"] in {"m3_event_cg", "m2_outfit_image"} and payload.get("cg_profile"):
+                    from packages.contracts.event_cg import worker_models
+
+                    # A picture is drawn by the editing model its work froze; wait for a worker that holds it.
+                    if payload["cg_profile"].get("model", "standard") not in worker_models(capabilities):
+                        return False
                 from .tts_settings import TTSService
 
                 if not TTSService.supports(connection, worker, row["kind"], payload.get("tts_profile")):

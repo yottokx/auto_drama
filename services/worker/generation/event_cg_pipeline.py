@@ -11,15 +11,16 @@ from packages.contracts.event_cg import (
     BUDGET_ALLOCATION_VERSION,
     CG_KINDS,
     CG_LLM_KINDS,
+    CG_MODELS,
     LENIENT_RULES_VERSION,
     MIN_IMAGE_UTTERANCES,
-    MODEL_REVISION,
     STAGING_RULES_VERSION,
     EventCgBudget,
     EventCgPlan,
     EventCgPolicy,
     EventCgProfile,
     EventCgResult,
+    cg_model,
     image_input_sha256,
     image_spans,
     validate_budget,
@@ -57,10 +58,16 @@ class InvalidCgPlan(ValueError):
     """Only a bounded semantic/schema rejection can become a zero-CG plan."""
 
 
-def runtime_settings(config: dict, root: Path) -> dict:
+# Where each editing model is kept, and the setting that moves it.
+MODEL_DIRECTORIES = {"standard": ("model_dir", "models/qwen-image-2.1"),
+                     "turbo": ("turbo_model_dir", "models/qwen-image-2.1-turbo")}
+
+
+def runtime_settings(config: dict, root: Path, model: str = "standard") -> dict:
     settings = config.get("event_cg", {})
+    key, default = MODEL_DIRECTORIES[model]
     return {"python": str((root / settings.get("python", RUNTIME / ".venv/Scripts/python.exe")).resolve()),
-        "model_path": str((root / settings.get("model_dir", RUNTIME / "models/qwen-image-2.1")).resolve()),
+        "model": model, "model_path": str((root / settings.get(key, RUNTIME / default)).resolve()),
         "timeout_seconds": settings.get("timeout_seconds", 900)}
 
 
@@ -68,8 +75,9 @@ def model_identity(settings: dict, root: Path) -> str:
     directory = Path(settings["model_path"])
     manifest_file = directory / "model-manifest.json"
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    if (manifest.get("model_id") != "Qwen/Qwen-Image-2.1"
-            or manifest.get("revision") != MODEL_REVISION or not manifest.get("files")):
+    model = cg_model(settings.get("model", "standard"))
+    if (manifest.get("model_id") != "Qwen/" + model["name"]
+            or manifest.get("revision") != model["revision"] or not manifest.get("files")):
         raise ValueError("Qwen model manifest does not match the verified revision.")
     records = {}
     for row in manifest["files"]:
@@ -90,15 +98,19 @@ def model_identity(settings: dict, root: Path) -> str:
 
 def check_readiness(config: dict, root: Path) -> dict:
     """Optional capability discovery; no downloads, inference, or weight reads."""
-    try:
-        settings = runtime_settings(config, root)
-        if not Path(settings["python"]).is_file():
-            return {"ready": False, "errors": []}
-        model_identity(settings, root)
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        return {"ready": False, "errors": (["Qwen event CG: " + str(exc)]
-            if config.get("event_cg", {}).get("enabled") else [])}
-    return {"ready": True, "errors": []}
+    models, errors = [], []
+    for row in CG_MODELS:
+        try:
+            settings = runtime_settings(config, root, row["id"])
+            if not Path(settings["python"]).is_file():
+                return {"ready": False, "errors": [], "models": []}
+            model_identity(settings, root)
+            models.append(row["id"])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            errors.append(f"Qwen event CG ({row['label']}): {exc}")
+    # A worker need not hold every model; only having none of them is worth a warning.
+    return {"ready": bool(models), "models": models,
+            "errors": errors if not models and config.get("event_cg", {}).get("enabled") else []}
 
 
 def _object(properties, required=None):
@@ -435,7 +447,8 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         config = select_config(config, payload, pipeline.ROOT)
         identity = model_configuration_identity(pipeline.ROOT, config)
     else:
-        settings = runtime_settings(config, pipeline.ROOT)
+        settings = runtime_settings(config, pipeline.ROOT,
+                                    EventCgProfile.model_validate(payload["cg_profile"]).model)
         identity = model_identity(settings, pipeline.ROOT)
     execution_history = []
     if live_settings:

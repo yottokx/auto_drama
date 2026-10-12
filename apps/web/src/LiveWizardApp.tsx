@@ -4,6 +4,7 @@ import { Dialog } from './PreviewComponents'
 import { WorldReview } from './WorldSteps'
 import type { LookWish, MaterialWish } from './CharacterOutfits'
 import { CharacterReview } from './CharacterSteps'
+import { ForkWork } from './ForkWork'
 import { CombinedBriefInput } from './CombinedBriefInput'
 import { activeJob, useM2Api, type M2Detail, type M2Outfit } from './m2Api'
 import { createCharacterBrief, createInitialWizardDraft, wizardSetupBusy, wizardStepLocked, type CharacterBrief, type WizardStep } from './wizardState'
@@ -201,6 +202,7 @@ function ProjectWorkspace({ detail, api, onPendingChange, onNavigate, onNotice, 
       {draft.approved && <div className="wizard-approved"><Icon name="check" size={18}/><div><strong>世界観とメインキャラを承認しました</strong><p>承認した設定・素材の版を保存しました。全体計画と本編では、この承認版を使います。</p></div></div>}
       <JobHistory jobs={setupJobs}/>
     </details>}
+    <ForkWork key={`fork:${detail.project.id}`} projectId={detail.project.id} disabled={busy || pending} onForked={id => { api.select(id); window.scrollTo({ top: 0 }); onNotice('途中までを引き継いだ新しい作品を開きました。もとの作品は作品ライブラリに残っています。') }}/>
     <ChangeHistory key={detail.project.id} projectId={detail.project.id} revision={draft.revision} busy={busy} pending={pending} actionError={api.actionError} restoreEpoch={api.restoreEpoch} onRestore={api.restore} onNotice={onNotice}/>
     {approveOpen && <Dialog title="世界観とキャストを、制作の出発点に。" onClose={() => { if (!api.mutating) setApproveOpen(false) }}><p className="dialog-intro">確認した世界観とメインキャラの設定・立ち絵・音声を承認します。現在の版を、後から参照できる形で保存します。</p><div className="wizard-approval-title"><Icon name="book" size={23}/><div><h3>{world.title}</h3><p>全{world.chapterCount}章 / メインキャラ {characters.length}人</p></div></div><p className="dialog-info">承認すると、全体プロットと登場予定のサブキャラの計画を生成します。次のSTEP4で内容を確認・修正してから、本編の制作を開始します。</p>{draft.approved && <p className="dialog-info">もう一度承認すると、全体計画と本編制作を無効にして、全体計画から生成します。再承認前の状態は変更履歴から戻せます。</p>}{api.actionError && <p className="m2-job-error" role="alert">{api.actionError}</p>}<div className="dialog-actions"><button className="button button-light" disabled={api.mutating} onClick={() => setApproveOpen(false)}>確認に戻る</button><button className="button button-primary" disabled={!complete} onClick={() => { void api.action('approve', { reconfirm: draft.approved }).then(result => { if (result) { setApproveOpen(false); onNotice('世界観とメインキャラを承認しました。全体計画を生成してSTEP4で確認します。'); window.scrollTo({ top: 0 }) } }) }}><Icon name="check" size={15}/>承認して全体計画へ</button></div></Dialog>}
   </>

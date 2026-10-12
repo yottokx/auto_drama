@@ -57,3 +57,13 @@
 .image-editing-setting { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0 0; padding: 14px 16px; border: 1px solid #e3e6d8; border-radius: 8px; background: #fbfcf6; font-size: 13px; color: #56614b; line-height: 1.8; cursor: pointer; }
 .image-editing-setting input { margin-top: 5px; }
 .image-editing-setting small { display: block; font-size: 11px; color: #797464; }
+.fork-work { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 26px 0 10px; padding: 16px 20px; border: 1px solid #dfe3d3; border-radius: 10px; background: #fbfcf6; }
+.fork-work p { flex: 1 1 320px; margin: 0; font-size: 12px; line-height: 1.8; color: #797464; }
+.fork-levels { display: grid; gap: 10px; margin: 6px 0 18px; }
+.fork-levels label { display: flex; align-items: flex-start; gap: 12px; padding: 13px 15px; border: 1px solid #dfe3d3; border-radius: 8px; background: #fffefa; cursor: pointer; }
+.fork-levels label.is-selected { border-color: #7f9a6b; background: #f3f7ec; box-shadow: 0 0 0 1px #7f9a6b inset; }
+.fork-levels label.is-disabled { color: #a5ac9b; cursor: default; background: #f7f7f1; }
+.fork-levels input { margin-top: 4px; }
+.fork-levels strong { display: block; font-size: 14px; font-weight: 500; color: #3f4f35; }
+.fork-levels label.is-disabled strong { color: #a5ac9b; }
+.fork-levels small { display: block; margin-top: 3px; font-size: 11px; line-height: 1.7; color: #797464; }

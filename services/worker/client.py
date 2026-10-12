@@ -18,6 +18,7 @@ from typing import Any, Literal, Self
 import httpx
 
 from packages.contracts import Script
+from packages.contracts.event_cg import CG_MODEL_CAPABILITIES
 from packages.contracts.m3 import M3_KINDS
 from packages.tyrano_export import compile_bundle
 from services.worker.generation.cancellation import (
@@ -45,7 +46,8 @@ M2_JOB_KINDS = (
     "m2_outfit_image",
     "m2_material_image",
 )
-GENERATION_JOB_KINDS = (*M2_JOB_KINDS, *M3_KINDS)
+# Beside the job kinds, a worker names the editing models it holds.
+GENERATION_JOB_KINDS = (*M2_JOB_KINDS, *M3_KINDS, *CG_MODEL_CAPABILITIES)
 
 
 class LeaseLost(Exception):

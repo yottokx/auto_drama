@@ -105,6 +105,7 @@ def create_app(
 
     from .adjustment_routes import router as adjustment_router
     from .event_cg_settings import router as event_cg_router
+    from .fork_service import router as fork_router
     from .image_editing import router as image_editing_router
     from .image_experiment_routes import router as image_experiment_router
     from .m2_routes import router as m2_router
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(m3_router(service))
     app.include_router(planning_router(service))
     app.include_router(material_router(service))
+    app.include_router(fork_router(service))
     app.include_router(image_editing_router(service))
     app.include_router(adjustment_router(service))
     app.include_router(event_cg_router(service))

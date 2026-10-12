@@ -17,7 +17,7 @@ const childrenUrl = dataUrl(`
 export function Icon() {}; export function Dialog() {}; export function WorldReview() {}; export function CharacterReview() {};
 export function CombinedBriefInput() {}; export function RelationshipReview() {}; export function relationshipPairs() { return [] };
 export function ProductionPanel() {}; export function AdjustmentScreen() {}; export function PlanningReviewPanel() {};
-export function ChangeHistory() {}; export function SettingsDialog() {}; export function createCharacterBrief() {};
+export function ChangeHistory() {}; export function ForkWork() {}; export function SettingsDialog() {}; export function createCharacterBrief() {};
 export function createInitialWizardDraft() {}; export function wizardSetupBusy() { return false }; export function wizardStepLocked() { return false };
 export function planningDisplayStep() {};
 `)

@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from .backend import load_pipeline, render_image
-from .common import MODEL_DIR, MODEL_ID, ROOT, RUNTIME, read_json, write_json
+from .common import MODEL_DIR, MODEL_ID, MODELS, ROOT, RUNTIME, read_json, write_json
 from .resources import GenerationCancelled, StopToken, gpu_lock
 
 MAX_REFERENCE_BYTES = 32 * 1024 * 1024
@@ -41,6 +41,9 @@ REQUIRED_FILES = (
     "processor/tokenizer.json", "processor/tokenizer_config.json", "text_encoder/config.json",
     "transformer/config.json", "vae/config.json",
 )
+# Turbo keeps the image processor's settings under another name.
+ALTERNATIVE_FILES = {"processor/preprocessor_config.json": "processor/processor_config.json"}
+MODEL_IDS = frozenset({MODEL_ID, *(row["model_id"] for row in MODELS.values())})
 
 
 def utc_timestamp() -> str:
@@ -157,7 +160,7 @@ def verify_model(model_path: Path, *, token: StopToken | None = None, progress=N
     root = Path(model_path).resolve()
     manifest_path = root / "model-manifest.json"
     manifest = read_json(manifest_path)
-    if (manifest.get("schema_version") != 1 or manifest.get("model_id") != MODEL_ID
+    if (manifest.get("schema_version") != 1 or manifest.get("model_id") not in MODEL_IDS
             or not re.fullmatch(r"[a-f0-9]{40}", str(manifest.get("revision", "")))):
         raise ValueError("モデルの固定リビジョン記録がありません。先にモデルを準備してください。")
     records = manifest.get("files")
@@ -190,7 +193,7 @@ def verify_model(model_path: Path, *, token: StopToken | None = None, progress=N
         if (not target.is_file() or target.stat().st_size != expected_size
                 or digest(target, token=token) != expected_hash):
             raise ValueError(f"モデルのファイルが固定記録と一致しません: {name}")
-    if any(name not in names for name in REQUIRED_FILES):
+    if any(name not in names and ALTERNATIVE_FILES.get(name) not in names for name in REQUIRED_FILES):
         raise ValueError("モデルの必須設定・処理器ファイルが不足しています。")
     actual = {path.relative_to(root).as_posix() for path in root.rglob("*")
               if path.is_file() and path.relative_to(root).parts[0] != ".cache"
@@ -219,7 +222,7 @@ def verify_model(model_path: Path, *, token: StopToken | None = None, progress=N
                 shard_name = (Path(name).parent / shard).as_posix()
                 if shard_name not in names:
                     raise ValueError(f"未検証の分割重みが指定されています: {shard_name}")
-    return {"model_id": MODEL_ID, "revision": manifest["revision"],
+    return {"model_id": manifest["model_id"], "revision": manifest["revision"],
             "manifest_sha256": digest(manifest_path), "verified_files": len(names),
             "model_path": str(root)}
 

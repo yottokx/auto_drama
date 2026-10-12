@@ -86,7 +86,7 @@ export function EventCgPolicyEditor({ projectId, disabled, readonly, onStatusCha
 
   return <section className="event-cg-policy" aria-label="イベントCGの自動生成">
     <div className="event-cg-heading"><h3>イベントCG<span className="edit-model-tag">画像編集</span></h3><span>任意</span></div>
-    <p>AIが印象的な場面を選び、人物の立ち絵を参照した一枚絵を生成します。生成にはQwen-Image-2.1の準備と、追加の時間・メモリが必要です。</p>
+    <p>AIが印象的な場面を選び、人物の立ち絵を参照した一枚絵を生成します。生成には画像編集モデルの準備と、追加の時間・メモリが必要です。</p>
     {!policy ? <p role="status">CG設定を読み込み中…</p> : <>
       <fieldset className="event-cg-fields" disabled={disabled || readonly || saving || conflict}>
         <label>作品全体の基本CG上限<input type="number" min={0} max={EVENT_CG_MAX} step={1} value={maxCgs} onChange={event => { setMaxCgs(event.target.value); setNotice('') }}/><small>0件で自動生成を無効にします。</small></label>

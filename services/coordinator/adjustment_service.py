@@ -459,8 +459,7 @@ class AdjustmentService:
             raise ServiceError(422, "別バージョンには立ち絵だけを生成できます。")
         from .event_cg_settings import EventCgSettings
 
-        if not any("m2_outfit_image" in json.loads(worker["capabilities"]) for worker in connection.execute(
-                "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.clock() - 90,))):
+        if not EventCgSettings(self.coordinator).portraits_ready(connection):
             raise ServiceError(409, "別バージョンの立ち絵にはQwenの準備済みWorkerが必要です。Workerを起動してください。")
         state = json.loads(draft["state"])
         base = next(row for row in state["characters"] if row["character_id"] == look["look"]["character_id"])

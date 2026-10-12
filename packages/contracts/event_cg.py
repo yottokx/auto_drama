@@ -12,6 +12,17 @@ from .outfits import look_timeline
 from .script import Contract, Identifier
 
 MODEL_REVISION = "d26bb61231c349cf6b7896fa83353113880e1ba3"
+TURBO_REVISION = "d65dbc9a7e8f6b5479e33dee6030eaab2a906509"
+# The editing models a worker may hold. Both are the same architecture and take the same
+# memory configurations; Turbo is a checkpoint with its own fixed 8-step schedule. A worker
+# reports each one it has verified by its capability, and holds only those it downloaded.
+CG_MODELS = (
+    {"id": "standard", "label": "標準", "name": "Qwen-Image-2.1", "revision": MODEL_REVISION,
+     "capability": "qwen_image21", "steps": 40},
+    {"id": "turbo", "label": "Turbo", "name": "Qwen-Image-2.1-Turbo", "revision": TURBO_REVISION,
+     "capability": "qwen_image21_turbo", "steps": 8},
+)
+CG_MODEL_CAPABILITIES = tuple(row["capability"] for row in CG_MODELS)
 BUDGET_ALLOCATION_VERSION = 2
 STAGING_RULES_VERSION = 2
 # Version 3 asks only for a first and last line and fits the answer to the script;
@@ -27,33 +38,34 @@ CG_SIZES = ((960, 640), (1536, 1024))
 # at 1536x1024 (docs/setup/qwen-image-edit.md); the driver and desktop need 3-4 GiB beyond
 # it. time_ratio is inference time relative to the standard configuration: seconds depend
 # on the hardware and are never shown.
+# Within one card size, the setting that keeps more of the picture comes before the faster one.
 CG_CONFIGURATION_FIELDS = ("reference_resolution", "use_kv_cache", "transformer_storage", "vae_tiling")
 CG_CONFIGURATIONS = (
-    {"id": "vram32", "label": "32GB：標準", "vram_gb": 32, "reference_resolution": 1024,
+    {"id": "vram32", "label": "32GB", "vram_gb": 32, "reference_resolution": 1024,
      "use_kv_cache": True, "transformer_storage": "native", "vae_tiling": False,
      "peak_vram_gib": 22.8, "time_ratio": 1.0,
      "quality": "基準。量子化なしで、参照画像を最も細かく読み取ります。"},
-    {"id": "vram24_fast", "label": "24GB：速度優先", "vram_gb": 24, "reference_resolution": 768,
-     "use_kv_cache": True, "transformer_storage": "native", "vae_tiling": False,
-     "peak_vram_gib": 19.4, "time_ratio": 0.7,
-     "quality": "量子化なし。参照画像を粗く読むため、服の柄やワッペンなどの細部が簡略になることがあります。"},
-    {"id": "vram24_detail", "label": "24GB：細部優先", "vram_gb": 24, "reference_resolution": 1024,
+    {"id": "vram24_detail", "label": "24GB・品質優先", "vram_gb": 24, "reference_resolution": 1024,
      "use_kv_cache": False, "transformer_storage": "native", "vae_tiling": False,
      "peak_vram_gib": 16.6, "time_ratio": 1.8,
      "quality": "基準と同等。参照画像を毎ステップ読み直すため、時間がかかります。"},
-    {"id": "vram24_8bit", "label": "24GB：8ビット", "vram_gb": 24, "reference_resolution": 1024,
+    {"id": "vram24_fast", "label": "24GB・速度優先", "vram_gb": 24, "reference_resolution": 768,
+     "use_kv_cache": True, "transformer_storage": "native", "vae_tiling": False,
+     "peak_vram_gib": 19.4, "time_ratio": 0.7,
+     "quality": "量子化なし。参照画像を粗く読むため、服の柄やワッペンなどの細部が簡略になることがあります。"},
+    {"id": "vram24_8bit", "label": "24GB", "vram_gb": 24, "reference_resolution": 1024,
      "use_kv_cache": True, "transformer_storage": "fp8", "vae_tiling": True,
      "peak_vram_gib": 16.2, "time_ratio": 0.9,
      "quality": "8ビット。構図と人物は基準とほぼ同じで、口元などの細部が変わることがあります。"},
-    {"id": "vram16_8bit", "label": "16GB：8ビット・速度優先", "vram_gb": 16, "reference_resolution": 768,
-     "use_kv_cache": True, "transformer_storage": "fp8", "vae_tiling": True,
-     "peak_vram_gib": 12.8, "time_ratio": 0.8,
-     "quality": "8ビット。参照画像も粗く読むため、小物や柄の再現が基準より落ちることがあります。"},
-    {"id": "vram16_8bit_detail", "label": "16GB：8ビット・細部優先", "vram_gb": 16,
+    {"id": "vram16_8bit_detail", "label": "16GB・品質優先", "vram_gb": 16,
      "reference_resolution": 1024, "use_kv_cache": False, "transformer_storage": "fp8",
      "vae_tiling": True, "peak_vram_gib": 10.0, "time_ratio": 1.9,
      "quality": "8ビット。参照画像は細かく読みます。時間がかかります。"},
-    {"id": "vram12_8bit", "label": "12GB：8ビット", "vram_gb": 12, "reference_resolution": 768,
+    {"id": "vram16_8bit", "label": "16GB・速度優先", "vram_gb": 16, "reference_resolution": 768,
+     "use_kv_cache": True, "transformer_storage": "fp8", "vae_tiling": True,
+     "peak_vram_gib": 12.8, "time_ratio": 0.8,
+     "quality": "8ビット。参照画像も粗く読むため、小物や柄の再現が基準より落ちることがあります。"},
+    {"id": "vram12_8bit", "label": "12GB", "vram_gb": 12, "reference_resolution": 768,
      "use_kv_cache": False, "transformer_storage": "fp8", "vae_tiling": True,
      "peak_vram_gib": 9.2, "time_ratio": 1.2,
      "quality": "8ビット。参照画像も粗く読みます。最も軽い構成です。"},
@@ -62,7 +74,10 @@ CG_CONFIGURATIONS = (
 
 class EventCgProfile(Contract):
     backend: Literal["qwen_image21"] = "qwen_image21"
-    model_revision: Literal["d26bb61231c349cf6b7896fa83353113880e1ba3"] = MODEL_REVISION
+    # Absent from every profile frozen before a second model existed, which keeps their bytes.
+    model: Literal["standard", "turbo"] = Field(default="standard", exclude_if=lambda value: value == "standard")
+    model_revision: Literal["d26bb61231c349cf6b7896fa83353113880e1ba3",
+                            "d65dbc9a7e8f6b5479e33dee6030eaab2a906509"] = MODEL_REVISION
     dtype: Literal["bfloat16"] = "bfloat16"
     cpu_offload: bool = Field(default=True, strict=True)
     use_kv_cache: bool = Field(default=True, strict=True)
@@ -81,13 +96,42 @@ class EventCgProfile(Contract):
             raise ValueError("CG size must be 960x640 or 1536x1024.")
         return self
 
+    @model_validator(mode="after")
+    def model_matches_its_revision(self):
+        model = cg_model(self.model)
+        if self.model_revision != model["revision"]:
+            raise ValueError("The model revision belongs to another editing model.")
+        if self.model == "turbo" and self.steps != model["steps"]:
+            raise ValueError("Turbo runs its own 8-step schedule.")
+        return self
 
-def new_production_profile() -> EventCgProfile:
+
+def cg_model(identifier: str) -> dict:
+    return next(row for row in CG_MODELS if row["id"] == identifier)
+
+
+def model_capability(profile: dict | None) -> str:
+    """The worker capability a job with this frozen profile needs; old profiles name no model."""
+    return cg_model((profile or {}).get("model", "standard"))["capability"]
+
+
+def worker_models(capabilities) -> list[str]:
+    """The editing models a worker holds. One that predates the choice holds the standard model."""
+    capabilities = set(capabilities)
+    if not CG_KINDS <= capabilities and "m2_outfit_image" not in capabilities:
+        return []
+    named = [row["id"] for row in CG_MODELS if row["capability"] in capabilities]
+    return named or ["standard"]
+
+
+def new_production_profile(model: str = "standard") -> EventCgProfile:
     """What a new production uses until the image settings are saved.
 
     The contract's own defaults describe productions frozen before these options existed.
     """
-    return EventCgProfile(width=1536, height=1024, text_encoder_offload="layers")
+    chosen = cg_model(model)
+    return EventCgProfile(width=1536, height=1024, text_encoder_offload="layers", model=model,
+                          model_revision=chosen["revision"], steps=chosen["steps"])
 
 
 def configuration_id(profile: dict | EventCgProfile) -> str | None:

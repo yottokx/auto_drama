@@ -30,6 +30,7 @@ export function ProductionPanel() { return null }
 export function AdjustmentScreen() { return null }
 export function PlanningReviewPanel() { return null }
 export function ChangeHistory() { return null }
+export function ForkWork() { return null }
 export function SettingsDialog() { return null }
 export function useM2Api() { return null }
 export function SharedMaterials() { return null }
@@ -55,7 +56,7 @@ const { ProjectWorkspace } = await import(await moduleUrl('LiveWizardApp.tsx', {
   './planningState': await moduleUrl('planningState.ts'),
   './RelationshipSteps': await moduleUrl('RelationshipSteps.tsx', { './Icons': childrenUrl }),
   './ProductionPanel': childrenUrl, './AdjustmentScreen': childrenUrl,
-  './PlanningReviewPanel': childrenUrl, './ChangeHistory': childrenUrl, './SettingsDialog': childrenUrl,
+  './PlanningReviewPanel': childrenUrl, './ChangeHistory': childrenUrl, './ForkWork': childrenUrl, './SettingsDialog': childrenUrl,
 }, '\nexport { ProjectWorkspace }\n'))
 
 function walk(node, predicate) {

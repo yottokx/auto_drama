@@ -20,13 +20,14 @@ EDIT_KINDS = frozenset({"m2_outfit_image", "m3_event_cg"})
 EDIT_MODEL = {"name": "Qwen-Image-2.1", "output_caution": True}
 
 
-def edit_model() -> dict:
+def edit_model(in_use: str | None = None) -> dict:
     """The editing model's registration; the generation config may replace it."""
     try:
         configured = json.loads((ROOT / "config/m2-generation.json").read_text(encoding="utf-8")).get("image_editing")
     except (OSError, ValueError):
         configured = None
-    return {**EDIT_MODEL, **(configured if isinstance(configured, dict) else {})}
+    return {**EDIT_MODEL, **({"name": in_use} if in_use else {}),
+            **(configured if isinstance(configured, dict) else {})}
 
 
 def enabled(draft: dict) -> bool:
@@ -104,7 +105,12 @@ def usage(coordinator, connection, project_id: str) -> dict:
             "SELECT COUNT(*) FROM m3_requirement r JOIN m3_production p ON p.id=r.production_id "
             "WHERE p.storyline_id=? AND r.kind='m3_event_cg' AND r.artifact_id IS NOT NULL",
             (selection["production_id"],)).fetchone()[0]
-    model = edit_model()
+    from packages.contracts.event_cg import cg_model
+
+    from .event_cg_settings import EventCgSettings
+
+    # Name the model new pictures are drawn with; the standard one and Turbo share their terms of use.
+    model = edit_model(cg_model(EventCgSettings(coordinator).settings(connection)["profile"].get("model", "standard"))["name"])
     return {"project_id": project_id, "enabled": enabled(draft), "model": model["name"],
             "caution": bool(model["output_caution"]), "portraits": portraits, "event_cgs": event_cgs}
 

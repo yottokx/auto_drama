@@ -149,8 +149,8 @@ def test_settings_hide_disconnected_history_and_keep_live_same_name_workers(tmp_
         settings = client.get(endpoint).json()
         assert settings["ready"] is True
         assert settings["workers"] == [
-            {"id": available, "name": "local", "ready": True},
-            {"id": unavailable, "name": "local", "ready": False},
+            {"id": available, "name": "local", "models": ["standard"], "ready": True},
+            {"id": unavailable, "name": "local", "models": [], "ready": False},
         ]
         now[0] += 90
         assert len(client.get(endpoint).json()["workers"]) == 2
@@ -510,7 +510,8 @@ def test_settings_offer_memory_configurations_and_accept_only_supported_sizes(tm
     with TestClient(create_app(tmp_path)) as client:
         settings = client.get("/api/event-cg/settings").json()
         assert settings["configuration"] == "vram32"
-        assert [row["id"] for row in settings["configurations"]][:2] == ["vram32", "vram24_fast"]
+        # Within a card size, the setting that keeps more of the picture is listed first.
+        assert [row["id"] for row in settings["configurations"]][:3] == ["vram32", "vram24_detail", "vram24_fast"]
         assert all({"label", "peak_vram_gib", "time_ratio", "quality"} <= set(row)
                    for row in settings["configurations"])
         assert settings["sizes"] == [{"width": 960, "height": 640}, {"width": 1536, "height": 1024}]
@@ -523,3 +524,29 @@ def test_settings_offer_memory_configurations_and_accept_only_supported_sizes(tm
         assert client.put("/api/event-cg/settings", json={
             "expected_revision": 1, "profile": {**profile, "height": 640}}).status_code == 422
         assert client.get("/api/event-cg/settings").json()["profile"]["transformer_storage"] == "fp8"
+
+
+def test_settings_offer_the_models_connected_workers_hold_and_start_with_turbo(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        def register(name, extra):
+            return client.post("/api/workers", json={"name": name, "capabilities": [*sorted(CG_KINDS), *extra]}).json()["id"]
+
+        # A worker from before the choice existed holds the standard model.
+        register("old", [])
+        settings = client.get("/api/event-cg/settings").json()
+        assert settings["profile"] == new_production_profile().model_dump(mode="json") and settings["ready"] is True
+        assert [(row["id"], row["available"]) for row in settings["models"]] == [("standard", True), ("turbo", False)]
+        # Until a choice is saved, Turbo is used wherever a worker has it.
+        register("new", ["qwen_image21", "qwen_image21_turbo"])
+        settings = client.get("/api/event-cg/settings").json()
+        assert settings["profile"] == new_production_profile("turbo").model_dump(mode="json")
+        assert [row["available"] for row in settings["models"]] == [True, True]
+        assert [(worker["name"], worker["ready"]) for worker in settings["workers"]] == [("new", True), ("old", False)]
+        # A saved choice is kept as it is, and readiness follows it.
+        saved = client.put("/api/event-cg/settings", json={
+            "expected_revision": 0, "profile": new_production_profile().model_dump(mode="json")}).json()
+        assert "model" not in saved["profile"] and saved["ready"] is True
+        assert all(worker["ready"] for worker in saved["workers"])
+        # A revision that belongs to the other model is refused.
+        mixed = {**new_production_profile("turbo").model_dump(mode="json"), "model_revision": saved["profile"]["model_revision"]}
+        assert client.put("/api/event-cg/settings", json={"expected_revision": 1, "profile": mixed}).status_code == 422

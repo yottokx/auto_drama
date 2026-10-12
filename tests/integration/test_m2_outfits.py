@@ -199,3 +199,28 @@ def test_brief_looks_are_edited_removed_and_kept_without_touching_the_cast(tmp_p
         action(client, project, "confirm-world")
         assert all(job["kind"] != "m2_outfit_image" for job in detail(client, project)["jobs"])
         action(client, project, "approve", status=409)
+
+
+def test_a_look_waits_for_a_worker_that_holds_the_editing_model_in_use(tmp_path):
+    from packages.contracts.event_cg import new_production_profile
+
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        standard = outfit_worker(client)
+        action(client, project, "save-outfit", character_id="character-1", outfit=LOOK)
+        settings = client.get("/api/event-cg/settings").json()
+        assert [(row["id"], row["available"]) for row in settings["models"]] == [("standard", True), ("turbo", False)]
+        turbo_profile = new_production_profile("turbo").model_dump(mode="json")
+        saved = client.put("/api/event-cg/settings", json={"expected_revision": settings["revision"],
+                                                           "profile": turbo_profile})
+        assert saved.status_code == 200 and saved.json()["ready"] is False
+        # No connected worker holds Turbo, so the look cannot be drawn yet.
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1", status=409)
+        turbo = client.post("/api/workers", json={
+            "name": "turbo", "capabilities": ["m2_outfit_image", "qwen_image21_turbo"]}).json()["id"]
+        action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")
+        # The worker with only the standard model leaves the job for the one that has Turbo.
+        assert claim(client, standard) is None
+        job = claim(client, turbo)
+        assert job["kind"] == "m2_outfit_image"
+        assert (job["payload"]["cg_profile"]["model"], job["payload"]["cg_profile"]["steps"]) == ("turbo", 8)

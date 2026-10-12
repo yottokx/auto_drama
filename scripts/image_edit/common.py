@@ -12,6 +12,7 @@ from scripts.audio.hub_auth import hub_environment
 from scripts.audio.json_io import write_json
 
 __all__ = [
+    "MODELS",
     "MODEL_DIR",
     "MODEL_ID",
     "OUTPUT_DIR",
@@ -29,6 +30,12 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "services/worker/runtimes/qwen_image_edit"
 MODEL_ID = "Qwen/Qwen-Image-2.1"
 MODEL_DIR = RUNTIME / "models/qwen-image-2.1"
+# The official checkpoints this runtime can hold, each in its own verified folder. They share one
+# architecture; Turbo carries its own step schedule in model_index.json.
+MODELS = {
+    "standard": {"model_id": MODEL_ID, "directory": MODEL_DIR},
+    "turbo": {"model_id": "Qwen/Qwen-Image-2.1-Turbo", "directory": RUNTIME / "models/qwen-image-2.1-turbo"},
+}
 SETTINGS = ROOT / "private/image-edit/gui-settings.json"
 OUTPUT_DIR = ROOT / "outputs/image-edit-tests"
 

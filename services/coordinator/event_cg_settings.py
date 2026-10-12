@@ -9,12 +9,14 @@ from pydantic import Field
 from packages.contracts.event_cg import (
     CG_CONFIGURATIONS,
     CG_KINDS,
+    CG_MODELS,
     CG_SIZES,
     LENIENT_RULES_VERSION,
     EventCgPolicy,
     EventCgProfile,
     configuration_id,
     new_production_profile,
+    worker_models,
 )
 from packages.contracts.script import Contract
 
@@ -45,20 +47,43 @@ class EventCgSettings:
 
     def settings(self, connection):
         row = connection.execute("SELECT * FROM event_cg_settings WHERE id=1").fetchone()
-        profile = EventCgProfile.model_validate_json(row["profile"]) if row else new_production_profile()
         # Worker registrations remain for job history after the process exits.
         # The settings inventory must describe only currently connected workers.
-        workers = [{"id": worker["id"], "name": worker["name"],
-                    "ready": CG_KINDS <= set(json.loads(worker["capabilities"]))}
-                   for worker in connection.execute(
-                       "SELECT * FROM worker WHERE last_seen_at>=? ORDER BY name,id",
-                       (self.coordinator.clock() - 90,))]
+        workers = []
+        for worker in connection.execute("SELECT * FROM worker WHERE last_seen_at>=? ORDER BY name,id",
+                                         (self.coordinator.clock() - 90,)):
+            capabilities = set(json.loads(worker["capabilities"]))
+            workers.append({"id": worker["id"], "name": worker["name"], "models": worker_models(capabilities),
+                            "ready": CG_KINDS <= capabilities})
+        available = {model for worker in workers for model in worker["models"]}
+        profile = self._profile(row, available)
+        for worker in workers:
+            # A worker is ready for the model in use, not merely for some model.
+            worker["ready"] = worker["ready"] and profile.model in worker["models"]
         workers.sort(key=lambda worker: not worker["ready"])
         return {"profile": profile.model_dump(mode="json"), "revision": row["revision"] if row else 0,
                 "ready": any(worker["ready"] for worker in workers), "workers": workers,
+                "models": [{"id": value["id"], "label": value["label"], "name": value["name"],
+                            "revision": value["revision"], "steps": value["steps"],
+                            "available": value["id"] in available} for value in CG_MODELS],
                 "configuration": configuration_id(profile),
                 "configurations": [dict(value) for value in CG_CONFIGURATIONS],
                 "sizes": [{"width": width, "height": height} for width, height in CG_SIZES]}
+
+    @staticmethod
+    def _profile(row, available) -> EventCgProfile:
+        """The saved choice; until one is saved, Turbo wherever a connected worker holds it."""
+        return (EventCgProfile.model_validate_json(row["profile"]) if row
+                else new_production_profile("turbo" if "turbo" in available else "standard"))
+
+    def portraits_ready(self, connection) -> bool:
+        """Whether a connected worker can edit a portrait with the editing model in use."""
+        held = [worker_models(capabilities) for worker in connection.execute(
+            "SELECT capabilities FROM worker WHERE last_seen_at>=?", (self.coordinator.clock() - 90,))
+            if "m2_outfit_image" in (capabilities := json.loads(worker["capabilities"]))]
+        row = connection.execute("SELECT * FROM event_cg_settings WHERE id=1").fetchone()
+        model = self._profile(row, {model for models in held for model in models}).model
+        return any(model in models for models in held)
 
     def freeze(self, connection, project_id, *, expected_revision=None):
         policy = self.policy(connection, project_id)

@@ -1,4 +1,4 @@
-"""Fetch a pinned official Qwen Image 2.1 snapshot and publish verified files.
+"""Fetch a pinned official Qwen Image 2.1 snapshot (standard or Turbo) and publish verified files.
 
 The coordinator may import validation helpers without importing the Hub or torch.
 Authentication is inherited from the environment or the existing Hub login; no
@@ -22,8 +22,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.image_edit.common import (
-    MODEL_DIR,
     MODEL_ID,
+    MODELS,
     RUNTIME,
     hub_environment,
     read_json,
@@ -44,6 +44,20 @@ REQUIRED_FILES = (
     "processor/tokenizer_config.json", "scheduler/scheduler_config.json",
     "text_encoder/config.json", "transformer/config.json", "vae/config.json",
 )
+# Turbo keeps the image processor's settings under another name.
+ALTERNATIVE_FILES = {"processor/preprocessor_config.json": "processor/processor_config.json"}
+MODEL_IDS = frozenset(row["model_id"] for row in MODELS.values())
+# Turbo's text encoder is the standard model's, packed as one 17.5 GB file instead of four.
+# These two revisions were compared tensor by tensor (750 of 750 equal, 2026-10-12), so when
+# the standard model is already here its verified files are linked instead of fetched again.
+SHARED_TEXT_ENCODER = {
+    ("Qwen/Qwen-Image-2.1-Turbo", "d65dbc9a7e8f6b5479e33dee6030eaab2a906509"):
+        ("standard", "d26bb61231c349cf6b7896fa83353113880e1ba3"),
+}
+
+
+def missing_required(names) -> list[str]:
+    return [name for name in REQUIRED_FILES if name not in names and ALTERNATIVE_FILES.get(name) not in names]
 
 
 class PreparationCancelled(Exception):
@@ -60,7 +74,7 @@ def check_cancel(status_dir: Path) -> None:
         raise PreparationCancelled("Qwen Image 2.1のモデル準備を中止しました。")
 
 
-def safe_error(exc: Exception) -> str:
+def safe_error(exc: Exception, model_id: str = MODEL_ID) -> str:
     message = str(exc).strip() or type(exc).__name__
     # A library exception must never expose an inherited credential in GUI logs.
     for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
@@ -73,7 +87,7 @@ def safe_error(exc: Exception) -> str:
     if http_status in {401, 403} or any(x in message.lower() for x in ("gated", "401", "403")):
         return (
             "公式モデルへのアクセスが拒否されました。"
-            f"https://huggingface.co/{MODEL_ID} で利用条件・アクセス権を確認し、"
+            f"https://huggingface.co/{model_id} で利用条件・アクセス権を確認し、"
             "同じアカウントで hf auth login を実行してください。"
             "制限付きトークンにはこのモデルの読み取り権限が必要です。\n" + message
         )
@@ -106,9 +120,10 @@ def validate_components(directory: Path) -> None:
         definition = index.get(component)
         if definition != COMPONENT_CLASSES[component]:
             raise ValueError(f"公式モデルの構成と一致しません: {component}")
-    for name in REQUIRED_FILES:
-        if not contained_file(directory, name).is_file():
-            raise ValueError(f"モデルの必須ファイルがありません: {name}")
+    present = {name for name in (*REQUIRED_FILES, *ALTERNATIVE_FILES.values())
+               if contained_file(directory, name).is_file()}
+    for name in missing_required(present):
+        raise ValueError(f"モデルの必須ファイルがありません: {name}")
     for component in ("text_encoder", "transformer", "vae"):
         folder = directory / component
         if not list(folder.glob("*.safetensors")):
@@ -135,7 +150,7 @@ def validate_manifest(directory: Path, status_dir: Path) -> dict:
     """Rehash all saved files; never trust merely having model_index.json."""
     validate_components(directory)
     manifest = read_json(directory / MANIFEST)
-    if (manifest.get("schema_version") != 1 or manifest.get("model_id") != MODEL_ID
+    if (manifest.get("schema_version") != 1 or manifest.get("model_id") not in MODEL_IDS
             or not re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("revision", "")))):
         raise ValueError("準備済みモデルの公式リビジョン・検証記録を確認できません。")
     entries = manifest.get("files")
@@ -180,9 +195,42 @@ def snapshot_entries(info) -> list[dict]:
         if lfs_hash:
             entry["sha256"] = lfs_hash
         entries.append(entry)
-    if not set(REQUIRED_FILES).issubset({entry["path"] for entry in entries}):
+    if missing_required({entry["path"] for entry in entries}):
         raise ValueError("公式リポジトリのモデル構成が想定と異なります。")
     return sorted(entries, key=lambda entry: entry["path"])
+
+
+def shared_text_encoder(model_id: str, revision: str, entries: list[dict], stage: Path) -> list[dict]:
+    """Link the standard model's text encoder into the stage when it is known to be the same weights.
+
+    Returns the entries as they now stand: the single file replaced by the linked ones, each
+    with the hash the standard model's own manifest records. Any doubt leaves them unchanged.
+    """
+    source_model, source_revision = SHARED_TEXT_ENCODER.get((model_id, revision), (None, None))
+    if source_model is None:
+        return entries
+    source = Path(MODELS[source_model]["directory"])
+    manifest = read_json(source / MANIFEST)
+    weights = [entry for entry in manifest.get("files", []) if isinstance(entry, dict)
+               and str(entry.get("path", "")).startswith("text_encoder/model")]
+    replaced = [entry for entry in entries if entry["path"].startswith("text_encoder/model")]
+    if manifest.get("revision") != source_revision or not weights or not replaced:
+        return entries
+    linked = []
+    try:
+        for entry in weights:
+            target = contained_file(stage, entry["path"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.link(contained_file(source, entry["path"]), target)
+            linked.append(target)
+    except OSError:
+        # Another volume or a file system without hard links: fetch the file as published.
+        for target in linked:
+            target.unlink(missing_ok=True)
+        return entries
+    kept = [entry for entry in entries if not entry["path"].startswith("text_encoder/model")]
+    return sorted([*kept, *({"path": entry["path"], "size_bytes": entry["size_bytes"], "sha256": entry["sha256"]}
+                            for entry in weights)], key=lambda entry: entry["path"])
 
 
 def download_worker(job_path: Path) -> None:
@@ -193,21 +241,24 @@ def download_worker(job_path: Path) -> None:
     from huggingface_hub import HfApi, snapshot_download
 
     update_status(status, "preparing", "公式モデルのリビジョンと容量を確認しています。")
-    info = HfApi().model_info(MODEL_ID, revision=job.get("revision") or "main", files_metadata=True)
+    model_id = job.get("model_id") or MODEL_ID
+    info = HfApi().model_info(model_id, revision=job.get("revision") or "main", files_metadata=True)
     revision = info.sha
     if not re.fullmatch(r"[0-9a-f]{40}", str(revision)):
         raise ValueError("公式モデルの固定リビジョンを確定できません。")
-    entries = snapshot_entries(info)
-    total = sum(entry["size_bytes"] for entry in entries)
+    published = snapshot_entries(info)
+    entries = shared_text_encoder(model_id, revision, published, stage)
+    fetched = [entry for entry in entries if entry in published]
+    total = sum(entry["size_bytes"] for entry in fetched)
     write_json(status / "snapshot.json", {
-        "model_id": MODEL_ID, "revision": revision, "gated": info.gated,
+        "model_id": model_id, "revision": revision, "gated": info.gated,
         "snapshot_required_bytes": total, "files": entries,
     })
     check_cancel(status)
     update_status(status, "downloading", "公式Qwen Image 2.1のモデルを取得しています。", 
                   revision=revision, gated=info.gated, total_bytes=total, downloaded_bytes=0)
-    snapshot_download(MODEL_ID, revision=revision, local_dir=stage,
-                      allow_patterns=[entry["path"] for entry in entries], max_workers=3)
+    snapshot_download(model_id, revision=revision, local_dir=stage,
+                      allow_patterns=[entry["path"] for entry in fetched], max_workers=3)
     check_cancel(status)
     validate_components(stage)
     verified = []
@@ -224,7 +275,7 @@ def download_worker(job_path: Path) -> None:
             raise ValueError(f"公式重みのSHA256と一致しません: {name}")
         verified.append({"path": name, "size_bytes": entry["size_bytes"], "sha256": digest})
     write_json(stage / MANIFEST, {
-        "schema_version": 1, "model_id": MODEL_ID, "revision": revision,
+        "schema_version": 1, "model_id": model_id, "revision": revision,
         "gated": info.gated, "snapshot_required_bytes": total, "files": verified,
     })
 
@@ -284,7 +335,8 @@ def run_child(job_path: Path, status_dir: Path) -> None:
                 process.wait(timeout=3)
 
 
-def prepare_model(model_dir: Path, status_dir: Path, revision: str | None = None) -> dict:
+def prepare_model(model_dir: Path, status_dir: Path, revision: str | None = None,
+                  model_id: str = MODEL_ID) -> dict:
     output = model_dir.expanduser().resolve()
     status = status_dir.expanduser().resolve()
     update_status(status, "preparing", "Qwen Image 2.1のモデル準備を開始しています。")
@@ -293,6 +345,8 @@ def prepare_model(model_dir: Path, status_dir: Path, revision: str | None = None
         if not output.is_dir() or not (output / MANIFEST).is_file():
             raise ValueError("モデル出力先に既存ファイルがあります。検証記録のあるモデルか空のフォルダーを選択してください。")
         manifest = validate_manifest(output, status)
+        if manifest["model_id"] != model_id:
+            raise ValueError("モデル出力先には別のモデルが準備されています。")
         if revision and manifest["revision"] != revision:
             raise ValueError("指定リビジョンと準備済みモデルのリビジョンが一致しません。")
         update_status(status, "done", "準備済み公式モデルの検証が完了しました。", model_path=str(output))
@@ -305,14 +359,15 @@ def prepare_model(model_dir: Path, status_dir: Path, revision: str | None = None
     stage.mkdir()
     try:
         job = status / "prepare_job.json"
-        write_json(job, {"stage_dir": str(stage), "status_dir": str(status), "revision": revision})
+        write_json(job, {"stage_dir": str(stage), "status_dir": str(status), "revision": revision,
+                         "model_id": model_id})
         # Remove only earlier job errors in this status directory.
         (status / "child_error.json").unlink(missing_ok=True)
         run_child(job, status)
         check_cancel(status)
         manifest = read_json(stage / MANIFEST)
         validate_components(stage)
-        if not manifest or manifest.get("model_id") != MODEL_ID:
+        if not manifest or manifest.get("model_id") != model_id:
             raise RuntimeError("公式モデルの検証記録が作成されませんでした。")
         # The child verified each digest; avoid hashing 33 GB twice on first setup.
         if output.exists():
@@ -332,7 +387,9 @@ def prepare_model(model_dir: Path, status_dir: Path, revision: str | None = None
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="公式Qwen Image 2.1モデルの取得・検証")
-    parser.add_argument("--model-dir", type=Path, default=MODEL_DIR)
+    parser.add_argument("--model", choices=sorted(MODELS), default="standard",
+                        help="standard: Qwen-Image-2.1 / turbo: Qwen-Image-2.1-Turbo (8 steps)")
+    parser.add_argument("--model-dir", type=Path)
     parser.add_argument("--status-dir", type=Path)
     parser.add_argument("--revision")
     parser.add_argument("--internal-job", type=Path, help=argparse.SUPPRESS)
@@ -347,14 +404,16 @@ def main(argv: list[str] | None = None) -> int:
         except PreparationCancelled:
             return 0
         except Exception as exc:  # noqa: BLE001 - CLI reports failures without a traceback.
-            error = safe_error(exc)
+            error = safe_error(exc, job.get("model_id") or MODEL_ID)
             write_json(Path(job["status_dir"]) / "child_error.json", {"error": error})
             print(error, file=sys.stderr, flush=True)
             return 1
     if args.status_dir is None:
         parser.error("--status-dir が必要です")
     try:
-        details = prepare_model(args.model_dir, args.status_dir, args.revision)
+        chosen = MODELS[args.model]
+        details = prepare_model(args.model_dir or chosen["directory"], args.status_dir, args.revision,
+                                chosen["model_id"])
         result = {"ok": True, "cancelled": False, **details}
         code = 0
     except PreparationCancelled as exc:
@@ -362,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         result = {"ok": False, "cancelled": True, "error": str(exc)}
         code = 0
     except Exception as exc:  # noqa: BLE001 - Always complete the GUI result contract.
-        error = safe_error(exc)
+        error = safe_error(exc, MODELS[args.model]["model_id"])
         update_status(args.status_dir, "error", error)
         result = {"ok": False, "cancelled": False, "error": error}
         code = 1

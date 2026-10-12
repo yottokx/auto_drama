@@ -26,8 +26,12 @@ def check_readiness() -> dict:
     except (OSError, ValueError, KeyError):
         event_cg = {"ready": False, "errors": []}
     if event_cg["ready"]:
+        from packages.contracts.event_cg import cg_model
+
         # The same Qwen runtime edits a base portrait into an alternate look.
         status["available_job_kinds"].extend(("m3_event_cg", "m2_outfit_image"))
+        # Which editing models this worker holds, so a job waits for one that has its model.
+        status["available_job_kinds"].extend(cg_model(value)["capability"] for value in event_cg.get("models", []))
     status["errors"].extend(event_cg["errors"])
     status["event_cg_ready"] = event_cg["ready"]
     return status

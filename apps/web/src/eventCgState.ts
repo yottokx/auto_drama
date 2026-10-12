@@ -3,6 +3,8 @@ import { ApiError } from './api'
 export type EventCgPolicy = { max_cgs: number; max_variants_per_cg: number; revision: number }
 export type EventCgProfile = {
   backend: 'qwen_image21'; model_revision: string; dtype: 'bfloat16'; cpu_offload: boolean
+  /** Absent for the standard model, as in every profile saved before Turbo existed. */
+  model?: 'standard' | 'turbo'
   use_kv_cache: boolean; steps: number; width: number; height: number
   reference_resolution?: number; text_encoder_offload?: 'model' | 'layers'
   transformer_storage?: 'native' | 'fp8'; vae_tiling?: boolean
@@ -13,10 +15,17 @@ export type EventCgConfiguration = {
   transformer_storage: 'native' | 'fp8'; vae_tiling: boolean
   peak_vram_gib: number; time_ratio: number; quality: string
 }
+/** An editing model, and whether a connected worker holds it. */
+export type EventCgModel = {
+  id: 'standard' | 'turbo'; label: string; name: string; revision: string; steps: number; available: boolean
+}
+/** What the user picks as "the model": a downloaded model, kept at 16 or 8 bits. */
+export type EventCgModelChoice = { id: string; model: EventCgModel; storage: 'native' | 'fp8'; label: string }
 export type EventCgSettings = {
   revision: number; profile: EventCgProfile; ready: boolean
-  workers: { id: string; name: string; ready: boolean; reason?: string }[]
+  workers: { id: string; name: string; ready: boolean; reason?: string; models?: string[] }[]
   reasons?: string[]
+  models?: EventCgModel[]
   configuration?: string | null; configurations?: EventCgConfiguration[]
   sizes?: { width: number; height: number }[]
 }
@@ -72,7 +81,7 @@ export function eventCgReadinessReason(maxCgs: number, settings: EventCgSettings
   if (maxCgs === 0) return null
   if (!settings) return 'Qwenの実行環境を確認しています。'
   if (settings.ready && settings.profile.backend === 'qwen_image21' && settings.workers.some(worker => worker.ready)) return null
-  return settings.reasons?.join(' ') || 'Qwen-Image-2.1を実行できるワーカーが準備できていません。設定の「画像」で準備状態を確認してください。'
+  return settings.reasons?.join(' ') || '画像編集モデルを実行できるワーカーが準備できていません。設定の「画像」で準備状態を確認してください。'
 }
 
 export function eventCgConfigurationId(profile: EventCgProfile, configurations: EventCgConfiguration[]): string | null {
@@ -87,6 +96,37 @@ export function applyEventCgConfiguration(profile: EventCgProfile, item: EventCg
   // Every listed configuration swaps components through the CPU and reads the text encoder layer by layer.
   return { ...profile, cpu_offload: true, text_encoder_offload: 'layers', reference_resolution: item.reference_resolution,
     use_kv_cache: item.use_kv_cache, transformer_storage: item.transformer_storage, vae_tiling: item.vae_tiling }
+}
+
+/** The models to offer: those a connected worker holds, plus the saved one so it stays visible. */
+export function eventCgModelChoices(models: EventCgModel[], profile: EventCgProfile): EventCgModelChoice[] {
+  const current = profile.model ?? 'standard'
+  return (['native', 'fp8'] as const).flatMap(storage => models
+    .filter(model => model.available || model.id === current)
+    .map(model => ({ id: `${model.id}:${storage}`, model, storage, label: `${storage === 'native' ? '16ビット' : '8ビット'}（${model.label}）` })))
+}
+
+export function eventCgModelChoiceId(profile: EventCgProfile): string {
+  return `${profile.model ?? 'standard'}:${profile.transformer_storage ?? 'native'}`
+}
+
+/** The memory settings a model can run with; the others are not shown at all. */
+export function eventCgTiers(configurations: EventCgConfiguration[], storage: 'native' | 'fp8'): EventCgConfiguration[] {
+  return configurations.filter(item => item.transformer_storage === storage)
+}
+
+export function applyEventCgModel(profile: EventCgProfile, choice: EventCgModelChoice, configurations: EventCgConfiguration[]): EventCgProfile {
+  const { model: _previous, ...rest } = profile
+  // Turbo runs its own schedule; going back to the standard model restores its usual step count.
+  const steps = choice.model.id === (profile.model ?? 'standard') ? profile.steps : choice.model.steps
+  const next: EventCgProfile = { ...rest, ...(choice.model.id === 'standard' ? {} : { model: choice.model.id }),
+    model_revision: choice.model.revision, steps }
+  if ((profile.transformer_storage ?? 'native') === choice.storage) return next
+  // The other precision has its own memory settings: keep the card size when it offers one.
+  const tiers = eventCgTiers(configurations, choice.storage)
+  const current = configurations.find(item => item.id === eventCgConfigurationId(profile, configurations))
+  const tier = tiers.find(item => item.vram_gb === current?.vram_gb) ?? tiers[0]
+  return tier ? applyEventCgConfiguration(next, tier) : { ...next, transformer_storage: choice.storage }
 }
 
 /** The shared request helper uses POST; these versioned settings endpoints use PUT. */
