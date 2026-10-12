@@ -223,6 +223,10 @@ class M2Service:
             for outfit in character.setdefault("outfits", []):
                 artifact = outfit.get("imageArtifactId")
                 outfit["imageUrl"] = f"/api/artifacts/{artifact}/content" if artifact else None
+            for picture in character.get("expressions", []):
+                picture["imageUrl"] = f"/api/artifacts/{picture['imageArtifactId']}/content"
+                # Edited from a portrait that has since been replaced: kept, but no longer shown.
+                picture["stale"] = picture["baseImageArtifactId"] != self._look_image(character, picture["outfitId"])
             # Every picture made of this character, rejected ones included, newest first. It is a
             # record of what exists, not part of the draft: restoring an older draft keeps it.
             history[character["id"]] = [
@@ -926,6 +930,65 @@ class M2Service:
         state["queue"] = [{**self._outfit_descriptor(connection, project_id, character, outfit),
                            **self._look_context(state["draft"], character, outfit)}]
 
+    @classmethod
+    def _look_image(cls, character: dict, outfit_id: str) -> str | None:
+        """The portrait a look currently shows, if it has one that reflects its settings."""
+        if outfit_id == DEFAULT_OUTFIT:
+            return None if character["imagePendingChanges"] else character["imageArtifactId"]
+        outfit = next((item for item in cls._alternates(character) if item["id"] == outfit_id), None)
+        if outfit is None or outfit in cls._stale_looks(character):
+            return None
+        return outfit["imageArtifactId"]
+
+    def _expression_action(self, connection, project_id: str, state: dict, character: dict, body) -> None:
+        """Expression pictures are extras: they neither enter nor end the approval of the cast."""
+        pictures = character.setdefault("expressions", [])
+        if body.action == "delete-expression":
+            kept = [row for row in pictures
+                    if (row["outfitId"], row["expression"]) != (body.outfit_id, body.expression)]
+            if len(kept) == len(pictures):
+                raise ServiceError(404, "その表情の絵が見つかりません。")
+            character["expressions"] = kept
+            return
+        if not self._qwen_ready(connection, state["draft"]):
+            raise ServiceError(409, "表情の作成には、画像編集の準備ができたWorkerが必要です。")
+        known = [DEFAULT_OUTFIT, *(item["id"] for item in self._alternates(character))]
+        looks = body.outfit_ids or known
+        if any(look not in known for look in looks):
+            raise ServiceError(404, "別バージョンが見つかりません。")
+        from .event_cg_settings import EventCgSettings
+
+        profile = EventCgSettings(self.coordinator).settings(connection)["profile"]
+        names = {item["id"]: item["name"] for item in character.get("outfits", [])}
+        queued = {(item["character_id"], item["outfit"]["id"], item["expression"]["id"])
+                  for item in state["queue"] if item.get("expression")}
+        tasks = []
+        for look in looks:
+            image = self._look_image(character, look)
+            if image is None:
+                if body.outfit_ids:
+                    raise ServiceError(409, "現在の設定を反映した立ち絵を先に生成してください。")
+                # Asked for every look: one still waiting for its portrait is simply left out.
+                continue
+            reference = required(connection, "artifact", image)
+            self.store.read(reference)
+            for expression in body.expressions:
+                current = next((row for row in pictures if (row["outfitId"], row["expression"]) == (look, expression)
+                                and row["baseImageArtifactId"] == image), None)
+                if (current and not body.redraw) or (character["id"], look, expression) in queued:
+                    continue
+                descriptor = task("m2_outfit_image", character["id"], "expression-image")
+                descriptor["cg_profile"] = profile
+                descriptor["outfit"] = {"id": look, "name": names.get(look) or "通常の姿", "description": "",
+                                        "occasion": ""}
+                descriptor["reference_image"] = {"artifact_id": reference["id"], "sha256": reference["sha256"]}
+                descriptor["expression"] = {"id": expression, **({"face_box": list(body.face_box)}
+                                                                if body.face_box else {})}
+                tasks.append(descriptor)
+        if not tasks:
+            raise ServiceError(409, "作成する表情がありません。すでに作成済みです。")
+        state["queue"].extend(tasks)
+
     def _profile(self, connection=None) -> dict:
         from .llm_settings import generation_profile
 
@@ -1005,7 +1068,7 @@ class M2Service:
         else:
             state.pop("portraitPromptBatch", None)
         for key in ("reference_voice", "dialogue_text", "reference_image", "outfit", "cg_profile", "material_image", "edit",
-                    "other_looks", "current_look"):
+                    "other_looks", "current_look", "expression"):
             if key in descriptor:
                 payload[key] = descriptor[key]
         identifier, run_id, now = uuid4().hex, uuid4().hex, self.clock()
@@ -1139,6 +1202,15 @@ class M2Service:
                     self._invalidate(state)
                     draft["revision"] += 1
                 draft["step"] = "world-input"
+                self._save(connection, project_id, state)
+                return self._view(connection, project_id, state)
+            if name in {"generate-expressions", "delete-expression"}:
+                character = self._character(draft, body.character_id)
+                if not character["result"]:
+                    raise ServiceError(409, "先にキャラクターを生成してください。")
+                # Like a voice audition, this leaves the cast and its approval as they are.
+                self._expression_action(connection, project_id, state, character, body)
+                self._queue_next(connection, project_id, state)
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
             if name == "clone-voice":
@@ -1706,6 +1778,23 @@ class M2Service:
                 "version": record["version"],
                 "pendingChanges": False,
             }
+        elif job["kind"] == "m2_outfit_image" and payload.get("expression"):
+            # One expression of one look. It records the portrait it was edited from, and is
+            # shown only while that portrait is the look's own.
+            look, expression = payload["outfit"]["id"], payload["expression"]["id"]
+            record = self._artifact(
+                connection, job["project_id"], f"expression-{character['id']}-{look}-{expression}",
+                "m2_expression_image", "image.png", "image/png", files["image.png"],
+                provenance=envelope["provenance"], job=job, attempt=attempt)
+            character["expressions"] = [
+                *(row for row in character.get("expressions", [])
+                  if (row["outfitId"], row["expression"]) != (look, expression)),
+                {"outfitId": look, "expression": expression, "imageArtifactId": record["id"],
+                 "baseImageArtifactId": payload["reference_image"]["artifact_id"]}]
+            self._artifact(
+                connection, job["project_id"], f"result-{job['id']}", "m2_metadata", "result.json",
+                "application/json", files["result.json"], provenance=envelope["provenance"],
+                job=job, attempt=attempt)
         elif job["kind"] == "m2_outfit_image" and payload["outfit"]["id"] == DEFAULT_OUTFIT:
             # The base portrait wearing a shared design replaces it; every look is derived again.
             record = self._artifact(
@@ -1860,6 +1949,9 @@ class M2Service:
                 if (not isinstance(source, dict) or source.get("id") != payload["outfit"]["id"]
                         or source.get("reference_sha256") != payload["reference_image"]["sha256"]):
                     raise ValueError("outfit image provenance must match its base portrait")
+                wanted = (payload.get("expression") or {}).get("id")
+                if (source.get("expression") or {}).get("id") != wanted:
+                    raise ValueError("expression picture differs from the expression asked for")
             elif job["kind"] == "m2_voice_clone":
                 voice_metadata = envelope["provenance"].get("voice", {})
                 if (

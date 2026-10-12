@@ -10,6 +10,12 @@ from typing import Literal
 
 from pydantic import Field
 
+from packages.contracts.expressions import (
+    DEFAULT_EXPRESSION,
+    EXPRESSION_FADE_MS,
+    Expression,
+    expression_changes,
+)
 from packages.contracts.m2 import CharacterResult
 from packages.contracts.m3 import (
     CharacterArc,
@@ -74,6 +80,18 @@ class EmotionAnnotation(Contract):
     inner_emotion: str
     voice_emotion: Emotion
     delivery: str = Field(max_length=200)
+    # The face of the person speaking the line; an answer saved before expressions existed has none.
+    expression: Expression = Field(default=DEFAULT_EXPRESSION,
+                                   exclude_if=lambda value: value == DEFAULT_EXPRESSION)
+
+
+class ExpressionAnnotation(Contract):
+    """Someone other than the speaker whose face changes at this line."""
+
+    utterance_id: Identifier
+    kind: Literal["expression"]
+    character_id: str
+    expression: Expression
 
 
 class FocusAnnotation(Contract):
@@ -94,7 +112,7 @@ class PauseAnnotation(Contract):
 
 class Staging(Contract):
     emotions: list[EmotionAnnotation]
-    directions: list[FocusAnnotation | PauseAnnotation] = Field(max_length=50)
+    directions: list[FocusAnnotation | PauseAnnotation | ExpressionAnnotation] = Field(max_length=50)
 
 
 class SceneStaging(Staging):
@@ -103,7 +121,7 @@ class SceneStaging(Staging):
     NarrativeScene validates the final scene's overall direction limit, including
     the enter events added by the harness. Keep Staging's request schema stable.
     """
-    directions: list[FocusAnnotation | PauseAnnotation]
+    directions: list[FocusAnnotation | PauseAnnotation | ExpressionAnnotation]
 
 
 class SpeechMeaning(Contract):
@@ -479,16 +497,23 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
     for start in range(0, len(utterances), 10):
         batch = utterances[start:start + 10]
         schema = Staging.model_json_schema()
-        schema["$defs"]["EmotionAnnotation"]["properties"]["utterance_id"]["enum"] = [
-            u.id for u in batch
-        ]
+        emotion = schema["$defs"]["EmotionAnnotation"]
+        emotion["properties"]["utterance_id"]["enum"] = [u.id for u in batch]
+        # The model must state the face of every line; only a saved older answer may lack it.
+        emotion["required"] = [*emotion["required"], "expression"]
+        # Exactly one annotation per line, so neither an empty nor a runaway list can be emitted.
+        schema["properties"]["emotions"].update(minItems=len(batch), maxItems=len(batch))
+        expression = schema["$defs"]["ExpressionAnnotation"]["properties"]
+        expression["utterance_id"]["enum"] = [u.id for u in batch]
+        expression["character_id"]["enum"] = plan.character_ids
         focus = schema["$defs"]["FocusAnnotation"]["properties"]
         focus["character_id"]["enum"] = plan.character_ids
         dialogue_ids = [u.id for u in batch if u.speaker_id is not None]
         if dialogue_ids:
             focus["utterance_id"]["enum"] = dialogue_ids
         else:
-            schema["properties"]["directions"]["items"] = {"$ref": "#/$defs/PauseAnnotation"}
+            schema["properties"]["directions"]["items"] = {"anyOf": [
+                {"$ref": "#/$defs/PauseAnnotation"}, {"$ref": "#/$defs/ExpressionAnnotation"}]}
         schema["$defs"]["PauseAnnotation"]["properties"]["utterance_id"]["enum"] = [
             u.id for u in batch
         ]
@@ -502,11 +527,17 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
                     + "\n本文を再入力・修正せず、各utterance_idについて内心inner_emotion、"
                     "声に出すvoice_emotion、声の出し方deliveryを別々に設定します。"
                     "地の文の声はneutral、deliveryが不要なら空文字。emotionsは提示した発話を"
-                    "順番通り1回ずつ含めます。演出は任意のfocus/pause/blackoutのみ。"
+                    "順番通り1回ずつ含めます。演出は任意のfocus/pause/blackout/expressionのみ。"
                     "focusのcharacter_idは必ず登場人物IDで空文字禁止。NARRATORの行には"
                     "focusを付けません。pause/blackoutのcharacter_idだけは空文字。"
                     "pause/blackoutは100〜1500msの正の長さ。演出が不要ならdirections=[]。"
-                    "登退場はプログラムが処理します。" + feedback, Staging, schema=schema)
+                    "登退場はプログラムが処理します。"
+                    "expressionはその行を話す人物の顔に見える表情で、声の感情とは別に決めます。"
+                    "地の文のexpressionはneutral。"
+                    "話者以外の登場人物の表情がその行で変わるとき（聞き手の反応、地の文に書かれた"
+                    "表情の変化）だけ、directionsにkind=expressionでその人物のcharacter_idと表情を"
+                    "追加します。表情は次に変わるまで続くので、変わらない行には付けません。"
+                    + feedback, Staging, schema=schema)
                 if [e.utterance_id for e in staging.emotions] != [u.id for u in batch]:
                     raise ValueError("Emotion annotations must preserve every source ID in order.")
                 _directions(plan, batch, staging)
@@ -534,11 +565,16 @@ def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Sta
             position=positions[index % len(positions)], duration_ms=0,
         ))
     known = {item.id for item in utterances}
+    listed: dict[str, dict[str, str]] = {}
     for direction in staging.directions:
         if direction.utterance_id not in known:
             raise ValueError("Staging references an unknown utterance.")
-        if direction.kind == "focus" and direction.character_id not in plan.character_ids:
-            raise ValueError("Staging focuses an unknown character.")
+        if direction.kind in {"focus", "expression"} and direction.character_id not in plan.character_ids:
+            raise ValueError("Staging names an unknown character.")
+        if direction.kind == "expression":
+            # Faces are settled below, together with the speakers' own.
+            listed.setdefault(direction.utterance_id, {})[direction.character_id] = direction.expression
+            continue
         if direction.kind in {"pause", "blackout"} and direction.duration_ms <= 0:
             raise ValueError("Pause/blackout staging requires a positive duration.")
         directions.append(NarrativeDirection(
@@ -547,6 +583,13 @@ def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Sta
             character_id=direction.character_id if direction.kind == "focus" else None,
             position=None, duration_ms=direction.duration_ms,
         ))
+    faces = {row.utterance_id: row.expression for row in staging.emotions}
+    for utterance_id, character_id, expression in expression_changes(
+            [(item.id, item.speaker_id, faces.get(item.id, DEFAULT_EXPRESSION)) for item in utterances], listed):
+        directions.append(NarrativeDirection(
+            id=f"{plan.id}-d{len(directions) + 1}", utterance_id=utterance_id, kind="expression",
+            timing="before", character_id=character_id, position=None, duration_ms=EXPRESSION_FADE_MS,
+            expression=expression))
     normalized, report = normalize_directions([row.model_dump(mode="json") for row in directions])
     if report["changes"] and trace is not None:
         trace.append({"type": "staging_normalization", "scene_id": plan.id, **report})

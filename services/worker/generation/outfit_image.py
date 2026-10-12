@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from packages.contracts.event_cg import EventCgProfile
+from packages.contracts.expressions import DEFAULT_EXPRESSION, EXPRESSIONS
 from packages.contracts.m2 import GenerationEnvelope
 
 from . import event_cg_session, image_session, llm_session, music_session, pipeline, voice_session
@@ -137,6 +138,33 @@ def design_edit(payload: dict, llm) -> dict:
     raise AssertionError("unreachable")
 
 
+# What each fixed expression asks of the face. Colour is left alone: a face tinted pale or
+# blue no longer matches the neck of the portrait it is put back onto.
+EXPRESSION_VERSION = 1
+EXPRESSION_INSTRUCTIONS = {
+    "smile": "Change only the facial expression to a gentle, closed-mouth smile.",
+    "laugh": "Change only the facial expression to a big cheerful laugh: happily closed eyes and a wide open "
+             "smiling mouth.",
+    "angry": "Change only the facial expression to anger: furrowed brows, a sharp glare and a tight mouth.",
+    "sad": "Change only the facial expression to sadness: brows raised at the inner ends, downcast eyes and a "
+           "small closed mouth.",
+    "cry": "Change only the facial expression to crying: tears running down the cheeks, brows raised at the "
+           "inner ends and a trembling mouth.",
+    "surprised": "Change only the facial expression to surprise: raised brows, wide open eyes and a slightly "
+                 "open mouth.",
+    "confused": "Change only the facial expression to puzzlement: one brow raised, a questioning look and a "
+                "slightly open mouth.",
+    "anxious": "Change only the facial expression to worry: knitted brows, uneasy eyes and a tense closed mouth.",
+    "serious": "Change only the facial expression to a serious, determined look: level lowered brows, a steady "
+               "gaze and a firmly closed mouth.",
+    "fear": "Change only the facial expression to fear: wide eyes with small pupils, brows raised and drawn "
+            "together, and a slightly open, tense mouth. Keep the skin color unchanged.",
+    "shy": "Change only the facial expression to bashfulness: a blush across the cheeks, eyes looking slightly "
+           "aside and a small shy smile.",
+}
+assert set(EXPRESSION_INSTRUCTIONS) == set(EXPRESSIONS) - {DEFAULT_EXPRESSION}
+
+
 def build_edit_prompt(instruction_en: str) -> str:
     return (
         f"Edit the character in reference image 1 as follows: {instruction_en}\n"
@@ -215,6 +243,12 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     payload = job.get("payload")
     if job.get("kind") != KIND or not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported outfit image job or schema.")
+    if not isinstance(payload.get("expression"), dict):
+        # Designing a look or a sheet loads the text model first; only expressions follow one
+        # another with the editing model kept loaded.
+        resident = event_cg_session.current_session()
+        if resident is not None:
+            resident.close()
     if payload.get("material_sheet"):
         from .material_image import generate_job as generate_sheet
 
@@ -228,7 +262,12 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     edit = payload.get("edit")
     if edit is not None and (not isinstance(edit, dict) or not isinstance(edit.get("instruction"), str)):
         raise ValueError("An image edit needs its wish.")
-    for session in (voice_session, image_session, music_session, llm_session, event_cg_session):
+    expression = payload.get("expression")
+    if expression is not None and (not isinstance(expression, dict) or edit is not None
+                                   or payload.get("material_image") is not None
+                                   or expression.get("id") not in EXPRESSION_INSTRUCTIONS):
+        raise ValueError("An expression picture is one of the fixed expressions of an existing portrait.")
+    for session in (voice_session, image_session, music_session, llm_session):
         session.prepare_job(KIND)
     work = Path(work_dir).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -251,7 +290,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     lock = pipeline.ROOT / "services/worker/cache/m2/gpu.lock"
     material = payload.get("material_image")
     design_path = work / "outfit-design.json"
-    if design_path.exists():
+    if expression is not None:
+        # Nothing to design: the expression is fixed and the look stays as it is.
+        design = {"outfit_en": "", "summary_ja": None, "occasion_ja": "", "model_id": None, "requests": 0}
+    elif design_path.exists():
         design = json.loads(design_path.read_text(encoding="utf-8"))
     elif edit is not None:
         # An edit keeps the look as it is described; only the wished change is put into words.
@@ -290,7 +332,16 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         if hashlib.sha256(sheet.read_bytes()).hexdigest() != material.get("sha256"):
             raise ValueError("Shared material hash mismatch.")
         references.append({"path": str(sheet), "name": "shared material", "sha256": material["sha256"]})
-    if edit is not None:
+    face = None
+    if expression is not None:
+        from . import portrait_face
+
+        prompt = build_edit_prompt(EXPRESSION_INSTRUCTIONS[expression["id"]])
+        marked = expression.get("face_box")
+        # A face marked by hand is given as fractions of the picture; otherwise it is detected.
+        face = ([marked[0] * width, marked[1] * height, marked[2] * width, marked[3] * height] if marked
+                else portrait_face.detect(reference, config))
+    elif edit is not None:
         wished = design.get("instruction_en", "")
         if material:
             prompt = build_material_prompt(material) + ("\nAlso: " + wished if wished else "")
@@ -300,7 +351,11 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
             raise ValueError("An image edit needs a wish or a shared material.")
     else:
         prompt = build_material_prompt(material) if material else build_prompt(design["outfit_en"])
-    image, report, identity = render(work, payload, config, prompt, references, width, height, fingerprint)
+    image, report, identity = render(work, payload, config, prompt, references, width, height, fingerprint,
+                                     resident=expression is not None)
+    if expression is not None:
+        box = portrait_face.area(face, (width, height), expression["id"])
+        image = portrait_face.composite(reference.read_bytes(), image, box)
     provenance = {"provider": "local", "seed": payload["seed"], "input_sha256": fingerprint,
                   "model_configuration_identity": identity, "prompt": prompt,
                   "outfit_prompt_version": PROMPT_VERSION,
@@ -308,6 +363,10 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
                              "reference_sha256": source["sha256"], "description_en": design["outfit_en"],
                              "summary": design["summary_ja"], "occasion": design.get("occasion_ja") or None,
                              **({"edit_instruction_en": design.get("instruction_en", "")} if edit is not None else {}),
+                             **({"expression": {"id": expression["id"], "version": EXPRESSION_VERSION,
+                                                "face_box": [round(value) for value in face], "area": list(box),
+                                                "face_marked": bool(expression.get("face_box"))}}
+                                if expression is not None else {}),
                              **({"material_artifact_id": material.get("artifact_id")} if material else {})},
                   "llm": {"model_id": design["model_id"], "requests": design["requests"]},
                   **{key: report["provenance"][key] for key in ("width", "height", "inference_seconds")}}
@@ -322,8 +381,12 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
 
 
 def render(work: Path, payload: dict, config: dict, prompt: str, references: list[dict],
-           width: int, height: int, fingerprint: str) -> tuple[bytes, dict, dict]:
-    """One transparent Qwen edit of the references; the child owns the GPU while it runs."""
+           width: int, height: int, fingerprint: str, *, resident: bool = False) -> tuple[bytes, dict, dict]:
+    """One transparent Qwen edit of the references; the child owns the GPU while it runs.
+
+    With ``resident`` the worker's retained editing process is used when there is one, so
+    pictures that follow one another with the same model do not each load it again.
+    """
     lock = pipeline.ROOT / "services/worker/cache/m2/gpu.lock"
     profile = EventCgProfile.model_validate(payload.get("cg_profile", {})).model_dump(mode="json")
     settings = runtime_settings(config, pipeline.ROOT, profile.get("model", "standard"))
@@ -337,10 +400,13 @@ def render(work: Path, payload: dict, config: dict, prompt: str, references: lis
     output = Path(tempfile.mkdtemp(prefix="outfit-", dir=work))
     runtime_key = hashlib.sha256(json.dumps({"model": identity, "profile": profile, "runner": "outfit"},
                                             sort_keys=True).encode()).hexdigest()
-    request = {"generation": generation, "output_dir": str(output), "cg_id": "outfit:" + fingerprint,
+    retained = event_cg_session.current_session() if resident else None
+    # One process identity for every retained portrait edit; a look still starts its own.
+    request = {"generation": generation, "output_dir": str(output),
+               "cg_id": "portrait" if retained is not None else "outfit:" + fingerprint,
                "expected_revision": profile["model_revision"], "runtime_identity": runtime_key}
     lease = gpu_lock(lock, config["gpu_lock_timeout_seconds"])
-    owner = EventCgSession()
+    owner = retained or EventCgSession()
     try:
         with owner.gpu_scope(lease):
             try:
@@ -350,7 +416,8 @@ def render(work: Path, payload: dict, config: dict, prompt: str, references: lis
             except EventCgGenerationError as exc:
                 raise RuntimeError(f"Outfit image generation failed: {exc}") from exc
     finally:
-        owner.close()
+        if retained is None:
+            owner.close()
     image = (output / "image.png").read_bytes()
     if hashlib.sha256(image).hexdigest() != report["provenance"]["image_sha256"]:
         raise ValueError("Outfit image changed after child publication.")

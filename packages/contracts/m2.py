@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
+from .expressions import Expression
 from .script import Contract, HeightCm, Identifier
 
 Text = Annotated[str, StringConstraints(max_length=30_000)]
@@ -325,6 +326,41 @@ class AdoptImage(Action):
     artifact_id: ArtifactRef
 
 
+FaceFraction = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+
+
+class GenerateExpressions(Action):
+    """Draw expression pictures of a character's looks; none of them is ever required."""
+
+    action: Literal["generate-expressions"]
+    character_id: CharacterId
+    # The looks to draw them for; every look that has a current portrait when left out.
+    outfit_ids: list[Identifier] | None = Field(default=None, min_length=1, max_length=5)
+    expressions: list[Expression] = Field(min_length=1, max_length=11)
+    # Draw again even what exists and still matches its portrait.
+    redraw: bool = False
+    # The face marked by hand (left, top, right, bottom as fractions of the picture), for a
+    # portrait whose face could not be found. It applies to a single look.
+    face_box: tuple[FaceFraction, FaceFraction, FaceFraction, FaceFraction] | None = None
+
+    @model_validator(mode="after")
+    def drawable(self):
+        if "neutral" in self.expressions or len(set(self.expressions)) != len(self.expressions):
+            raise ValueError("name each expression once; the ordinary face is the portrait itself")
+        if self.face_box is not None and (
+                self.outfit_ids is None or len(self.outfit_ids) != 1
+                or self.face_box[2] - self.face_box[0] < 0.02 or self.face_box[3] - self.face_box[1] < 0.02):
+            raise ValueError("a marked face belongs to one look and has a size")
+        return self
+
+
+class DeleteExpression(Action):
+    action: Literal["delete-expression"]
+    character_id: CharacterId
+    outfit_id: Identifier
+    expression: Expression
+
+
 class SetImageEditing(Action):
     """Whether this work may use the image editing model at all."""
 
@@ -367,6 +403,8 @@ M2Action = Annotated[
     | OutfitAction
     | EditImage
     | AdoptImage
+    | GenerateExpressions
+    | DeleteExpression
     | SetImageEditing
     | GoTo
     | SaveRelationships

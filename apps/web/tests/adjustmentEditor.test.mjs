@@ -16,7 +16,7 @@ export function useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i
 export function useEffect(callback, dependencies) { effects.push({ callback, dependencies }) }
 `)
 const apiUrl = dataUrl(`export class ApiError extends Error { constructor(message, status) { super(message); this.status = status } }; export const errorMessage = error => error.message;`)
-const childrenUrl = dataUrl(`export function Icon() { return null }; export function PortraitCanvas() { return null }; export function AdjustmentPreview() { return null }; export function AdjustmentMusicPreview() { return null }; export function AdjustmentMusicSeamPreview() { return null }; export function GenerationProgress() { return null }; export function Dialog() { return null };`)
+const childrenUrl = dataUrl(`export function Icon() { return null }; export function PortraitCanvas() { return null }; export function AdjustmentPreview() { return null }; export function AdjustmentMusicPreview() { return null }; export function AdjustmentMusicSeamPreview() { return null }; export function GenerationProgress() { return null }; export function Dialog() { return null }; export function PortraitExpressionPanel() { return null };`)
 async function moduleUrl(file, replacements = {}) {
   let source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8')
   for (const [name, url] of Object.entries(replacements)) source = source.replaceAll(`'${name}'`, JSON.stringify(url))
@@ -27,7 +27,7 @@ async function moduleUrl(file, replacements = {}) {
 const stateUrl = await moduleUrl('adjustmentState.ts')
 const state = await import(stateUrl)
 const hooks = await import(hooksUrl)
-const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
+const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './CharacterExpressions': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
 const { AdjustmentPreview } = await import(await moduleUrl('AdjustmentPreview.tsx'))
 function walkAll(node, predicate) {
   if (!node || typeof node !== 'object') return []

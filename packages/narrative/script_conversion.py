@@ -20,12 +20,16 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                         script_id: str, portrait_settings: dict | None = None,
                         allow_missing_audio: bool = False,
                         omitted_portraits: set[str] | None = None,
-                        normalization_reports: list[dict] | None = None) -> Script:
+                        normalization_reports: list[dict] | None = None,
+                        expression_pictures: dict | None = None) -> Script:
     """Use already-resolved assets without DB access, generation, or prose rewriting.
 
     Reference keys are the production requirement's ``(kind, target_id)`` pairs.
     Production requires every speaking line's audio; debug exports explicitly opt
     into the Script contract's existing nullable audio reference.
+
+    ``expression_pictures`` maps ``(character ID, look ID or None)`` to the asset of each
+    expression that look has a picture of; their assets are among ``references``.
     """
     narrative = NarrativeResult.model_validate(narrative)
     cast = {value.get("id", value["result"]["id"]): value["result"]
@@ -55,6 +59,13 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                    if row.id != DEFAULT_OUTFIT and ("m3_image", image_target(cid, row.id)) in references}
              for cid, rows in snapshot_outfits(snapshot).items()}
 
+    def faces(cid):
+        # Only for a look this chapter shows; a picture of a look it does not show is left out.
+        return [{"expression": expression, "image_asset_id": asset, **({"outfit_id": oid} if oid else {})}
+                for (owner, oid), pictures in sorted((expression_pictures or {}).items(), key=lambda row: row[0][1] or "")
+                if owner == cid and (oid is None or oid in looks.get(cid, {}))
+                for expression, asset in sorted(pictures.items())]
+
     def look(cid, oid, asset):
         value = {"id": oid, "image_asset_id": asset}
         target = image_target(cid, oid)
@@ -69,7 +80,8 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                    "image_asset_id": references[("m3_image", cid)]["id"] if cid not in omitted_portraits else None,
                    **presentation(cid, value),
                    **({"outfits": [look(cid, oid, asset) for oid, asset in looks[cid].items()]}
-                      if looks.get(cid) else {})}
+                      if looks.get(cid) else {}),
+                   **({"expressions": faces(cid)} if cid not in omitted_portraits and faces(cid) else {})}
                   for cid, value in cast.items() if ("m3_image", cid) in references or cid in omitted_portraits]
     utterances, directions = [], []
     for scene in narrative.scenes:
@@ -111,10 +123,13 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                 continue
             value = {"id": direction.id, "kind": direction.kind,
                      "utterance_id": direction.utterance_id, "timing": direction.timing}
-            if direction.kind in ("enter", "exit", "position", "focus", "outfit"):
+            if direction.kind in ("enter", "exit", "position", "focus", "outfit", "expression"):
                 value["character_id"] = script_character_id(direction.character_id)
             if direction.kind == "outfit":
                 value["outfit_id"] = direction.outfit_id
+            if direction.kind == "expression":
+                # The face the script asks for, whether or not a picture of it exists yet.
+                value["expression"] = direction.expression
             if direction.kind in ("enter", "position"):
                 value["position"] = direction.position
             if direction.kind == "enter" and direction.character_id in worn:

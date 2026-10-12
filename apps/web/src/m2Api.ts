@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, errorMessage, request, type Job, type Project } from './api'
+import type { ExpressionPicture } from './expressionState'
 import { createInitialWizardDraft, type CharacterBrief, type RevisionRequest, type WizardStep, type WorldBrief } from './wizardState'
 
 export type M2Character = {
@@ -9,6 +10,8 @@ export type M2Character = {
   imageArtifactId: string | null; voiceArtifactId: string | null
   imageUrl: string | null; voiceUrl: string | null
   voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]
+  /** Expression pictures of this character's looks; absent until one is made. */
+  expressions?: ExpressionPicture[]
 }
 export type M2Outfit = {
   id: string; name: string; description?: string; occasion?: string; materialBrief?: string | null

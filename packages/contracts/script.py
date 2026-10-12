@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from .expressions import Expression
+
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Text = Annotated[str, StringConstraints(min_length=1, max_length=100_000)]
 Position = Literal["left", "center", "right"]
@@ -99,6 +101,15 @@ class CharacterOutfit(Contract):
     scale: DisplayScale = Field(default=1, exclude_if=lambda value: value == 1)
 
 
+class CharacterExpression(Contract):
+    """A picture of one expression in one look; where a look has none, its own portrait is shown."""
+
+    expression: Expression
+    image_asset_id: Identifier
+    # Absent for the base look.
+    outfit_id: Identifier | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class Character(Contract):
     id: Identifier
     name: Annotated[str, StringConstraints(min_length=1, max_length=200)]
@@ -111,6 +122,9 @@ class Character(Contract):
     scale: DisplayScale = Field(default=1, exclude_if=lambda value: value == 1)
     outfits: list[CharacterOutfit] = Field(default_factory=list, max_length=20,
                                            exclude_if=lambda value: not value)
+    # An expression picture shares its look's place on the stage: only the face differs.
+    expressions: list[CharacterExpression] = Field(default_factory=list, max_length=300,
+                                                   exclude_if=lambda value: not value)
 
 
 class PortraitTransform(Contract):
@@ -193,6 +207,15 @@ class OutfitDirection(DirectionBase):
     duration_ms: Duration = 0
 
 
+class ExpressionDirection(DirectionBase):
+    """Change a character's face in place; it stays until the next change or entrance."""
+
+    kind: Literal["expression"]
+    character_id: Identifier
+    expression: Expression
+    duration_ms: Duration = 0
+
+
 class FocusDirection(DirectionBase):
     kind: Literal["focus"]
     character_id: Identifier
@@ -216,6 +239,7 @@ Direction = Annotated[
     | ExitDirection
     | PositionDirection
     | OutfitDirection
+    | ExpressionDirection
     | FocusDirection
     | BlackoutDirection
     | PauseDirection,
@@ -339,6 +363,12 @@ class Script(Contract):
                 if (self.portrait_baseline is not None
                         and portrait_key(character.id, outfit.id) not in self.portrait_baseline.layouts):
                     raise ValueError("fixed portrait baseline is missing an alternate outfit")
+            faces = [(value.outfit_id, value.expression) for value in character.expressions]
+            if len(faces) != len(set(faces)) or (faces and character.image_asset_id is None) or any(
+                    look not in (None, *looks) or expression == "neutral" for look, expression in faces):
+                raise ValueError("expression pictures need a look the character has, each expression once")
+            for face in character.expressions:
+                asset(face.image_asset_id, "character")
         for utterance in self.utterances:
             if utterance.speaker_id is not None and utterance.speaker_id not in characters:
                 raise ValueError(f"unknown speaker: {utterance.speaker_id}")
@@ -385,7 +415,7 @@ class Script(Contract):
                 raise ValueError(f"unknown direction utterance: {direction.utterance_id}")
             if direction.kind == "background":
                 asset(direction.asset_id, "background")
-            if direction.kind in {"enter", "exit", "position", "focus", "outfit"}:
+            if direction.kind in {"enter", "exit", "position", "focus", "outfit", "expression"}:
                 character = characters.get(direction.character_id)
                 if character is None or character.image_asset_id is None:
                     raise ValueError("character direction requires a character with an image")

@@ -169,6 +169,20 @@
           "checksum_note": "Official rembg 2.0.85 supplies MD5; GitHub release has no SHA256 digest. Verify MD5 and record downloaded SHA256."
         }
       ]
+    },
+    {
+      "id": "anime-face-detection",
+      "repo_id": "deepghs/anime_face_detection",
+      "revision": "784dc4c0bb692351ddcdbe6131a050b17d3025d5",
+      "local_dir": "services/worker/runtimes/diffusers/models/face-detection",
+      "purpose": "Locates the face of a portrait on the CPU, so an edited expression replaces only the face",
+      "files": [
+        {
+          "path": "face_detect_v1.4_s/model.onnx",
+          "sha256": "403b5bc93b6ff789b7d183418df4a1364049bac00c24acd927604a7ff6891483",
+          "size": 44583229
+        }
+      ]
     }
   ],
   "sources": [

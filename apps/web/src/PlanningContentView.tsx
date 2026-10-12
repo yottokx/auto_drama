@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { PortraitExpressionPanel } from './CharacterExpressions'
 import { Icon } from './Icons'
 import { Dialog } from './PreviewComponents'
 import type { CastLife, OutfitNames, PlanningAsset, PlanningAssets, PlanningContent, PlanningTab, PlotRoute } from './planningState'
@@ -48,11 +49,13 @@ function CharacterAssets({ name, image, voice, disabled, onRetake, onExpand, onD
   </div>
 }
 
-export function PlanningContentView({ content, mainCharacters, tab, outfitNames = {}, assets, assetsDisabled = false, onRetakeAsset, materialsProjectId = null, onDressAsset }: {
+export function PlanningContentView({ content, mainCharacters, tab, outfitNames = {}, assets, assetsDisabled = false, onRetakeAsset, materialsProjectId = null, onDressAsset, expressionsProjectId = null }: {
   content: PlanningContent; mainCharacters: CharacterBrief[]; tab: PlanningTab; outfitNames?: OutfitNames
   assets?: PlanningAssets; assetsDisabled?: boolean; onRetakeAsset?: AssetRetake
   /** Shared designs of the work, and how a planned character is redrawn wearing one. */
   materialsProjectId?: string | null; onDressAsset?: (characterId: string, materialImageId: string) => Promise<boolean>
+  /** The work whose supporting portraits may be given expressions; they stay open after the plan is approved. */
+  expressionsProjectId?: string | null
 }) {
   const store = useMaterials(tab === 'cast' ? materialsProjectId : null)
   const materials = materialsProjectId === null ? undefined : store
@@ -80,6 +83,8 @@ export function PlanningContentView({ content, mainCharacters, tab, outfitNames 
       {assets && <CharacterAssets name={character.name} image={assets[character.id]?.image} voice={assets[character.id]?.voice} disabled={assetsDisabled}
         onRetake={onRetakeAsset && (kind => { setInstruction(''); setRetake({ id: character.id, name: character.name, kind }) })} onExpand={url => setPortrait({ name: character.name, url })}
         onDress={materials && onDressAsset && materials.canEdit && readySheets(materials.materials).length ? () => setDressing({ id: character.id, name: character.name }) : undefined}/>}
+      {assets && expressionsProjectId && <PortraitExpressionPanel projectId={expressionsProjectId} characterId={character.id} characterName={character.name}
+        baseArtifactId={assets[character.id]?.image?.status === 'ready' ? assets[character.id]?.image?.artifact_id ?? null : null} disabled={assetsDisabled} onExpand={(_name, url) => setPortrait({ name: character.name, url })}/>}
       <ReadingBlock title="人物の設定" text={character.settings}/>
       <ReadingBlock title="補足設定" text={character.freeform}/>
       <div className="planning-read-columns"><ReadingBlock title="外見" text={character.appearance}/><ReadingBlock title="声・話し方" text={character.voice}/></div>

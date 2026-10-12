@@ -611,7 +611,11 @@ class AdjustmentService:
                         return {row["scene_id"]: row for row in value.get("scene_music", [])
                                 if row["production_id"] == production_id}
                     same_plan = state.get("music_plans", {}).get(chapter["id"]) == source.get("music_plans", {}).get(chapter["id"])
-                    if unchanged:
+                    if self.m3._expressions_differ(connection, chapter, requirements[chapter["id"]], chapter["build"]):
+                        # Expression pictures were made or removed since this chapter was built.
+                        publisher._publish(connection, chapter, requirements[chapter["id"]], presentation=state)
+                        latest = publisher._latest_build(connection, chapter["id"])
+                    elif unchanged:
                         # Refresh the runtime without recalculating adopted
                         # portrait placement, music bindings, or scene settings.
                         # History can select an older build than the latest one.

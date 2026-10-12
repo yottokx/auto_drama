@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './Icons'
 import { Dialog, LockButton } from './PreviewComponents'
 import type { CharacterBrief, RevisionRequest, RevisionScope } from './wizardState'
+import { ExpressionPanel } from './CharacterExpressions'
 import { alternateLooks, BaseLookName, BriefLooks, LookDialog, LookPanel, LookTabs, type LookWish, type MaterialWish } from './CharacterOutfits'
+import type { ExpressionId, ExpressionPicture, ExpressionRequest } from './expressionState'
 import { ImageEditingNotice } from './ImageEditingNotice'
 import { EditTag, ImageEditDialog, MaterialPicker, readySheets, SharedMaterials, useMaterials, type ImageEdit, type MaterialPerson, type PortraitVersion } from './SharedMaterials'
 import { CharacterVoiceTrials } from './CharacterVoiceTrials'
@@ -117,7 +119,7 @@ export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, 
 export function CharacterReview({ materialsProjectId = null, characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus, outfitActions }: {
   characters: CharacterBrief[]; requests: RevisionRequest[]; onChange: CharacterChange; onToggleLock: (id: string, scope: DetailScope) => void;
   onRequest: (scope: RevisionScope, instruction: string, characterId?: string) => boolean | Promise<boolean>; onBack: () => void; onApprove: () => void; onPendingChange?: (pending: boolean) => void;
-  previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]; imagePending?: boolean; imageHistory?: PortraitVersion[] }>
+  previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]; expressions?: ExpressionPicture[]; imagePending?: boolean; imageHistory?: PortraitVersion[] }>
   /** The work whose shared designs can be made and worn here. */
   materialsProjectId?: string | null
   outfitActions?: {
@@ -131,6 +133,11 @@ export function CharacterReview({ materialsProjectId = null, characters, request
     // Adds a look and starts its image; resolves to the new look's id.
     add: (characterId: string, outfit: LookWish, existing: Set<string>) => Promise<string | null>
     remove: (characterId: string, outfitId: string) => Promise<boolean>; generate: (characterId: string, outfitId: string) => Promise<boolean>
+    /** Expression pictures of a look: extras that neither enter nor end the approval. */
+    expressions?: {
+      generate: (characterId: string, request: ExpressionRequest) => Promise<boolean>
+      remove: (characterId: string, outfitId: string, expression: ExpressionId) => Promise<boolean>
+    }
   }
   relationshipResults?: ReactNode; onCloneVoice?: (characterId: string, text: string) => Promise<boolean>; characterStatus?: Record<string, string>
   live?: boolean; canApprove?: boolean; generating?: boolean; busy?: boolean
@@ -183,6 +190,8 @@ export function CharacterReview({ materialsProjectId = null, characters, request
   const shownLook = looks.find(outfit => outfit.id === lookTabs[character.id])
   const baseReady = Boolean(assets?.image) && !assets?.imagePending && !resultUnavailable
   const lookKey = shownLook ? `${character.id}:${shownLook.id}` : null
+  // A look can be drawn from once its own portrait reflects its settings and the base portrait.
+  const lookReady = (outfit: M2Outfit) => baseReady && Boolean(outfit.imageArtifactId) && !outfit.imagePendingChanges && (outfit.baseImageArtifactId === (assets?.imageArtifactId ?? null) || Boolean(outfit.handPicked))
   const canEdit = Boolean(outfitActions?.edit) && materialStore.canEdit
   const canDress = Boolean(outfitActions?.dress) && materialStore.canEdit && readySheets(materialStore.materials).length > 0
   // Any finished portrait can lend its clothes to a shared design.
@@ -274,6 +283,11 @@ export function CharacterReview({ materialsProjectId = null, characters, request
         {outfitActions && <BaseLookName characterId={character.id} outfits={assets?.outfits ?? []} busy={busy} onSave={outfitActions.save}/>}
         </>}
         </div>
+        {outfitActions?.expressions && materialStore.canEdit && <ExpressionPanel characterId={character.id} characterName={characterName(character, characterIndex)}
+          look={{ id: shownLook?.id ?? 'default', name: shownLook?.name ?? (assets?.outfits?.find(outfit => outfit.id === 'default')?.name || '通常の姿'), ready: shownLook ? lookReady(shownLook) : baseReady }}
+          looks={[...(baseReady ? [{ id: 'default', name: assets?.outfits?.find(outfit => outfit.id === 'default')?.name || '通常の姿' }] : []), ...looks.filter(lookReady).map(outfit => ({ id: outfit.id, name: outfit.name }))]}
+          portraitUrl={shownLook ? shownLook.imageUrl ?? null : assets?.image ?? null}
+          pictures={assets?.expressions ?? []} busy={busy} onGenerate={outfitActions.expressions.generate} onDelete={outfitActions.expressions.remove} onExpand={(name, image) => setPortrait({ name, image })}/>}
       </section>
       <section className="char-asset-card">
         <DetailHeader title="声・話し方" icon="volume" locked={character.locked.voice} onToggle={() => toggleLock('voice')} onEdit={() => startEdit('voice')} editing={Boolean(voiceEdit)} disabled={busy || resultUnavailable}/>

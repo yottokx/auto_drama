@@ -69,6 +69,12 @@ def router(coordinator: Callable[[], Coordinator]) -> APIRouter:
 
             return await run_in_threadpool(
                 MaterialService(current.coordinator).complete, job_id, worker_id, lease_id, bytes(content))
+        if payload.get("portrait_expression"):
+            # An expression of a portrait outside STEP3, edited with the same job kind.
+            from .expression_service import ExpressionService
+
+            return await run_in_threadpool(
+                ExpressionService(current.coordinator).complete, job_id, worker_id, lease_id, bytes(content))
         if payload.get("planning_asset"):
             # A planned supporting character dressed in a shared design, edited like a look.
             from .planning_service import PlanningService

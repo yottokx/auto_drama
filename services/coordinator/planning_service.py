@@ -119,7 +119,9 @@ class PlanningService:
             view.setdefault(cid, {})[kind] = {
                 "status": ("omitted" if omitted else "ready" if artifact else job["status"] if job else "missing"),
                 "url": f"/api/artifacts/{shown['id']}/content" if shown else None,
-                "job_id": job["id"] if job else None, "error": job["error"] if job else None}
+                "job_id": job["id"] if job else None, "error": job["error"] if job else None,
+                # The portrait itself, by which its expression pictures are made and found.
+                **({"artifact_id": artifact["id"]} if kind == "image" and artifact and not omitted else {})}
         return view
 
     def _sync_assets(self, connection, row, content):

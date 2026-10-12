@@ -75,11 +75,15 @@ def event_cg_after_anchors(script: Script) -> set[str]:
     frames = event_cg_frames(script)
     return {value.utterance_id for value in script.directions
             if value.utterance_id in frames and value.timing == "after"
-            and value.kind in {"background", "enter", "exit", "position", "outfit"}}
+            and value.kind in {"background", "enter", "exit", "position", "outfit", "expression"}}
 
 
 class _Wardrobe:
-    """Which portrait each character currently wears; an entrance decides it."""
+    """Which portrait each character currently shows: the look an entrance decides, and the face.
+
+    A face has a picture only where one was made for that look. Without one the look's own
+    portrait is shown, so a script may ask for any expression whatever pictures exist.
+    """
 
     def __init__(self, script: Script, portraits: dict):
         assets = {value.id: value for value in script.assets}
@@ -88,19 +92,29 @@ class _Wardrobe:
                       for character in script.characters if character.image_asset_id
                       for outfit_id, asset_id in ((None, character.image_asset_id),
                                                   *((value.id, value.image_asset_id) for value in character.outfits))}
-        self.worn, self.slots = {}, {}
+        self.face_files = {(character.id, value.outfit_id, value.expression): assets[value.image_asset_id].filename
+                           for character in script.characters for value in character.expressions}
+        self.worn, self.slots, self.faces = {}, {}, {}
 
     def enter(self, direction) -> None:
         if direction.kind in {"enter", "outfit"}:
             self.worn[direction.character_id] = direction.outfit_id
+        if direction.kind == "enter":
+            # Everyone comes on in their ordinary face; the scene's annotations start from there.
+            self.faces.pop(direction.character_id, None)
+        elif direction.kind == "expression":
+            self.faces[direction.character_id] = direction.expression
         if direction.kind in {"enter", "position"}:
             self.slots[direction.character_id] = direction.position
         elif direction.kind == "exit":
             self.slots.pop(direction.character_id, None)
 
     def look(self, character_id: str):
-        key = portrait_key(character_id, self.worn.get(character_id))
-        return self.files[key], self.portraits[key]
+        worn = self.worn.get(character_id)
+        key = portrait_key(character_id, worn)
+        face = (character_id, None if worn == "default" else worn, self.faces.get(character_id))
+        # The face replaces only the picture: it stands where its look stands.
+        return self.face_files.get(face, self.files[key]), self.portraits[key]
 
     def shown(self, character_id: str, z_index: int) -> dict:
         """The stage record of a visible character in its current look and slot."""
@@ -137,9 +151,9 @@ def scene_stage_data(script: Script, images: dict[str, bytes]) -> dict:
         elif direction.kind == "exit":
             wardrobe.enter(direction)
             cast.pop(direction.character_id, None)
-        elif direction.kind in {"enter", "position", "outfit"}:
+        elif direction.kind in {"enter", "position", "outfit", "expression"}:
             if direction.kind != "enter" and direction.character_id not in cast:
-                if direction.kind == "outfit":
+                if direction.kind in {"outfit", "expression"}:
                     wardrobe.enter(direction)
                 return
             wardrobe.enter(direction)
@@ -194,8 +208,9 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
         for direction in directions_by_anchor.get((utterance_id, timing), []):
             visible = getattr(direction, "character_id", None) in wardrobe.slots
             before = wardrobe.look(direction.character_id)[1] if direction.kind == "outfit" else None
+            shown = wardrobe.look(direction.character_id)[0] if direction.kind == "expression" else None
             wardrobe.enter(direction)
-            if direction.kind in {"background", "enter", "exit", "position", "outfit"} and (
+            if direction.kind in {"background", "enter", "exit", "position", "outfit", "expression"} and (
                     utterance_id in cg_frames or
                     (utterance_id in transitions_by_anchor and timing in {"before", "start"})):
                 continue
@@ -210,7 +225,7 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
                 case "enter":
                     storage, portrait = wardrobe.look(direction.character_id)
                     z_index = f' zindex="{PORTRAIT_Z_INDEX}"' if script.portrait_baseline is not None else ""
-                    if characters[direction.character_id].outfits:
+                    if characters[direction.character_id].outfits or characters[direction.character_id].expressions:
                         # A hidden character only records the image its next entrance shows.
                         result.append(f'[chara_mod name="ad_{direction.character_id}" storage="{storage}" time="0"]')
                     result.append(
@@ -240,6 +255,15 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
                             f'[chara_move name="{name}" left="{portrait.left(wardrobe.slots[direction.character_id])}" '
                             f'top="{portrait.top}" width="{portrait.width}" height="{portrait.height}" '
                             'time="0" anim="true"]')
+                case "expression":
+                    storage, _ = wardrobe.look(direction.character_id)
+                    # A face without a picture of its own changes nothing on screen.
+                    if storage != shown:
+                        # A hidden character only records the image its next appearance shows; a
+                        # visible one changes without holding back the line the face belongs to.
+                        result.append(
+                            f'[chara_mod name="ad_{direction.character_id}" storage="{storage}" '
+                            + (f'time="{direction.duration_ms}" wait="false"]' if visible else 'time="0"]'))
                 case "focus":
                     result.append(f'[chara_ptext name="ad_{direction.character_id}"]')
                 case "blackout":
@@ -316,9 +340,9 @@ def entry_states(script: Script, images: dict[str, bytes]) -> dict:
                 elif direction.kind == "exit":
                     wardrobe.enter(direction)
                     cast.pop(direction.character_id, None)
-                elif direction.kind == "outfit" and direction.character_id not in cast:
+                elif direction.kind in {"outfit", "expression"} and direction.character_id not in cast:
                     wardrobe.enter(direction)
-                elif direction.kind in {"enter", "outfit"} or (
+                elif direction.kind in {"enter", "outfit", "expression"} or (
                         direction.kind == "position" and direction.character_id in cast):
                     wardrobe.enter(direction)
                     cast[direction.character_id] = wardrobe.shown(

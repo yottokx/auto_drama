@@ -97,5 +97,6 @@ def current_session():
 
 def prepare_job(kind):
     session = current_session()
-    if session is not None and kind not in KINDS:
+    # A portrait edit decides for itself: expressions keep the process, a look releases it.
+    if session is not None and kind not in KINDS and kind != "m2_outfit_image":
         session.close()

@@ -55,8 +55,11 @@ def usage(coordinator, connection, project_id: str) -> dict:
     state = M2Service._load(connection, project_id)
     draft = state["draft"]
     portraits = []
+    expressions = 0
     for character in draft["characters"]:
         name = (character.get("result") or character["input"]).get("name") or "キャラクター"
+        # Every expression picture is an edit; they are counted rather than listed one by one.
+        expressions += len(character.get("expressions", []))
         if _edited(connection, character.get("imageArtifactId")):
             portraits.append({"name": name, "look": "通常の姿"})
         for outfit in character.get("outfits", []):
@@ -112,7 +115,8 @@ def usage(coordinator, connection, project_id: str) -> dict:
     # Name the model new pictures are drawn with; the standard one and Turbo share their terms of use.
     model = edit_model(cg_model(EventCgSettings(coordinator).settings(connection)["profile"].get("model", "standard"))["name"])
     return {"project_id": project_id, "enabled": enabled(draft), "model": model["name"],
-            "caution": bool(model["output_caution"]), "portraits": portraits, "event_cgs": event_cgs}
+            "caution": bool(model["output_caution"]), "portraits": portraits, "event_cgs": event_cgs,
+            "expressions": expressions}
 
 
 def router(coordinator):

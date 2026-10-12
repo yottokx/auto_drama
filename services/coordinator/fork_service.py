@@ -144,6 +144,19 @@ class ForkService:
                             outfit["materialImageId"] = sheets.get(outfit["materialImageId"])
                             if not outfit["materialImageId"]:
                                 outfit.pop("materialImageId")
+                    looks = {DEFAULT_OUTFIT: character["imageArtifactId"],
+                             **{outfit["id"]: outfit.get("imageArtifactId") for outfit in character.get("outfits", [])
+                                if outfit["id"] != DEFAULT_OUTFIT}}
+                    pictures = []
+                    for picture in character.pop("expressions", []):
+                        # An expression comes along with the portrait it was edited from; one whose
+                        # portrait had already been replaced is left behind.
+                        base = copies.get(picture["baseImageArtifactId"])
+                        if base is not None and base["id"] == looks.get(picture["outfitId"]):
+                            pictures.append({**picture, "baseImageArtifactId": base["id"],
+                                             "imageArtifactId": carry(picture["imageArtifactId"])["id"]})
+                    if pictures:
+                        character["expressions"] = pictures
                 relationships = draft["relationships"]
                 if relationships.get("artifactId"):
                     record = carry(relationships["artifactId"])
@@ -205,11 +218,19 @@ class ForkService:
         connection.execute("UPDATE planning_draft SET content=?,status='ready',active_job_id=NULL,revision=revision+1,"
                            "updated_at=? WHERE id=?", (source["content"], now, row["id"]))
         content = json.loads(source["content"])
+        from .expression_service import ExpressionService
+
         for (cid, kind), (character, asset) in planning._assets(connection, source, content).items():
             if asset and asset["artifact_id"]:
+                carried = carry(asset["artifact_id"])
                 connection.execute("INSERT INTO planning_asset VALUES (?,?,?,?,?,NULL,?,?)", (
-                    uuid4().hex, row["id"], cid, kind, asset_source(character, kind),
-                    carry(asset["artifact_id"])["id"], now))
+                    uuid4().hex, row["id"], cid, kind, asset_source(character, kind), carried["id"], now))
+                if kind == "image":
+                    # A supporting portrait brings the expressions that were made for it.
+                    for expression, artifact_id in ExpressionService.current(
+                            connection, project_id, [asset["artifact_id"]]).items():
+                        connection.execute("INSERT INTO portrait_expression VALUES (?,?,?,?,?,NULL,?,0,?)", (
+                            uuid4().hex, target, cid, carried["id"], expression, carry(artifact_id)["id"], now))
         state["draft"]["step"] = "planning-review"
 
 

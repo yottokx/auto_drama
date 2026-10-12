@@ -224,6 +224,14 @@
           "maxItems": 20,
           "title": "Outfits",
           "type": "array"
+        },
+        "expressions": {
+          "items": {
+            "$ref": "#/$defs/CharacterExpression"
+          },
+          "maxItems": 300,
+          "title": "Expressions",
+          "type": "array"
         }
       },
       "required": [
@@ -231,6 +239,54 @@
         "name"
       ],
       "title": "Character",
+      "type": "object"
+    },
+    "CharacterExpression": {
+      "additionalProperties": false,
+      "description": "A picture of one expression in one look; where a look has none, its own portrait is shown.",
+      "properties": {
+        "expression": {
+          "enum": [
+            "neutral",
+            "smile",
+            "laugh",
+            "angry",
+            "sad",
+            "cry",
+            "surprised",
+            "confused",
+            "anxious",
+            "serious",
+            "fear",
+            "shy"
+          ],
+          "title": "Expression",
+          "type": "string"
+        },
+        "image_asset_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Image Asset Id",
+          "type": "string"
+        },
+        "outfit_id": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outfit Id"
+        }
+      },
+      "required": [
+        "expression",
+        "image_asset_id"
+      ],
+      "title": "CharacterExpression",
       "type": "object"
     },
     "CharacterOutfit": {
@@ -478,6 +534,76 @@
         "character_id"
       ],
       "title": "ExitDirection",
+      "type": "object"
+    },
+    "ExpressionDirection": {
+      "additionalProperties": false,
+      "description": "Change a character's face in place; it stays until the next change or entrance.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "utterance_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Utterance Id",
+          "type": "string"
+        },
+        "timing": {
+          "default": "before",
+          "enum": [
+            "before",
+            "start",
+            "after"
+          ],
+          "title": "Timing",
+          "type": "string"
+        },
+        "kind": {
+          "const": "expression",
+          "title": "Kind",
+          "type": "string"
+        },
+        "character_id": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Character Id",
+          "type": "string"
+        },
+        "expression": {
+          "enum": [
+            "neutral",
+            "smile",
+            "laugh",
+            "angry",
+            "sad",
+            "cry",
+            "surprised",
+            "confused",
+            "anxious",
+            "serious",
+            "fear",
+            "shy"
+          ],
+          "title": "Expression",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "utterance_id",
+        "kind",
+        "character_id",
+        "expression"
+      ],
+      "title": "ExpressionDirection",
       "type": "object"
     },
     "FocusDirection": {
@@ -1085,6 +1211,7 @@
             "blackout": "#/$defs/BlackoutDirection",
             "enter": "#/$defs/EnterDirection",
             "exit": "#/$defs/ExitDirection",
+            "expression": "#/$defs/ExpressionDirection",
             "focus": "#/$defs/FocusDirection",
             "outfit": "#/$defs/OutfitDirection",
             "pause": "#/$defs/PauseDirection",
@@ -1107,6 +1234,9 @@
           },
           {
             "$ref": "#/$defs/OutfitDirection"
+          },
+          {
+            "$ref": "#/$defs/ExpressionDirection"
           },
           {
             "$ref": "#/$defs/FocusDirection"

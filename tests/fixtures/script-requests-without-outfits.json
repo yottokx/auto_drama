@@ -22,7 +22,7 @@
     },
     {
       "purpose": "script-staging",
-      "sha256": "41426ead6fc121b847f4d22616aa43686415dc0f12932bd027cbd5abe4626567"
+      "sha256": "0299bad6bacc50e0895af8607891cf4ffbf97f3a1842a459cea50015e912d77b"
     },
     {
       "purpose": "script-handoff",
@@ -38,7 +38,7 @@
     },
     {
       "purpose": "script-staging",
-      "sha256": "21dc3ae7a5271931ec046d199080921bd516b9fba689e28631dcd4dd3aadb198"
+      "sha256": "ecacf7f9ee111959bad747a156dcb75137a473a9b4f936e53a09cd06cd50be59"
     },
     {
       "purpose": "script-handoff",
@@ -54,7 +54,7 @@
     },
     {
       "purpose": "script-staging",
-      "sha256": "23a5aab39451c99add254f7732fa42200e2dc161dc589cfa4d3fd0f15372dca3"
+      "sha256": "3e3d7b6ac6b4aad99ed243dc422e4e6011236f8413a8b2bcfe42a79c36fc9371"
     }
   ],
   "plot": "7b1ed1afb6668c995d7a51c37d134829eb94eb5e994e2979fb8edd1d041dbc13",

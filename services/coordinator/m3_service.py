@@ -1090,6 +1090,70 @@ class M3Service(ChapterProduction):
         for identifier in identifiers:
             self.advance(identifier)
 
+    def _expression_pictures(self, connection, production, references, content) -> dict:
+        """The expression pictures that belong to the portraits this chapter shows.
+
+        They are looked up when a chapter is built rather than frozen with the cast: a script
+        asks for faces whether or not pictures exist, so a picture made later is used by the
+        next build without the story being written or staged again. A picture edited from a
+        portrait other than the one on stage is left out, and the ordinary portrait is shown.
+        """
+        from .expression_service import ExpressionService
+
+        result = {}
+
+        def show(character_id, look, expression, image):
+            if image["project_id"] != production["project_id"]:
+                raise ValueError("asset belongs to another project")
+            data = self.store.read(image)
+            validate_png(data)
+            alias = connection.execute(
+                "SELECT * FROM artifact WHERE project_id=? AND logical_id=? AND kind='character' "
+                "AND sha256=? ORDER BY version DESC LIMIT 1",
+                (production["project_id"], "m3-image-" + image["id"], image["sha256"]),
+            ).fetchone()
+            if alias is None:
+                alias = self._artifact(
+                    connection, production, "m3-image-" + image["id"], "character",
+                    f"{script_character_id(character_id)}--{look or 'default'}--{expression}.png",
+                    data, provenance={"approved_artifact_id": image["id"]})
+            target = image_target(character_id, look)
+            identifier = stable_id("character", f"{target}~{expression}")
+            references[("m3_expression", f"{target}~{expression}")] = {
+                "id": identifier, "kind": "character", "artifact_id": alias["id"],
+                "filename": identifier + ".png", "sha256": alias["sha256"]}
+            content[identifier] = data
+            result.setdefault((character_id, look), {})[expression] = identifier
+
+        for (kind, target), shown in list(references.items()):
+            if kind != "m3_image":
+                continue
+            character_id, _, look = target.partition("--")
+            pictures = ExpressionService.of_portrait(connection, production["project_id"], shown["artifact_id"])
+            for expression, artifact_id in pictures.items():
+                show(character_id, look or None, expression, required(connection, "artifact", artifact_id))
+        return result
+
+    def _expressions_differ(self, connection, production, requirements, build) -> bool:
+        """Whether a build shows other expression pictures than its portraits have now."""
+        from .expression_service import ExpressionService
+
+        script = json.loads(self.store.read(required(connection, "artifact", build["script_artifact_id"])))
+        faces = {picture["image_asset_id"] for character in script["characters"]
+                 for picture in character.get("expressions", [])}
+        held = {asset["id"]: asset["sha256"] for asset in script["assets"] if asset["id"] in faces}
+        wanted = {}
+        for item in requirements:
+            if item["kind"] != "m3_image" or not item["artifact_id"]:
+                continue
+            if required(connection, "artifact", item["artifact_id"])["kind"] != "character":
+                continue
+            for expression, artifact_id in ExpressionService.of_portrait(
+                    connection, production["project_id"], item["artifact_id"]).items():
+                wanted[stable_id("character", f"{item['target_id']}~{expression}")] = required(
+                    connection, "artifact", artifact_id)["sha256"]
+        return held != wanted
+
     def _publish(self, connection, production, requirements, *, presentation=None):
         snapshot = self._snapshot(connection, production)
         narrative = self._load_narrative(connection, production)
@@ -1142,6 +1206,7 @@ class M3Service(ChapterProduction):
             portrait_settings=portrait_settings,
             omitted_portraits=omitted_portraits,
             normalization_reports=staging_reports,
+            expression_pictures=self._expression_pictures(connection, production, references, content),
         )
         from .music_service import add_to_script
 

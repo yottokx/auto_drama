@@ -259,7 +259,7 @@ def test_edited_pictures_are_listed_and_a_work_can_forgo_the_editing_model(tmp_p
         project_id = project["project"]["id"]
         _anima, qwen = workers(client)
         assert editing(client, project_id) == {
-            "project_id": project_id, "enabled": True, "model": "Qwen-Image-2.1", "caution": True,
+            "project_id": project_id, "enabled": True, "model": "Qwen-Image-2.1", "caution": True, "expressions": 0,
             "portraits": [], "event_cgs": 0}
         action(client, project, "save-outfit", character_id="character-1", outfit=LOOK)
         action(client, project, "generate-outfit", character_id="character-1", outfit_id="look1")

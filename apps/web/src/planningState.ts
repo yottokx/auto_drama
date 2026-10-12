@@ -22,7 +22,7 @@ export type PlanningContent = {
     chapters: PlotChapter[]
   }
 }
-export type PlanningAsset = { status: 'missing' | 'pending' | 'running' | 'failed' | 'cancelled' | 'ready' | 'omitted'; url: string | null; job_id: string | null; error: string | null }
+export type PlanningAsset = { status: 'missing' | 'pending' | 'running' | 'failed' | 'cancelled' | 'ready' | 'omitted'; url: string | null; job_id: string | null; error: string | null; artifact_id?: string }
 export type PlanningAssets = Record<string, { image?: PlanningAsset; voice?: PlanningAsset }>
 export type Planning = {
   id: string; revision: number; status: 'draft' | 'generating' | 'ready' | 'planned' | 'approved' | 'failed'

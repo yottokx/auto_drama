@@ -144,7 +144,7 @@ def test_migration_preserves_existing_published_build(tmp_path, monkeypatch):
             connection.execute(f"ALTER TABLE {table}_legacy RENAME TO {table}")
         # Remove all tables introduced after this historical schema, including
         # current TTS management state populated by the fixture runtime.
-        for table in ("shared_material_image", "shared_material", "planning_asset", "tts_worker_inventory", "tts_download", "tts_settings", "llm_settings",
+        for table in ("portrait_expression", "shared_material_image", "shared_material", "planning_asset", "tts_worker_inventory", "tts_download", "tts_settings", "llm_settings",
                       "planning_job", "planning_approval", "planning_draft", "edition_build",
                       "publication_edition", "adjustment_job", "adjustment_candidate",
                       "adjustment_apply", "music_replan_job", "adjustment_draft", "music_adjustment_job", "music_candidate",

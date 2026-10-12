@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorMessage } from './api'
+import { PortraitExpressionPanel } from './CharacterExpressions'
 import { Icon } from './Icons'
 import { PortraitCanvas } from './PortraitEditor'
 import { GenerationProgress } from './GenerationProgress'
@@ -415,6 +416,8 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
               </article>
             })}</div>
             {!candidates.length && <p>保存済みの候補はありません。</p>}
+            {kind === 'image' && <PortraitExpressionPanel projectId={projectId} characterId={isLook ? character.character_id.split('--')[0] : character.character_id} characterName={character.name}
+              baseArtifactId={chosenImage?.artifact_id ?? null} disabled={blocked || mutating} finished onExpand={(name, url) => setEnlarged({ url, name })}/>}
             </div>
             <fieldset className="adjustment-new-material" disabled={sendingBlocked}>
               <legend>{kind === 'image' ? '新しい立ち絵の候補' : '新しい基準音声の候補'}</legend>
