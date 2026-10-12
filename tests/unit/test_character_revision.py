@@ -110,7 +110,7 @@ def test_name_revision_merges_only_changed_fields_into_current_second_character(
 
 
 @pytest.mark.parametrize("revision", [False, True], ids=["initial-generation", "revision"])
-def test_every_character_stage_excludes_other_characters_full_settings(revision):
+def test_other_characters_settings_are_shown_only_where_a_person_is_made_or_reworked(revision):
     payload = _payload(revision=revision)
     payload["cast_inputs"][0].update(name="指定したリオン", freeform="右腕のない記録係")
     payload["applied_instructions"] = [
@@ -132,8 +132,21 @@ def test_every_character_stage_excludes_other_characters_full_settings(revision)
     assert [call["stage"] for call in llm.calls] == expected
     for call in llm.calls:
         text = json.dumps(call["messages"], ensure_ascii=False)
-        assert "PRIVATE_PROTAGONIST_" not in text, call["stage"]
         context = json.JSONDecoder().raw_decode(call["messages"][1]["content"])[0]
+        if call["stage"] in {"final", "character-revision"}:
+            # Where a person is thought up, or reworked because she is too like another, who the
+            # others are is shown so she is not made again:
+            # what they are like, never their lines, and only under its own name.
+            assert context.pop("established_cast") == [{
+                "name": "リオン", "role": payload["cast_results"][0]["role"],
+                **{key: f"PRIVATE_PROTAGONIST_{key}" for key in ("settings", "appearance", "voice")}}]
+            for field in ("selfIntroduction", "sampleLines"):
+                assert f"PRIVATE_PROTAGONIST_{field}" not in text
+            text = text.replace("established_cast", "", 1)
+            assert all(text.count(f"PRIVATE_PROTAGONIST_{key}") == 1 for key in ("settings", "appearance", "voice"))
+        else:
+            assert "PRIVATE_PROTAGONIST_" not in text, call["stage"]
+            assert "established_cast" not in context
         assert [item["id"] for item in context["cast_inputs"]] == ["character-2"]
         assert context["character_id"] == "character-2"
         assert context["character_input"] == payload["character_input"]

@@ -224,3 +224,46 @@ def test_a_look_waits_for_a_worker_that_holds_the_editing_model_in_use(tmp_path)
         job = claim(client, turbo)
         assert job["kind"] == "m2_outfit_image"
         assert (job["payload"]["cg_profile"]["model"], job["payload"]["cg_profile"]["steps"]) == ("turbo", 8)
+
+
+def test_looks_are_announced_to_the_text_model_before_any_image_model_is_loaded(tmp_path):
+    identity = ("character_id", "character_result", "outfit", "edit", "current_look", "material_image")
+
+    def words(row):
+        return {key: row.get(key) for key in identity}
+
+    with TestClient(create_app(tmp_path)) as client:
+        from tests.integration.test_m2 import create, worker
+
+        project, identifier = create(client, prompt="異星の物語を自由に考える。"), worker(client)
+        qwen = outfit_worker(client)
+        brief(client, project, {"character-1": [{"name": "浴衣", "description": "夏祭りっぽく"},
+                                                {"name": "礼装", "description": "式典に出る姿"}]})
+        action(client, project, "generate-world")
+        run_one(client, identifier, "m2_world")
+        action(client, project, "confirm-world")
+        run_one(client, identifier, "m2_character")
+        # The cast was just written: its portrait job carries the looks, so they are put into
+        # words while the text model is loaded, with the portrait prompts.
+        portrait, _ = run_one(client, identifier, "m2_image")
+        announced = portrait["payload"]["look_design_batch"]
+        assert [row["outfit"]["description"] for row in announced] == ["夏祭りっぽく", "式典に出る姿"]
+        run_one(client, identifier, "m2_voice")
+        first = claim(client, qwen)
+        second_row, = first["payload"]["look_design_batch"]
+        assert complete(client, first, qwen, outfit_bundle(first)).status_code == 200
+        second = claim(client, qwen)
+        # The worker finds the words it made ahead only if each request is the one it was shown.
+        assert [words(first["payload"]), words(second["payload"])] == [words(row) for row in announced]
+        assert words(second["payload"]) == words(second_row)
+        for job in (first, second):
+            assert job["payload"]["world_result"] == portrait["payload"]["world_result"]
+            assert job["payload"]["profile"] == portrait["payload"]["profile"]
+        assert "look_design_batch" not in second["payload"]
+        assert complete(client, second, qwen, outfit_bundle(second)).status_code == 200
+        # Drawn again, the base portrait announces the looks that will be redrawn from it.
+        action(client, project, "retake", character_id="character-1", scope="image-retake")
+        again, _ = run_one(client, identifier, "m2_image")
+        assert [row["outfit"]["name"] for row in again["payload"]["look_design_batch"]] == ["浴衣", "礼装"]
+        redrawn = claim(client, qwen)
+        assert words(redrawn["payload"]) == words(again["payload"]["look_design_batch"][0])

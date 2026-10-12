@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -39,14 +40,31 @@ class ArtifactStore:
             if hashlib.sha256(staged.read_bytes()).hexdigest() != digest:
                 raise OSError("Artifact write verification failed")
             if target.exists():
-                if target.read_bytes() != data:
+                if self._published(target) != data:
                     raise OSError("Existing artifact failed integrity verification")
             else:
-                os.replace(staged, target)
+                try:
+                    os.replace(staged, target)
+                except PermissionError:
+                    # Another request published the same content at this moment, and Windows
+                    # refuses to replace a file that is open. The object is the same either way.
+                    if not target.exists() or self._published(target) != data:
+                        raise
                 self._sync_directory(target.parent)
         finally:
             staged.unlink(missing_ok=True)
         return StoredObject(digest, len(data), key)
+
+    @staticmethod
+    def _published(target: Path) -> bytes:
+        """An object as stored; one that is being published this instant is waited for."""
+        for _ in range(200):
+            try:
+                return target.read_bytes()
+            except PermissionError:
+                # Windows shares neither a file being replaced nor the one replacing it.
+                time.sleep(0.01)
+        return target.read_bytes()
 
     def read(self, record: dict) -> bytes:
         digest = record["sha256"]

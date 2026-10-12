@@ -397,3 +397,50 @@ def test_a_world_made_again_redraws_its_materials_and_dresses_the_cast_in_them(t
         job = claim(client, qwen)
         assert job["payload"]["outfit"]["id"] == "default"
         assert job["payload"]["reference_image"]["artifact_id"] == plain
+
+
+def test_materials_and_the_looks_that_wear_them_are_announced_while_the_text_model_is_loaded(tmp_path):
+    words = ("mode", "name", "label", "wish", "base_outfit_en", "appearance")
+    look_identity = ("character_id", "character_result", "outfit", "edit", "current_look", "material_image")
+
+    with TestClient(create_app(tmp_path)) as client:
+        from tests.integration.test_m2 import create, run_one, worker
+
+        project, main = create(client, prompt="異星の物語を自由に考える。"), worker(client)
+        anima, qwen = workers(client)
+        current = detail(client, project)
+        action(client, project, "save-brief", world=current["draft"]["worldInput"],
+               characters=[row["input"] for row in current["draft"]["characters"]],
+               materials=[{"id": "mat-a", "name": "制服", "description": "紺のブレザー"},
+                          {"id": "mat-b", "name": "体操着", "description": ""}],
+               outfits={"character-1": [{"name": "体育の時間", "material": "mat-b"}, {"name": "私服"}]})
+        action(client, project, "generate-world")
+        # The world job is told which sheets follow it, so it puts them into words itself.
+        world, _ = run_one(client, main, "m2_world")
+        announced = world["payload"]["material_design_batch"]
+        assert [sheet["name"] for sheet in announced] == ["制服", "体操着"]
+        def asked(job):
+            return {key: job["payload"]["material_sheet"].get(key) or "" for key in words}
+
+        expected = [{key: sheet.get(key) or "" for key in words} for sheet in announced]
+        first = claim(client, anima)
+        assert asked(first) in expected
+        # Queued together, the sheet that goes out first also carries the other, should the
+        # words be missing.
+        (other,) = first["payload"]["material_design_batch"]
+        assert complete(client, first, anima, sheet_bundle(first)).status_code == 200
+        second = claim(client, anima)
+        assert asked(second) == {key: other.get(key) or "" for key in words} != asked(first)
+        assert asked(second) in expected and "material_design_batch" not in second["payload"]
+        assert complete(client, second, anima, sheet_bundle(second)).status_code == 200
+        action(client, project, "confirm-world")
+        run_one(client, main, "m2_character")
+        portrait, _ = run_one(client, main, "m2_image")
+        # Its sheet is drawn by now, so the look that wears it is put into words with the others.
+        rows = portrait["payload"]["look_design_batch"]
+        assert [(row["outfit"]["name"], "material_image" in row) for row in rows] == [("体育の時間", True), ("私服", False)]
+        run_one(client, main, "m2_voice")
+        for row in rows:
+            job = claim(client, qwen)
+            assert {key: job["payload"].get(key) for key in look_identity} == {key: row.get(key) for key in look_identity}
+            assert complete(client, job, qwen, outfit_bundle(job)).status_code == 200

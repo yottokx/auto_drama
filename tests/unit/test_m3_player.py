@@ -372,3 +372,30 @@ process.stdout.write(JSON.stringify({tags: Object.keys(tags).sort(),
                              "ad_transition", "ad_wait"]
     assert value["vital"]["ad_say"] == ["id"] and value["vital"]["ad_transition"] == ["cue"]
     assert value["state"]["started"] is False and value["state"]["tag"] == "idle"
+
+
+def test_the_same_content_published_at_the_same_moment_is_one_object(tmp_path, monkeypatch):
+    import os
+
+    from services.coordinator.storage import ArtifactStore
+
+    store, data = ArtifactStore(tmp_path), b"same content"
+    replace = os.replace
+
+    def raced(staged, target):
+        # The other request publishes first, and Windows then refuses to replace the open file.
+        replace(staged, target)
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(os, "replace", raced)
+    stored = store.put(data)
+    assert (tmp_path / stored.storage_key).read_bytes() == data
+
+    def refused(staged, target):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(os, "replace", refused)
+    import pytest
+
+    with pytest.raises(PermissionError):
+        store.put(b"content nobody published")

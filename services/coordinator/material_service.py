@@ -121,6 +121,7 @@ class MaterialService:
         """
         if not self._capable(connection, TEXT_KIND):
             return
+        queued = []
         if redraw:
             for image in connection.execute(
                     "SELECT i.*,m.id AS owner FROM shared_material_image i JOIN shared_material m ON m.id=i.material_id "
@@ -130,14 +131,16 @@ class MaterialService:
                 if job and job["status"] in {"pending", "running"}:
                     continue
                 self._redesign(connection, dict(image))
-                self._enqueue(connection, project_id, required(connection, "shared_material", image["owner"]),
-                              required(connection, "shared_material_image", image["id"]), world=world)
+                queued.append(self._enqueue(
+                    connection, project_id, required(connection, "shared_material", image["owner"]),
+                    required(connection, "shared_material_image", image["id"]), world=world))
         for material in connection.execute(
                 "SELECT * FROM shared_material m WHERE project_id=? AND removed=0 AND brief_id IS NOT NULL "
                 "AND NOT EXISTS (SELECT 1 FROM shared_material_image i WHERE i.material_id=m.id AND i.removed=0) "
                 "ORDER BY created_at,rowid", (project_id,)).fetchall():
-            self._add_image(connection, project_id, dict(material), label="", wish="", mode="text", source=None,
-                            world=world)
+            queued.append(self._add_image(connection, project_id, dict(material), label="", wish="", mode="text",
+                                          source=None, world=world))
+        self._announce(connection, queued)
 
     def brief_reference(self, connection, project_id, brief_id) -> dict | None:
         """The first finished sheet of a declared material, which is the one the brief means."""
@@ -238,10 +241,7 @@ class MaterialService:
                                else "絵をもとにした作成には、画像編集の準備ができたWorkerが必要です。")
         state = M2Service._load(connection, project_id)
         source = json.loads(image["source"])
-        sheet = {"mode": image["mode"], "name": material["name"], "label": image["label"],
-                 # What a portrait wears is taken as drawn; the material's own words would overrule it.
-                 "wish": image["wish"] or ("" if image["mode"] == "extract" else material["description"]),
-                 **source.get("words", {})}
+        sheet = self._sheet(material, image)
         if image["detail"]:
             # Drawing again keeps what the sheet was decided to be; a changed wish clears this first.
             sheet["design"] = json.loads(image["detail"])
@@ -269,6 +269,51 @@ class MaterialService:
             (identifier, project_id, run_id, kind, json.dumps(payload, ensure_ascii=False),
              json.dumps(settings, ensure_ascii=False), now, now))
         connection.execute("UPDATE shared_material_image SET job_id=? WHERE id=?", (identifier, image["id"]))
+        return identifier, self._sheet(material, image)
+
+    @staticmethod
+    def _sheet(material, image) -> dict:
+        """What a sheet is made from, as its job is asked for it."""
+        return {"mode": image["mode"], "name": material["name"], "label": image["label"],
+                # What a portrait wears is taken as drawn; the material's own words would overrule it.
+                "wish": image["wish"] or ("" if image["mode"] == "extract" else material["description"]),
+                **json.loads(image["source"]).get("words", {})}
+
+    def sheets_to_design(self, connection, project_id, *, redraw: bool) -> list[dict]:
+        """The sheets a new world will be followed by, for the world's text model to put into words.
+
+        It mirrors ``ensure_sheets``: the first sheet of every declared material that has none,
+        and with ``redraw`` the sheets that took their design from the material's own words.
+        """
+        if not self._capable(connection, TEXT_KIND):
+            return []
+        sheets = []
+        if redraw:
+            for image in connection.execute(
+                    "SELECT i.*,m.name AS material_name,m.description AS material_description "
+                    "FROM shared_material_image i JOIN shared_material m ON m.id=i.material_id "
+                    "WHERE m.project_id=? AND m.removed=0 AND m.brief_id IS NOT NULL AND i.removed=0 "
+                    "AND i.mode='text' AND i.wish='' ORDER BY i.created_at,i.rowid", (project_id,)).fetchall():
+                sheets.append(self._sheet({"name": image["material_name"], "description": image["material_description"]},
+                                          image))
+        for material in connection.execute(
+                "SELECT * FROM shared_material m WHERE project_id=? AND removed=0 AND brief_id IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM shared_material_image i WHERE i.material_id=m.id AND i.removed=0) "
+                "ORDER BY created_at,rowid", (project_id,)).fetchall():
+            sheets.append(self._sheet(material, {"mode": "text", "label": "", "wish": "", "source": "{}"}))
+        return sheets[:50]
+
+    @staticmethod
+    def _announce(connection, queued: list[tuple[str, dict]]) -> None:
+        """Sheets queued together are put into words by the first of them, in one text-model session."""
+        if len(queued) < 2:
+            return
+        # The one a worker is handed first: jobs of one priority go out oldest first, then by id.
+        jobs = {identifier: required(connection, "job", identifier) for identifier, _ in queued}
+        first = min(jobs.values(), key=lambda job: (job["created_at"], job["id"]))
+        payload = {**json.loads(first["payload"]),
+                   "material_design_batch": [sheet for identifier, sheet in queued if identifier != first["id"]][:50]}
+        connection.execute("UPDATE job SET payload=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), first["id"]))
 
     def _add_image(self, connection, project_id, material, *, label, wish, mode, source, world=None):
         count = connection.execute("SELECT COUNT(*) FROM shared_material_image WHERE material_id=? AND removed=0",
@@ -283,8 +328,8 @@ class MaterialService:
         connection.execute("INSERT INTO shared_material_image (id,material_id,label,wish,mode,source,created_at) "
                            "VALUES (?,?,?,?,?,?,?)", (identifier, material["id"], (label or "").strip(),
                                (wish or "").strip(), mode, json.dumps(stored, ensure_ascii=False), self.clock()))
-        self._enqueue(connection, project_id, material, required(connection, "shared_material_image", identifier),
-                      world=world)
+        return self._enqueue(connection, project_id, material,
+                             required(connection, "shared_material_image", identifier), world=world)
 
     def action(self, project_id, body: MaterialAction):
         with self.db.transaction() as connection:

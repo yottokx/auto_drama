@@ -642,11 +642,7 @@ class M2Service:
 
         descriptor = task("m2_outfit_image", character["id"], "outfit-image")
         descriptor["cg_profile"] = EventCgSettings(self.coordinator).settings(connection)["profile"]
-        descriptor["outfit"] = {key: outfit[key] for key in ("id", "name", "description", "occasion")}
-        if outfit.get("descriptionEdited") and outfit.get("generatedDescription"):
-            # A directly edited look is drawn as written rather than designed again from the wish.
-            descriptor["outfit"]["appearance"] = outfit["generatedDescription"]
-            descriptor["outfit"]["occasion"] = outfit["occasion"] or outfit.get("generatedOccasion") or ""
+        descriptor["outfit"] = self._look_wish(outfit)
         descriptor["reference_image"] = {"artifact_id": reference["id"], "sha256": reference["sha256"]}
         if outfit.get("materialImageId") or outfit.get("materialBrief"):
             material = self._material(connection, project_id, outfit)
@@ -654,6 +650,46 @@ class M2Service:
                 raise ServiceError(409, "着せる共通の素材の絵がまだありません。")
             descriptor["material_image"] = material
         return descriptor
+
+    @staticmethod
+    def _look_wish(outfit: dict) -> dict:
+        wish = {key: outfit[key] for key in ("id", "name", "description", "occasion")}
+        if outfit.get("descriptionEdited") and outfit.get("generatedDescription"):
+            # A directly edited look is drawn as written rather than designed again from the wish.
+            wish["appearance"] = outfit["generatedDescription"]
+            wish["occasion"] = outfit["occasion"] or outfit.get("generatedOccasion") or ""
+        return wish
+
+    def _looks_to_design(self, connection, project_id: str, draft: dict, drawing: str) -> list[dict]:
+        """The looks that will be drawn once the cast's portraits are, as their jobs will ask for them.
+
+        They go with a portrait job: the text model has just written the cast and is still
+        loaded, so it puts the looks into words before the image models take the GPU in turn.
+        """
+        if not self._uses_looks(draft):
+            return []
+        rows = []
+        for character in draft["characters"]:
+            if not character.get("result"):
+                continue
+            # The portrait being drawn now replaces the one this character's looks were made from.
+            looks = self._alternates(character) if character["id"] == drawing else self._stale_looks(character)
+            for outfit in looks:
+                if outfit.get("handPicked"):
+                    continue
+                worn = {}
+                if outfit.get("materialImageId") or outfit.get("materialBrief"):
+                    # A look that wears a shared material is described by its sheet: one that is
+                    # not drawn yet leaves the look to be put into words when it is.
+                    material = self._material(connection, project_id, outfit)
+                    if material is None:
+                        continue
+                    worn = {"material_image": material}
+                rows.append({"character_id": character["id"], "character_result": copy.deepcopy(character["result"]),
+                             "outfit": self._look_wish(outfit), **worn,
+                             **{key: value for key, value in self._look_context(draft, character, outfit).items()
+                                if key == "current_look"}})
+        return rows[:50]
 
     @staticmethod
     def _look_context(draft: dict, character: dict, outfit: dict) -> dict:
@@ -1065,12 +1101,35 @@ class M2Service:
                     if item["kind"] == "m2_image"
                 ]
             payload["portrait_prompt_batch"] = copy.deepcopy(state["portraitPromptBatch"])
+            waiting = self._looks_to_design(connection, project_id, draft, descriptor["character_id"])
+            if waiting:
+                payload["look_design_batch"] = waiting
         else:
             state.pop("portraitPromptBatch", None)
+        if descriptor["kind"] == "m2_world":
+            from .material_service import MaterialService
+
+            sheets = MaterialService(self.coordinator).sheets_to_design(
+                connection, project_id, redraw=not (descriptor.get("instruction") or "").strip())
+            if sheets:
+                payload["material_design_batch"] = sheets
         for key in ("reference_voice", "dialogue_text", "reference_image", "outfit", "cg_profile", "material_image", "edit",
                     "other_looks", "current_look", "expression"):
             if key in descriptor:
                 payload[key] = descriptor[key]
+        if descriptor["kind"] == "m2_outfit_image" and "outfit" in descriptor and "expression" not in descriptor:
+            # The looks that wait behind this one are put into words in the same text-model
+            # session, so the editing model then stays loaded from one picture to the next.
+            waiting = [
+                {"character_id": item["character_id"],
+                 "character_result": copy.deepcopy(self._character(draft, item["character_id"])["result"]),
+                 **{key: copy.deepcopy(item[key])
+                    for key in ("outfit", "edit", "other_looks", "current_look", "material_image") if key in item}}
+                for item in state["queue"]
+                if item["kind"] == "m2_outfit_image" and "outfit" in item and "expression" not in item
+            ][:50]
+            if waiting:
+                payload["look_design_batch"] = waiting
         identifier, run_id, now = uuid4().hex, uuid4().hex, self.clock()
         connection.execute(
             "INSERT INTO generation_run (id,project_id,settings_version,story_revision_id,policy,status,created_at) "

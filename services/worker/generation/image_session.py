@@ -18,7 +18,8 @@ from .cancellation import check_cancelled, register_cancel_callback
 from .processes import kill_owned_process, run_process
 from .runtime_lifetime import RuntimeLifetime
 
-IMAGE_KINDS = frozenset({"m2_image", "m3_image", "m3_background"})
+# A shared material drawn from words is one more picture of the portrait model.
+IMAGE_KINDS = frozenset({"m2_image", "m3_image", "m3_background", "m2_material_image"})
 _active: ContextVar[ImageSession | None] = ContextVar("image_session", default=None)
 
 

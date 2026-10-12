@@ -25,8 +25,10 @@ class EventCgSession(MusicSession):
     """Reuse the established owned-process/lease lifetime, with a CG protocol."""
 
     def run(self, request, *, python, cwd, timeout, identity, command=None):
+        # One process serves every picture of the same model and settings; the child keeps the
+        # pipeline between requests, so pictures that follow one another do not load it again.
         return super().run(request, python=python, cwd=cwd, timeout=timeout,
-            identity=identity + ":" + request["cg_id"], command=command or
+            identity=identity, command=command or
             [python, "-m", "services.worker.generation.event_cg_runner", "--serve"])
 
     def _request(self, request, timeout, started):
@@ -97,6 +99,6 @@ def current_session():
 
 def prepare_job(kind):
     session = current_session()
-    # A portrait edit decides for itself: expressions keep the process, a look releases it.
+    # A portrait edit decides for itself: it releases the process only to load the text model.
     if session is not None and kind not in KINDS and kind != "m2_outfit_image":
         session.close()

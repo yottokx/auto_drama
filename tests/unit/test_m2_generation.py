@@ -1400,3 +1400,23 @@ def test_owned_process_timeout_stops_only_spawned_process(tmp_path):
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=10)
+
+
+def test_a_character_is_told_who_the_others_turned_out_to_be():
+    friend = {"id": "b", "name": "", "age": "16", "gender": "女性", "role": "主人公の友人", "freeform": ""}
+    made = {**friend, "name": "白鳥 凛花", "settings": "流行に敏感なムードメーカー。", "appearance": "明るい茶色のセミロング。",
+            "voice": "高く弾む声。", "selfIntroduction": "凛花だよ！", "sampleLines": ["ねえねえ見て！"]}
+    payload = {"character_id": "c", "character_input": {**friend, "id": "c"}, "character_result": None,
+               "cast_inputs": [friend, {**friend, "id": "c"}],
+               "cast_results": [made, {"id": "c", "name": "本人", "settings": "作り直す前の本人。"}]}
+    assert "established_cast" not in json.loads(pipeline._context(payload))
+    context = json.loads(pipeline._context(payload, differentiate=True))
+    # What the other person is like is shown, so the same few words do not make her twice.
+    assert context["established_cast"] == [{
+        "name": "白鳥 凛花", "role": "主人公の友人", "settings": "流行に敏感なムードメーカー。",
+        "appearance": "明るい茶色のセミロング。", "voice": "高く弾む声。"}]
+    # She stays someone else: her lines are not offered as material, and she is never the target.
+    assert "ねえねえ見て" not in json.dumps(context, ensure_ascii=False)
+    assert context["other_characters"] == [{key: made[key] for key in ("id", "name", "age", "gender", "role", "freeform")}]
+    # Nobody is established yet for the first of the cast.
+    assert json.loads(pipeline._context({**payload, "cast_results": []}, differentiate=True))["established_cast"] == []

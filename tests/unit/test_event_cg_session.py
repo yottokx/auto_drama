@@ -48,32 +48,35 @@ class Probe:
             assert all(process.poll() is not None for process in self.processes)
             self.events.append("release")
 
-    def run(self, session, name, cg_id="one", mode="ok", timeout=10):
+    def run(self, session, name, cg_id="one", mode="ok", timeout=10, identity="model-v1"):
         output = self.root / name
         output.mkdir()
         request = {"output_dir": str(output), "cg_id": cg_id, "mode": mode}
         with session.gpu_scope(self.lease()):
             result = session.run(request, python=sys.executable, cwd=self.root,
-                timeout=timeout, identity="model-v1", command=[sys.executable, str(self.script)])
+                timeout=timeout, identity=identity, command=[sys.executable, str(self.script)])
             if session._process not in self.processes:
                 self.processes.append(session._process)
         return result
 
 
-def test_same_cg_reuses_owned_child_and_other_cg_reloads(tmp_path):
+def test_pictures_of_one_model_share_the_owned_child_and_another_model_reloads(tmp_path):
     probe = Probe(tmp_path)
     progress = []
     with event_cg_session.reuse_event_cg_runtime() as session, progress_scope(progress.append):
         first = probe.run(session, "base")
         variant = probe.run(session, "variant")
         assert first["pid"] == variant["pid"]
-        changed = probe.run(session, "next-cg", cg_id="two")
+        # Another CG of the same model and settings does not load the model again.
+        following = probe.run(session, "next-cg", cg_id="two")
+        assert first["pid"] == following["pid"]
+        changed = probe.run(session, "other-model", cg_id="two", identity="model-v2")
         assert first["pid"] != changed["pid"]
         assert probe.events == ["acquire"]
         prepare_media_job("m3_voice_clone")
         assert session._process is session._lease is None
         assert probe.events == ["acquire", "release"]
-    assert len(progress) == 3
+    assert len(progress) == 4
     assert progress[-1]["steps"][0]["completed"] == 1
 
 

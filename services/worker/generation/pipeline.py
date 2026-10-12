@@ -152,7 +152,7 @@ def available_job_kinds() -> list[str]:
     return check_readiness()["available_job_kinds"]
 
 
-def _context(payload: dict, *, world_only: bool = False) -> str:
+def _context(payload: dict, *, world_only: bool = False, differentiate: bool = False) -> str:
     if world_only:
         # Initial cast instructions constrain the world from the first candidate.
         # Old generated people/relationships may belong to a previous world and
@@ -202,6 +202,15 @@ def _context(payload: dict, *, world_only: bool = False) -> str:
             # Keep original constraints separate: generated summaries can contradict them.
             "other_character_inputs": other_inputs,
             "other_characters": list(others.values()),
+            # Who the others have turned out to be, so that this person is not made the same again:
+            # people asked for in the same few words would otherwise come out as one character twice.
+            # Shown where a person is thought up or reworked on request. The reviews and the
+            # portrait prompt see the person alone, so that nobody else's traits leak into them.
+            **({"established_cast": [
+                {key: person.get(key, "") for key in ("name", "role", "settings", "appearance", "voice")}
+                for person in payload.get("cast_results", [])
+                if person.get("id") != target_id and person.get("settings")
+            ]} if differentiate else {}),
             "applied_instructions": applied_instructions("m2_character", payload),
         },
         ensure_ascii=False,
@@ -321,6 +330,10 @@ def _revise_character(payload: dict, llm: LocalLLM) -> dict:
          "character_resultを変更前の唯一の原本とし、instructionの最新の要望を反映してください。"
          "character_inputに保存した指定の反映を求められた場合は、その指定を本人へ反映します。"
          "other_charactersは他人の参考情報であり、生成・修正対象ではありません。"
+         "established_castは既に決まった他のメインキャラクターの人物像です。instructionが他の人物との"
+         "違い・被りの解消・別の個性への作り直しを求めている場合に限り、誰と何が重なっているかを"
+         "確かめるために参照し、性格・立ち位置・関心・話し方・声・外見が誰とも重ならない人物へ変更します。"
+         "それ以外の修正では参照せず、これを理由に変更範囲を広げません。他人の内容は写しません。"
          "世界に主人公の説明があっても、本人の役割・経歴・設定へ置き換えません。"
          "changesには明示された要望を満たすために変更が必要な項目だけを入れてください。"
          "名前だけの修正ではnameと、自己紹介など実際にその名前を含む箇所の名前表記だけを変え、"
@@ -335,7 +348,7 @@ def _revise_character(payload: dict, llm: LocalLLM) -> dict:
     )
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": _context(payload) + revision_rules},
+        {"role": "user", "content": _context(payload, differentiate=True) + revision_rules},
     ]
     revision = llm.structured("character-revision", messages, schema)
     validate_schema(revision, schema)
@@ -371,7 +384,8 @@ def generate_text(kind: str, payload: dict, llm: LocalLLM) -> dict:
             raise ValueError("Character generation target ID does not match its input/result.")
         if payload.get("character_result") and payload.get("instruction", "").strip():
             return _revise_character(payload, llm)
-    context = _context(payload, world_only=kind == "m2_world")
+    context = _context(payload, world_only=kind == "m2_world", differentiate=kind == "m2_character")
+    thought_up_from = context
     contract_version = payload.get("character_contract_version", 1)
     if kind == "m2_world":
         context += (
@@ -398,6 +412,12 @@ def generate_text(kind: str, payload: dict, llm: LocalLLM) -> dict:
             "別人へ置き換えないでください。人物の個別設定では本人単体の事実だけを具体化します。"
             "他のメインキャラクターとの関係は別の結果で扱うため、"
             "関係性入力と矛盾しない本人の背景・立場を選びつつ、人物間の関係を設定文に書かないでください。"
+            "established_castは既に決まった他のメインキャラクターです。本人の材料ではなく、内容を写しません。"
+            "ユーザーの明示要件が求めない限り、本人の性格・気質・趣味や関心・クラスや集団での立ち位置・"
+            "話し方と口癖・声の高さやテンポ・外見（髪の色と髪型・体格・服の着こなし・持ち物）を、"
+            "established_castの誰とも明確に異なるものにしてください。役割の欄が同じ人物同士でも、"
+            "場面で果たす役目（盛り上げる・止める・観察する・巻き込まれるなど）が重ならない別の個性にします。"
+            "自己紹介と台詞例も、established_castの誰かが言いそうな内容や言い回しにしません。"
         )
     content = context
     world_input = payload.get("world_input") or {}
@@ -496,8 +516,10 @@ def generate_text(kind: str, payload: dict, llm: LocalLLM) -> dict:
         return validate_result(kind, normalized, contract_version)
 
     result = normalize_result(result)
+    # The review holds the person against the brief alone; who the others are is not its business.
+    review_context = (_context(payload) + context[len(thought_up_from):] if kind == "m2_character" else context)
     result = ensure_brief_requirements(
-        kind, payload, result, llm, context=context, system=SYSTEM,
+        kind, payload, result, llm, context=review_context, system=SYSTEM,
         schema=schema, normalize=normalize_result, repair_instructions=output_rules,
     )
     llm.trace.append(
@@ -1243,6 +1265,10 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
     if execution_history:
         provenance["execution_settings_history"] = execution_history
     prepared = prepare_portrait_prompt(payload, work, config) if kind == "m2_image" else None
+    if kind == "m2_image":
+        from .outfit_image import design_ahead
+
+        design_ahead(payload, work, _portrait_conversion_scope)
     if prepared is not None:
         prompt, trace, provenance["llm"] = prepared["prompt"], prepared["trace"], prepared["llm"]
     if kind in image_session.IMAGE_KINDS or kind in voice_session.VOICE_KINDS:
@@ -1266,6 +1292,12 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
                     raise
                 trace = list(llm.trace)
                 provenance["llm"] = _llm_provenance(llm, config, payload)
+                if kind == "m2_world" and payload.get("material_design_batch"):
+                    # The shared materials are drawn for this world next: their words are made
+                    # now, so drawing them does not bring the text model back.
+                    from .material_image import design_waiting
+
+                    design_waiting(payload["material_design_batch"], result, work, llm, config["llm"]["model_id"])
         if kind == "m2_image":
             if supporting_portrait:
                 from .portrait_recovery import generate_with_recovery

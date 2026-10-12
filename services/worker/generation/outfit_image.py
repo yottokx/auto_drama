@@ -238,18 +238,167 @@ def _size(reference: Path) -> tuple[int, int]:
     return max(256, width - width % 32), max(256, height - height % 32)
 
 
+# What a look's words are made from. Looks that are going to be drawn are shown to the text model
+# while it is loaded - with the cast's portrait prompts, or with the first look of a batch - so
+# the image models then follow one another without the text model coming back in between.
+DESIGN_KEYS = ("character_id", "character_result", "outfit", "edit", "other_looks", "current_look", "material_image")
+# The looks the work already has only steer a design away from them. They change as looks are
+# adopted, so words made ahead are found whatever they were when the look is finally drawn.
+DESIGN_IDENTITY_KEYS = tuple(key for key in DESIGN_KEYS if key != "other_looks")
+DESIGN_CACHE_VERSION = 2
+MAX_DESIGN_BATCH = 50
+
+
+def _release_editing_model() -> None:
+    """The text model and the editing model do not fit the GPU together."""
+    resident = event_cg_session.current_session()
+    if resident is not None:
+        resident.close()
+
+
+def _fixed_design(payload: dict) -> dict | None:
+    """The design of a request that needs no text model, or None when it must be put into words."""
+    outfit, edit, material = payload["outfit"], payload.get("edit"), payload.get("material_image")
+    if payload.get("expression") is not None:
+        # Nothing to design: the expression is fixed and the look stays as it is.
+        return {"outfit_en": "", "summary_ja": None, "occasion_ja": "", "model_id": None, "requests": 0}
+    if edit is not None:
+        if edit["instruction"].strip():
+            return None
+        # An edit keeps the look as it is described.
+        return {"outfit_en": material["outfit_en"] if material else "",
+                "summary_ja": material["summary_ja"] if material else None,
+                "occasion_ja": "", "model_id": None, "requests": 0, "instruction_en": ""}
+    if material and outfit.get("id") == "default":
+        # The base look only puts the shared design on; there is nothing to design or to schedule.
+        return {"outfit_en": material["outfit_en"], "summary_ja": material["summary_ja"],
+                "occasion_ja": "", "model_id": None, "requests": 0}
+    return None
+
+
+def _design_with(payload: dict, llm, model_id: str) -> dict:
+    """Put one look, or one wished change to a look, into words."""
+    outfit, edit, material = payload["outfit"], payload.get("edit"), payload.get("material_image")
+    before = llm.requests
+    if edit is not None:
+        # Only the wished change is put into words.
+        wished = design_edit(payload, llm)
+        # With a shared material put on as well, the look is described by that material.
+        return {"outfit_en": material["outfit_en"] if material else "",
+                "summary_ja": (material["summary_ja"] if material else None) or wished["summary_ja"],
+                "occasion_ja": "", "model_id": model_id, "requests": llm.requests - before,
+                "instruction_en": wished["instruction_en"]}
+    source = payload if not material else {**payload, "outfit": {**outfit, "appearance": material["summary_ja"]}}
+    design = {**design_outfit(source, llm), "model_id": model_id}
+    design["requests"] = llm.requests - before
+    if material:
+        design["outfit_en"] = material["outfit_en"]
+    return design
+
+
+def _design_path(work: Path, payload: dict, llm_config: dict) -> Path:
+    """Where the words of this exact request are kept for the jobs that follow."""
+    world = payload.get("world_result") or ((payload.get("approval_snapshot") or {}).get("world") or {}).get("result")
+    identity = {"version": DESIGN_CACHE_VERSION, "source": {key: payload.get(key) for key in DESIGN_IDENTITY_KEYS},
+                "world": world, "profile": payload.get("profile", {}), "llm": llm_config["llm"]}
+    key = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return work.parent / "look-designs" / f"{key}.json"
+
+
+def _waiting_designs(payload: dict) -> list[dict]:
+    """The requests queued behind this one, as far as their words are concerned."""
+    batch = payload.get("look_design_batch") or []
+    if not isinstance(batch, list) or len(batch) > MAX_DESIGN_BATCH:
+        raise ValueError("Invalid look design batch.")
+    shared = {key: value for key, value in payload.items()
+              if key not in DESIGN_KEYS and key not in {"look_design_batch", "expression", "reference_image"}}
+    waiting = []
+    for row in batch:
+        if (not isinstance(row, dict) or set(row) - set(DESIGN_KEYS) or not isinstance(row.get("outfit"), dict)
+                or (row.get("edit") is not None and not isinstance((row["edit"] or {}).get("instruction"), str))):
+            raise ValueError("Invalid look design batch.")
+        waiting.append({**shared, **row})
+    return waiting
+
+
+def _design_waiting(payload: dict, work: Path, llm, llm_config: dict, made: list[dict]) -> None:
+    """Put the looks that wait into words with a text model that is already loaded."""
+    for other in _waiting_designs(payload):
+        target = _design_path(work, other, llm_config)
+        if target.is_file() or _fixed_design(other) is not None:
+            continue
+        check_cancelled()
+        # Looks designed in the same session are told about one another, as adopted looks are.
+        if made and other.get("edit") is None:
+            other = {**other, "other_looks": [*(other.get("other_looks") or []), *made]}
+        start = llm.requests + 1
+        try:
+            design = _design_with(other, llm, llm_config["llm"]["model_id"])
+        except ValueError:
+            # A look that cannot be put into words now is tried again by its own job.
+            if llm.requests >= start:
+                llm.retry_failed_from(start)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json(target, design)
+        made.append(_as_other_look(other, design))
+
+
+def _as_other_look(payload: dict, design: dict) -> dict:
+    return {"worn_by": (payload.get("character_result") or {}).get("name") or "キャラクター",
+            "look": payload["outfit"].get("name", ""), "outfit": design.get("summary_ja") or ""}
+
+
+def design_ahead(payload: dict, work: Path, scope) -> None:
+    """Put the looks a portrait job announces into words before any image model is loaded.
+
+    The cast's portraits are drawn right after the text model wrote the cast, and the looks are
+    drawn after the portraits: their words are made here, so that drawing them needs no text model.
+    """
+    if not payload.get("look_design_batch"):
+        return
+    from ..model_config import select_config
+
+    config = pipeline.load_config()
+    llm_config = select_config(config, payload, pipeline.ROOT)
+    waiting = [other for other in _waiting_designs(payload)
+               if _fixed_design(other) is None and not _design_path(work, other, llm_config).is_file()]
+    if not waiting:
+        return
+    with scope(config), LocalLLM(pipeline.ROOT, llm_config, payload, work / "llm-looks") as llm:
+        _design_waiting(payload, work, llm, llm_config, [])
+
+
+def _design(payload: dict, work: Path, config: dict, lock: Path) -> dict:
+    """The words of this request: made ahead, or made now together with the looks that wait."""
+    from ..model_config import select_config
+
+    llm_config = select_config(config, payload, pipeline.ROOT)
+    path = _design_path(work, payload, llm_config)
+    if path.is_file():
+        design = json.loads(path.read_text(encoding="utf-8"))
+        # Words made ahead serve one picture: asked for again, the look is designed afresh.
+        write_json(work / "outfit-design.json", design)
+        path.unlink()
+        return design
+    _release_editing_model()
+    with gpu_lock(lock, config["gpu_lock_timeout_seconds"]), \
+            LocalLLM(pipeline.ROOT, llm_config, payload, work / "llm") as llm:
+        design = _design_with(payload, llm, llm_config["llm"]["model_id"])
+        write_json(work / "outfit-design.json", design)
+        _design_waiting(payload, work, llm, llm_config,
+                        [] if payload.get("edit") is not None else [_as_other_look(payload, design)])
+    return design
+
+
 def generate_job(job: dict, work_dir: Path) -> bytes:
     check_cancelled()
     payload = job.get("payload")
     if job.get("kind") != KIND or not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("Unsupported outfit image job or schema.")
-    if not isinstance(payload.get("expression"), dict):
-        # Designing a look or a sheet loads the text model first; only expressions follow one
-        # another with the editing model kept loaded.
-        resident = event_cg_session.current_session()
-        if resident is not None:
-            resident.close()
     if payload.get("material_sheet"):
+        # A sheet is designed and drawn by its own pipeline.
+        _release_editing_model()
         from .material_image import generate_job as generate_sheet
 
         return generate_sheet(job, work_dir)
@@ -284,47 +433,21 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     reference = (work / REFERENCE).resolve(strict=True)
     if hashlib.sha256(reference.read_bytes()).hexdigest() != source.get("sha256"):
         raise ValueError("Base portrait hash mismatch.")
-    from ..model_config import select_config
-
     config = pipeline.load_config()
     lock = pipeline.ROOT / "services/worker/cache/m2/gpu.lock"
     material = payload.get("material_image")
     design_path = work / "outfit-design.json"
-    if expression is not None:
-        # Nothing to design: the expression is fixed and the look stays as it is.
-        design = {"outfit_en": "", "summary_ja": None, "occasion_ja": "", "model_id": None, "requests": 0}
-    elif design_path.exists():
+    if design_path.exists():
         design = json.loads(design_path.read_text(encoding="utf-8"))
-    elif edit is not None:
-        # An edit keeps the look as it is described; only the wished change is put into words.
-        design = {"outfit_en": material["outfit_en"] if material else "", "summary_ja": material["summary_ja"] if material else None,
-                  "occasion_ja": "", "model_id": None, "requests": 0, "instruction_en": ""}
-        if edit["instruction"].strip():
-            llm_config = select_config(config, payload, pipeline.ROOT)
-            with gpu_lock(lock, config["gpu_lock_timeout_seconds"]), \
-                    LocalLLM(pipeline.ROOT, llm_config, payload, work / "llm") as llm:
-                wished = design_edit(payload, llm)
-                # With a shared material put on as well, the look is described by that material.
-                design.update(instruction_en=wished["instruction_en"], model_id=llm_config["llm"]["model_id"],
-                              requests=llm.requests, summary_ja=design["summary_ja"] or wished["summary_ja"])
-        write_json(design_path, design)
-    elif material and outfit.get("id") == "default":
-        # The base look only puts the shared design on; there is nothing to design or to schedule.
-        design = {"outfit_en": material["outfit_en"], "summary_ja": material["summary_ja"],
-                  "occasion_ja": "", "model_id": None, "requests": 0}
-        write_json(design_path, design)
     else:
-        # The text model finishes and leaves the GPU before the image model loads.
-        llm_config = select_config(config, payload, pipeline.ROOT)
-        source_payload = payload if not material else {
-            **payload, "outfit": {**outfit, "appearance": material["summary_ja"]}}
-        with gpu_lock(lock, config["gpu_lock_timeout_seconds"]), \
-                LocalLLM(pipeline.ROOT, llm_config, payload, work / "llm") as llm:
-            design = {**design_outfit(source_payload, llm), "model_id": llm_config["llm"]["model_id"],
-                      "requests": llm.requests}
-        if material:
-            design["outfit_en"] = material["outfit_en"]
-        write_json(design_path, design)
+        # The text model finishes and leaves the GPU before the editing model loads. Pictures
+        # whose words are ready follow one another with the editing model kept loaded.
+        design = _fixed_design(payload)
+        if design is None:
+            # Kept in the job's folder by the step itself, once.
+            design = _design(payload, work, config, lock)
+        elif expression is None:
+            write_json(design_path, design)
     width, height = _size(reference)
     references = [{"path": str(reference), "name": "base portrait", "sha256": source["sha256"]}]
     if material:
@@ -352,7 +475,7 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     else:
         prompt = build_material_prompt(material) if material else build_prompt(design["outfit_en"])
     image, report, identity = render(work, payload, config, prompt, references, width, height, fingerprint,
-                                     resident=expression is not None)
+                                     resident=True)
     if expression is not None:
         box = portrait_face.area(face, (width, height), expression["id"])
         image = portrait_face.composite(reference.read_bytes(), image, box)
@@ -401,7 +524,7 @@ def render(work: Path, payload: dict, config: dict, prompt: str, references: lis
     runtime_key = hashlib.sha256(json.dumps({"model": identity, "profile": profile, "runner": "outfit"},
                                             sort_keys=True).encode()).hexdigest()
     retained = event_cg_session.current_session() if resident else None
-    # One process identity for every retained portrait edit; a look still starts its own.
+    # One process identity for every retained portrait edit.
     request = {"generation": generation, "output_dir": str(output),
                "cg_id": "portrait" if retained is not None else "outfit:" + fingerprint,
                "expected_revision": profile["model_revision"], "runtime_identity": runtime_key}

@@ -133,7 +133,7 @@ def test_precision_change_restarts_child_under_same_lease(runtime):
         assert runtime.events == [("acquire", "voice")]
 
 
-def test_idle_voice_reuse_does_not_extend_five_minutes_from_load(runtime, monkeypatch):
+def test_voice_reuse_keeps_the_model_five_minutes_from_its_last_use(runtime, monkeypatch):
     elapsed = [0.0]
     monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
     with voice_session.reuse_voice_runtime() as session:
@@ -142,10 +142,13 @@ def test_idle_voice_reuse_does_not_extend_five_minutes_from_load(runtime, monkey
         assert not session.expire_if_needed()
         second = runtime.run(session, runtime.output("retake"))
         assert first["pid"] == second["pid"]
-        elapsed[0] = 299.9
+        # Used at 200: the five minutes count from there, not from the load.
+        elapsed[0] = 300
+        assert not session.expire_if_needed()
+        elapsed[0] = 499.9
         assert not session.expire_if_needed()
         assert runtime.held
-        elapsed[0] = 300
+        elapsed[0] = 500
         assert session.expire_if_needed()
         assert not session.expire_if_needed()
         assert not runtime.held
@@ -154,7 +157,7 @@ def test_idle_voice_reuse_does_not_extend_five_minutes_from_load(runtime, monkey
         assert len(runtime.starts()) == 2
 
 
-def test_voice_deadline_uses_completed_model_load_time(runtime, monkeypatch):
+def test_voice_retention_counts_from_the_end_of_the_last_request(runtime, monkeypatch):
     elapsed = [0.0]
     monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
     with voice_session.reuse_voice_runtime() as session:
@@ -170,33 +173,39 @@ def test_voice_deadline_uses_completed_model_load_time(runtime, monkeypatch):
         assert not session.expire_if_needed()
         elapsed[0] = 400
         runtime.run(session, runtime.output("retake", model_loaded_at_monotonic=300))
-        elapsed[0] = 420
+        elapsed[0] = 699.9
+        assert not session.expire_if_needed()
+        elapsed[0] = 700
         assert session.expire_if_needed()
         assert len(runtime.starts()) == 1
         assert not runtime.held
 
 
-def test_voice_expiring_during_inference_releases_at_scope_exit(runtime, monkeypatch):
+def test_voice_request_that_runs_long_keeps_its_model_for_the_next(runtime, monkeypatch):
     elapsed = [0.0]
     monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
     with voice_session.reuse_voice_runtime() as session:
-        runtime.run(session, runtime.output("first"))
+        first = runtime.run(session, runtime.output("first"))
         previous = session._process
         request = session._request
 
-        def crossing_deadline(*args):
+        def crossing_five_minutes(*args):
             elapsed[0] = 301
             assert not session.expire_if_needed()
             assert previous.poll() is None
             request(*args)
-            assert previous.poll() is None
 
-        monkeypatch.setattr(session, "_request", crossing_deadline)
-        elapsed[0] = 299
-        runtime.run(session, runtime.output("long-retake"))
-        assert previous.poll() is not None
+        with monkeypatch.context() as slow:
+            slow.setattr(session, "_request", crossing_five_minutes)
+            elapsed[0] = 299
+            runtime.run(session, runtime.output("long-retake"))
+        # It was in use until 301: work that follows finds the model still loaded.
+        assert previous.poll() is None and runtime.held
+        following = runtime.run(session, runtime.output("after-timeout"))
+        assert session._process is previous and following["pid"] == first["pid"]
+        elapsed[0] = 601
+        assert session.expire_if_needed()
         assert not runtime.held
-        assert session._process is session._lease is None
 
 
 def test_new_voice_model_gets_its_own_load_deadline(runtime, monkeypatch):
@@ -305,7 +314,7 @@ def test_timeout_does_not_kill_unrelated_process(runtime):
         unrelated.wait(timeout=10)
 
 
-def test_long_large_voice_sequence_reloads_after_hard_deadline(runtime, monkeypatch):
+def test_a_voice_sequence_reloads_only_after_five_idle_minutes(runtime, monkeypatch):
     elapsed = [0.0]
     monkeypatch.setattr(voice_session.time, "monotonic", lambda: elapsed[0])
     choice = {"provider_id": "irodori", "model_id": "irodori-v4-large", "precision": "bf16"}

@@ -98,7 +98,7 @@ def test_checkpoint_change_reloads_under_same_exclusive_lease(runtime):
         assert runtime.processes[0].poll() is not None
 
 
-def test_reuse_does_not_extend_original_model_deadline(runtime, monkeypatch):
+def test_reuse_keeps_the_model_five_minutes_from_its_last_use(runtime, monkeypatch):
     elapsed = [0.0]
     monkeypatch.setattr(music_session.time, "monotonic", lambda: elapsed[0])
     with music_session.reuse_music_runtime() as session:
@@ -106,6 +106,9 @@ def test_reuse_does_not_extend_original_model_deadline(runtime, monkeypatch):
         elapsed[0] = 250
         assert runtime.run(session, "second", loaded_at=250)["pid"] == first["pid"]
         elapsed[0] = 300
+        assert not session.expire_if_needed()
+        assert runtime.held
+        elapsed[0] = 550
         assert session.expire_if_needed()
         assert not runtime.held
         assert session._process is None

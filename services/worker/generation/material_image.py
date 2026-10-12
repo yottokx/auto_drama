@@ -16,7 +16,7 @@ from packages.contracts.m2 import GenerationEnvelope
 from . import event_cg_session, image_session, llm_session, music_session, pipeline, voice_session
 from .cancellation import check_cancelled
 from .llm import LocalLLM, write_json
-from .processes import gpu_lock, run_process
+from .processes import gpu_lock
 
 KIND = "m2_material_image"
 EDIT_KIND = "m2_outfit_image"
@@ -94,6 +94,48 @@ def design_material(payload: dict, llm) -> dict:
     raise AssertionError("unreachable")
 
 
+MAX_DESIGN_BATCH = 50
+_WORDS = ("mode", "name", "label", "wish", "base_outfit_en", "appearance")
+
+
+def _design_path(work: Path, sheet: dict, world: dict | None) -> Path:
+    """Where the words of this exact sheet are kept until its job draws it."""
+    world = world or {}
+    identity = {"version": DESIGN_VERSION, "sheet": {key: sheet.get(key) or "" for key in _WORDS},
+                "world": {key: world[key] for key in ("genre", "mood", "setting") if world.get(key)}}
+    key = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return work.parent / "material-designs" / f"{key}.json"
+
+
+def design_waiting(sheets, world: dict | None, work: Path, llm, model_id: str) -> None:
+    """Put shared materials into words with a text model that is already loaded.
+
+    The world job does this for the materials the work declares, right after it wrote the world;
+    a sheet job does it for the sheets queued with it. Either way the sheets are then drawn one
+    after another without the text model coming back in between.
+    """
+    if sheets is None:
+        return
+    if not isinstance(sheets, list) or len(sheets) > MAX_DESIGN_BATCH or not all(
+            isinstance(sheet, dict) and sheet.get("mode") in {"text", "derive", "extract"} for sheet in sheets):
+        raise ValueError("Invalid shared material design batch.")
+    for sheet in sheets:
+        target = _design_path(work, sheet, world)
+        if target.is_file():
+            continue
+        check_cancelled()
+        start = llm.requests + 1
+        try:
+            design = design_material({"material_sheet": sheet, "world_result": world}, llm)
+        except (ValueError, TypeError, KeyError):
+            # A sheet that cannot be put into words now is tried again by its own job.
+            if llm.requests >= start:
+                llm.retry_failed_from(start)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json(target, {**design, "model_id": model_id, "requests": llm.requests - start + 1})
+
+
 def edit_prompt(mode: str, design: dict) -> str:
     kind = design["category"]
     if mode == "extract":
@@ -128,8 +170,11 @@ def _draw_from_words(payload: dict, design: dict, work: Path, config: dict) -> t
                "--model-dir", str(pipeline.ROOT / settings["model_dir"]), "--output-dir", str(output),
                "--width", str(TEXT_WIDTH), "--height", str(HEIGHT), "--steps", str(settings["steps"]),
                "--guidance-scale", str(settings["guidance_scale"]), "--seed", str(payload["seed"])]
-    with gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"]):
-        run_process(command, output / "runtime.log", cwd=pipeline.ROOT, timeout=settings["timeout_seconds"])
+    # Sheets that follow one another, or the cast's portraits, keep the portrait model loaded.
+    with image_session.gpu_scope(KIND, gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock",
+                                                config["gpu_lock_timeout_seconds"])):
+        image_session.run_image_process(command, output / "runtime.log", cwd=pipeline.ROOT,
+                                        timeout=settings["timeout_seconds"])
     report = json.loads((output / "result.json").read_text(encoding="utf-8"))
     if report.get("prompt") != prompt or report.get("width") != TEXT_WIDTH or report.get("height") != HEIGHT:
         raise ValueError("Image runtime did not honor the design sheet request.")
@@ -175,14 +220,25 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
         design = {"category": kept["category"], "outfit_en": kept["outfit_en"], "summary_ja": kept["summary"],
                   "change_en": kept.get("change_en", ""), "model_id": None, "requests": 0}
         write_json(design_path, design)
+    elif _design_path(work, sheet, payload.get("world_result")).is_file():
+        # Put into words ahead, while the text model was loaded; the words serve this one picture.
+        ahead = _design_path(work, sheet, payload.get("world_result"))
+        design = json.loads(ahead.read_text(encoding="utf-8"))
+        write_json(design_path, design)
+        ahead.unlink()
     else:
         # The text model finishes and leaves the GPU before an image model loads.
+        for resident in (image_session.current_session(), event_cg_session.current_session()):
+            if resident is not None:
+                resident.close()
         llm_config = select_config(config, payload, pipeline.ROOT)
         with gpu_lock(pipeline.ROOT / "services/worker/cache/m2/gpu.lock", config["gpu_lock_timeout_seconds"]), \
                 LocalLLM(pipeline.ROOT, llm_config, payload, work / "llm") as llm:
             design = {**design_material(payload, llm), "model_id": llm_config["llm"]["model_id"],
                       "requests": llm.requests}
-        write_json(design_path, design)
+            write_json(design_path, design)
+            design_waiting(payload.get("material_design_batch"), payload.get("world_result"), work, llm,
+                           llm_config["llm"]["model_id"])
     provenance = {"provider": "local", "seed": payload["seed"], "input_sha256": fingerprint,
                   "material": {"mode": mode, "category": design["category"], "outfit_en": design["outfit_en"],
                                "summary": design["summary_ja"], "change_en": design.get("change_en", ""),

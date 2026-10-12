@@ -25,6 +25,14 @@ from .schemas import validate_schema
 def write_json(path: Path, value: object) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    for _ in range(100):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            # Windows refuses to replace a file another process has just opened (a scanner, an
+            # indexer). Failing the job for that would also unload the model it holds.
+            time.sleep(0.02)
     temporary.replace(path)
 
 
