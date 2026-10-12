@@ -21,6 +21,37 @@ def members(data):
         return {name: archive.read(name) for name in archive.namelist()}
 
 
+def placements(bundle):
+    """Every rectangle a chapter puts each character in.
+
+    A portrait that is on stage when a scene opens is placed from the stage targets; one that
+    comes on during a scene is placed by a scenario tag.
+    """
+    rectangles = {}
+
+    def add(character_id, value):
+        rectangles.setdefault(character_id, []).append(
+            {key: int(value[key]) for key in ("left", "top", "width", "height")})
+
+    for line in bundle["data/scenario/first.ks"].decode().splitlines():
+        if line.startswith("[chara_show "):
+            tag = dict(re.findall(r'(\w+)="([^"]*)"', line))
+            add(tag["name"].removeprefix("ad_"), tag)
+    for scene in json.loads(bundle.get("data/others/auto_drama_stages.json", b'{"scenes":[]}'))["scenes"]:
+        for character in scene["characters"]:
+            add(character["id"], character)
+    return rectangles
+
+
+def entered(script):
+    """The positions each character's entrances ask for."""
+    positions = {}
+    for direction in script["directions"]:
+        if direction["kind"] == "enter":
+            positions.setdefault(direction["character_id"], []).append(direction["position"])
+    return positions
+
+
 def test_preview_does_not_change_original_build_and_all_chapters_publish_its_geometry(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         project, worker = approved(client)
@@ -76,14 +107,12 @@ def test_preview_does_not_change_original_build_and_all_chapters_publish_its_geo
             served = client.get(f"/player/{chapter['build']['id']}/data/scenario/first.ks")
             assert served.status_code == 200
             assert served.content == new["data/scenario/first.ks"]
-            shows = [dict(re.findall(r'(\w+)="([^"]*)"', line))
-                     for line in served.text.splitlines() if line.startswith("[chara_show ")]
-            entries = [direction for direction in script["directions"] if direction["kind"] == "enter"]
-            assert len(shows) == len(entries)
-            for tag, entry in zip(shows, entries, strict=True):
-                cid = lookup[entry["character_id"]]
-                expected = preview["characters"][cid]["positions"][entry["position"]]
-                assert {key: int(tag[key]) for key in ("left", "top", "width", "height")} == expected
+            placed, asked = placements(new), entered(script)
+            assert asked and set(placed) == set(asked)
+            for character_id, positions in asked.items():
+                expected = preview["characters"][lookup[character_id]]["positions"]
+                assert all(value in [expected[position] for position in positions] for value in placed[character_id])
+                assert all(expected[position] in placed[character_id] for position in positions)
         for chapter in original["chapters"]:
             assert client.get(chapter["export_url"]).content == archives[chapter["chapter_number"]]
 
@@ -176,13 +205,9 @@ def test_new_portrait_candidate_recomputes_only_its_layout_and_matches_published
         for chapter in production(client, project)["chapters"]:
             bundle = members(client.get(chapter["export_url"]).content)
             script = json.loads(bundle["script.json"])
-            entries = [direction for direction in script["directions"] if direction["kind"] == "enter"]
-            shows = [dict(re.findall(r'(\w+)="([^"]*)"', line))
-                     for line in bundle["data/scenario/first.ks"].decode().splitlines()
-                     if line.startswith("[chara_show ")]
-            for tag, entry in zip(shows, entries, strict=True):
-                if entry["character_id"] == script_character_id(cid):
-                    expected = preview["characters"][cid]["positions"][entry["position"]]
-                    assert {key: int(tag[key]) for key in ("left", "top", "width", "height")} == expected
-                    observed += 1
+            positions = entered(script).get(script_character_id(cid), [])
+            expected = [preview["characters"][cid]["positions"][position] for position in positions]
+            for value in placements(bundle).get(script_character_id(cid), []):
+                assert value in expected
+                observed += 1
         assert observed > 0

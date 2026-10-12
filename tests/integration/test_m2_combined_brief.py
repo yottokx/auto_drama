@@ -133,7 +133,8 @@ def test_relationship_failure_blocks_all_media_and_retry_keeps_portrait_batch_af
         assert client.post(f"/api/jobs/{failed['id']}/retry").status_code == 200
         retried, _ = run_one(client, worker_id, "m2_relationships")
         assert retried["id"] == failed["id"]
-        assert retried["payload"] == failed["payload"]
+        # An explicit retry takes the settings of the moment; nothing else of the request changes.
+        assert retried["payload"] == {**failed["payload"], "execution_settings_revision": 1}
         first_image, _ = run_one(client, worker_id, "m2_image")
         batch = first_image["payload"]["portrait_prompt_batch"]
         assert [person["character_id"] for person in batch] == ["person-1", "person-2", "person-3"]

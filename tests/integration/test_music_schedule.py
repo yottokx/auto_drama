@@ -61,7 +61,10 @@ def test_music_design_is_next_after_narrative_and_blocks_queued_media_until_adop
         assert claim(client, other_worker) is None
         plan = claim(client, worker)
         assert plan["kind"] == "m3_music_plan"
-        assert plan["payload"]["profile"] == narrative["payload"]["profile"]
+        # Each job records the settings of the moment it is made; the same model serves both,
+        # so the design follows the story without loading another one.
+        for key in ("provider", "model_id", "temperature", "reasoning_level"):
+            assert plan["payload"]["profile"][key] == narrative["payload"]["profile"][key]
         assert claim(client, other_worker) is None
         result = grouped_output(plan, {}, ("stop", "stop"))
         assert complete(client, worker, plan, result).status_code == 200

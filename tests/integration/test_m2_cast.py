@@ -475,7 +475,8 @@ def test_trial_cannot_discard_failed_cast_generation_queue_or_retry(tmp_path):
         assert client.post(f"/api/jobs/{failed['id']}/retry").status_code == 200
         retried, _ = run_one(client, worker_id, "m2_character")
         assert retried["id"] == failed["id"]
-        assert retried["payload"] == failed["payload"]
+        # An explicit retry takes the settings of the moment; nothing else of the request changes.
+        assert retried["payload"] == {**failed["payload"], "execution_settings_revision": 1}
         third, _ = run_one(client, worker_id, "m2_character")
         assert third["payload"]["character_id"] == "person-3"
         run_one(client, worker_id, "m2_relationships")
