@@ -1,0 +1,4567 @@
+{
+ "schema_version": 1,
+ "cases": [
+  {
+   "id": "voicemail-replayed-self",
+   "kind": "synthetic",
+   "title": "明日の自分から、留守電が届く街",
+   "pattern": "自分から届いた留守電を、本人の前でもう一度再生する",
+   "why": "声の主（未来の自分）と聞き手（今の自分）が同じ人物で、立ち絵は舞台に残る。再生した声と、その場の呟きが交互に来る。",
+   "expected": {
+    "lines": {
+     "s1-u5": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail"
+      ]
+     },
+     "s1-u8": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail"
+      ]
+     },
+     "s1-u12": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u14": {
+      "voice": [
+       "present"
+      ]
+     }
+    },
+    "absent": [],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14",
+     "s1-u15",
+     "s1-u16",
+     "s1-u17"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "chapterCount": 3,
+     "genre": "SF / ミステリー / 青春",
+     "mood": "切ない / 緊張感がある / 静か / 少しダーク",
+     "notes": "現象のメカニズムや社会的な対策よりも、個人の感情的な葛藤と運命の不可避性に焦点を当てる。",
+     "prompt": "少しだけ未来の日本。ある日突然、一部の人間に「24時間後の自分」から留守電が届く現象が発生する。\n主人公のもとにも初めて留守電が届く。そこに録音されていたのは、ひどく取り乱した自分の声だった。\n「明日の夜、絶対に彼女を駅へ行かせるな。……俺たちは、彼女を殺すことになる」\n主人公は幼なじみとともに、留守電の意味を確かめようとする。\n未来を変えようとするほど、留守電の内容が現実になっていく一夜を描く。\n大きな陰謀よりも、主人公と幼なじみの関係、過去の後悔、未来を知ることの怖さを中心に描く。",
+     "setting": "舞台は、現代からわずかに時間が経過した日本の地方都市。街の風景は今とさほど変わらないが、ある時期から「24時間後の自分から留守電が届く」という不可解な現象が、限定的な人数にだけ発生し始めている。この現象には明確な法則性がなく、誰に届くのか、なぜ届くのかという科学的な解明はなされていない。社会的なパニックに発展するほど広範なものではなく、あくまで「一部の人間」にのみ起こるため、公的な制度や専門機関による対策は整っておらず、当事者たちは孤独にその声と向き合うことになる。\n物語は、ある大学生のもとに初めて届いた「警告」から始まる。録音されていたのは、絶望に染まり取り乱した自分自身の声であり、内容は「明日の夜、彼女を駅へ行かせるな」という切迫した指示だった。運命を回避しようと足掻けば足掻くほど、皮肉にも状況は留守電で予言された惨劇へと収束していく。物語の焦点は、世界を揺るがす陰謀ではなく、駅という日常的な空間を舞台にした、幼なじみとの歪な関係、過去に抱えた後悔、そして「確定した未来」を知ることへの根源的な恐怖と絶望に絞られている。静まり返った夜の街と、刻一刻と迫る24時間後の期限が、逃げ場のない緊張感を演出する。",
+     "title": "明日の自分から、留守電が届く街"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "水瀬 透",
+      "age": "22歳",
+      "gender": "男性",
+      "role": "主人公",
+      "freeform": "大学生。慎重で、何かを決断する前に考えすぎる性格。\n高校時代のある出来事をきっかけに、幼なじみの美緒とは少し距離ができている。\n「未来が分かれば失敗しない」と思っている節があるが、未来からの留守電によってその考えを揺さぶられる。",
+      "settings": "地方都市の大学に通う学生。極めて慎重な性格で、あらゆる選択肢のメリットとリスクを想定し、納得いくまで思考を巡らせる傾向がある。そのため、決断に時間がかかり、周囲からは優柔不断に見られがちである。「正解」を求める傾向が強く、もし事前に結果が分かっていれば、取り返しのつかない失敗を避けられるという強い信念を持っている。しかし、実際に届いた「24時間後の自分」からの絶望的な留守電により、知ることの残酷さと、運命という不可避な力への恐怖に直面し、精神的に激しく揺さぶられている。",
+      "voice": "若い男声話者。落ち着いたトーンだが、どこか自信なさげで控えめな話し方。速度はゆっくりめで、言葉を選びながら慎重に発音する。緊張が高まると声がわずかに震える。"
+     },
+     {
+      "id": "character-11c4020d-9596-4e3c-97f6-040bf01eabf8",
+      "name": "篠原 美緒",
+      "role": "主人公の幼なじみ"
+     }
+    ],
+    "relationships": {
+     "pairs": [
+      {
+       "characterIds": [
+        "character-1",
+        "character-11c4020d-9596-4e3c-97f6-040bf01eabf8"
+       ],
+       "firstToSecond": "大切に思っているが、過去の出来事から彼女を失うことへの強い恐怖を抱いており、距離を置くことで自分と彼女を守ろうとしている。",
+       "secondToFirst": "迷いやすい彼を支えたいと願っているが、彼に伝えられない秘密があるため、明るい振る舞いで本心を隠し、強引に彼を導こうとする。",
+       "summary": "幼なじみの大学生同士だが、高校時代の「ある出来事」を境に、精神的な距離が生まれている。行動的な美緒が慎重な透をリードする構図は変わらないが、互いに踏み込めない後悔と秘密を抱えた、危うい均衡状態にある関係。"
+      }
+     ]
+    },
+    "main_character_ids": [
+     "character-1",
+     "character-11c4020d-9596-4e3c-97f6-040bf01eabf8"
+    ],
+    "introduced_character_ids": [
+     "character-1",
+     "character-11c4020d-9596-4e3c-97f6-040bf01eabf8"
+    ],
+    "planned_connections_not_events": [],
+    "initial_cast_context_not_events": [],
+    "locations": [
+     {
+      "id": "loc-tou",
+      "name": "透の部屋",
+      "description": "大学生らしい、機能的だが少し散らかった部屋。デスクの上にスマートフォンが置かれている。外は薄暗い夕暮れ。",
+      "time_of_day": "夕方",
+      "atmosphere": "静まり返った、不安な空気感",
+      "image_prompt": "A small, cluttered Japanese college student's room at dusk, soft lighting from a desk lamp, a smartphone lying on the desk, cinematic composition, melancholic atmosphere."
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-tou",
+    "character_ids": [
+     "character-1"
+    ],
+    "objectives": "透が留守電をもう一度聞き直し、未来の自分の言葉を一語ずつ確かめる。",
+    "start_state": "透は留守電を一度聞き、スマートフォンを握ったまま立ち尽くしている。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "透が再生ボタンを押し、留守電をもう一度最後まで聞く。"
+     },
+     {
+      "id": "event_2",
+      "description": "透が留守電の言葉を自分の口で繰り返し、意味を確かめる。"
+     }
+    ],
+    "end_state": "透が留守電の内容を現実として受け止め、美緒に連絡する決意を固める。",
+    "atmosphere": "薄暗い部屋に響く、自分の声への戦慄"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "夕暮れの光が、散らかったデスクの上に長く伸びている。",
+     "spoken_text": "夕暮れの光が、散らかったデスクの上に長く伸びている。",
+     "source_start": 0,
+     "source_end": 26,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": null,
+     "display_text": "透はスマートフォンを握りしめたまま、しばらく画面を見下ろしていた。",
+     "spoken_text": "透はスマートフォンを握りしめたまま、しばらく画面を見下ろしていた。",
+     "source_start": 27,
+     "source_end": 60,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "……もう一回だけ。",
+     "spoken_text": "……もう一回だけ。",
+     "source_start": 61,
+     "source_end": 70,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": null,
+     "display_text": "震える指で再生ボタンを押す。短い電子音のあと、ノイズ混じりの声がスピーカーから流れ出した。",
+     "spoken_text": "震える指で再生ボタンを押す。短い電子音のあと、ノイズ混じりの声がスピーカーから流れ出した。",
+     "source_start": 71,
+     "source_end": 116,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-1",
+     "display_text": "俺だ。……明日の、お前だ。時間がない。",
+     "spoken_text": "俺だ。……明日の、お前だ。時間がない。",
+     "source_start": 117,
+     "source_end": 136,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": null,
+     "display_text": "間違いなく自分の声だった。だが、喉を潰したようにかすれ、ひどく息が上がっている。",
+     "spoken_text": "間違いなく自分の声だった。だが、喉を潰したようにかすれ、ひどく息が上がっている。",
+     "source_start": 137,
+     "source_end": 177,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-1",
+     "display_text": "明日の夜、絶対に彼女を駅へ行かせるな。",
+     "spoken_text": "明日の夜、絶対に彼女を駅へ行かせるな。",
+     "source_start": 178,
+     "source_end": 197,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "……駅。",
+     "spoken_text": "……駅。",
+     "source_start": 198,
+     "source_end": 202,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": null,
+     "display_text": "透は思わず声に出していた。録音の中の自分は、こちらの呟きなど待たずに続ける。",
+     "spoken_text": "透は思わず声に出していた。録音の中の自分は、こちらの呟きなど待たずに続ける。",
+     "source_start": 203,
+     "source_end": 241,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-1",
+     "display_text": "理由を考えてる暇はない。……俺たちは、彼女を殺すことになる。",
+     "spoken_text": "理由を考えてる暇はない。……俺たちは、彼女を殺すことになる。",
+     "source_start": 242,
+     "source_end": 272,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "そこで録音は途切れた。部屋に、冷蔵庫の低い唸りだけが戻ってくる。",
+     "spoken_text": "そこで録音は途切れた。部屋に、冷蔵庫の低い唸りだけが戻ってくる。",
+     "source_start": 273,
+     "source_end": 305,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-1",
+     "display_text": "殺す……俺たちが？",
+     "spoken_text": "殺す……俺たちが？",
+     "source_start": 306,
+     "source_end": 315,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": null,
+     "display_text": "透は画面を見つめたまま、録音の最後の言葉を、自分の口でなぞるように繰り返した。",
+     "spoken_text": "透は画面を見つめたまま、録音の最後の言葉を、自分の口でなぞるように繰り返した。",
+     "source_start": 316,
+     "source_end": 355,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-1",
+     "display_text": "彼女を、殺すことになる。",
+     "spoken_text": "彼女を、殺すことになる。",
+     "source_start": 356,
+     "source_end": 368,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u15",
+     "speaker_id": null,
+     "display_text": "口に出した途端、それはもう他人事ではなくなった。",
+     "spoken_text": "口に出した途端、それはもう他人事ではなくなった。",
+     "source_start": 369,
+     "source_end": 393,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u16",
+     "speaker_id": "character-1",
+     "display_text": "冗談じゃない。そんな未来、俺が変えてやる。",
+     "spoken_text": "冗談じゃない。そんな未来、俺が変えてやる。",
+     "source_start": 394,
+     "source_end": 415,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u17",
+     "speaker_id": null,
+     "display_text": "透は連絡先を開き、美緒の名前に指を置いた。",
+     "spoken_text": "透は連絡先を開き、美緒の名前に指を置いた。",
+     "source_start": 416,
+     "source_end": 437,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "call-then-arrives",
+   "kind": "synthetic",
+   "title": "改札の向こうで待ってる",
+   "pattern": "電話で話していた相手が、通話の途中でその場に現れる",
+   "why": "同じ人物の台詞が、通話越しから対面へ切り替わる。切り替わりの1行はどちらとも取れる。",
+   "expected": {
+    "lines": {
+     "s1-u3": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u5": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u8": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u12": {
+      "voice": [
+       "remote",
+       "present"
+      ],
+      "channel": [
+       "phone"
+      ]
+     }
+    },
+    "absent": [],
+    "arrives": {
+     "character-2": [
+      "s1-u14",
+      "s1-u12"
+     ]
+    }
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14",
+     "s1-u15",
+     "s1-u16",
+     "s1-u17"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "改札の向こうで待ってる",
+     "genre": "青春",
+     "mood": "軽やかで少し照れくさい"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "三浦 颯太",
+      "age": "17",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "方向音痴の高校2年生。初めて来た駅で待ち合わせ相手を見つけられずにいる。",
+      "voice": "落ち着いた若い男声。焦ると早口になる。"
+     },
+     {
+      "id": "character-2",
+      "name": "小野寺 陽菜",
+      "age": "17",
+      "gender": "女性",
+      "role": "幼なじみ",
+      "settings": "面倒見がよく、颯太の方向音痴をからかうのが好き。",
+      "voice": "明るくはきはきした若い女声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-station",
+      "name": "駅の東口改札前",
+      "description": "土曜の昼で人通りが多い、ターミナル駅の改札前。",
+      "time_of_day": "昼",
+      "atmosphere": "雑踏のざわめき"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-station",
+    "character_ids": [
+     "character-1",
+     "character-2"
+    ],
+    "objectives": "電話で場所を教え合ううちに、陽菜が颯太を見つけて合流する。",
+    "start_state": "颯太が改札前で陽菜を見つけられず、電話をかける。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "颯太が電話で今いる場所を説明するが、陽菜に伝わらない。"
+     },
+     {
+      "id": "event_2",
+      "description": "陽菜が颯太の背後に現れ、電話をしたまま声をかける。"
+     }
+    ],
+    "end_state": "二人が合流し、目的地へ歩き出す。",
+    "atmosphere": "雑踏の中の小さな安心"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "土曜の昼の東口は、改札を抜ける人波で絶えずざわめいていた。颯太はスマートフォンを耳に当て、きょろきょろと辺りを見回している。",
+     "spoken_text": "土曜の昼の東口は、改札を抜ける人波で絶えずざわめいていた。颯太はスマートフォンを耳に当て、きょろきょろと辺りを見回している。",
+     "source_start": 0,
+     "source_end": 62,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-1",
+     "display_text": "もしもし、陽菜？ 着いたんだけど、どこにいる？",
+     "spoken_text": "もしもし、陽菜？ 着いたんだけど、どこにいる？",
+     "source_start": 63,
+     "source_end": 86,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-2",
+     "display_text": "どこって、東口の時計の下だよ。颯太こそどこ？",
+     "spoken_text": "どこって、東口の時計の下だよ。颯太こそどこ？",
+     "source_start": 87,
+     "source_end": 109,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-1",
+     "display_text": "時計……時計なんてあるか？ 目の前、パン屋なんだけど。",
+     "spoken_text": "時計……時計なんてあるか？ 目の前、パン屋なんだけど。",
+     "source_start": 110,
+     "source_end": 137,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-2",
+     "display_text": "パン屋？ それ西口じゃない？ もう、また反対に出たでしょ。",
+     "spoken_text": "パン屋？ それ西口じゃない？ もう、また反対に出たでしょ。",
+     "source_start": 138,
+     "source_end": 167,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-1",
+     "display_text": "いや、ちゃんと東口って書いてあったって。",
+     "spoken_text": "いや、ちゃんと東口って書いてあったって。",
+     "source_start": 168,
+     "source_end": 188,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": null,
+     "display_text": "電話の向こうで、陽菜が呆れたように笑う気配がした。",
+     "spoken_text": "電話の向こうで、陽菜が呆れたように笑う気配がした。",
+     "source_start": 189,
+     "source_end": 214,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-2",
+     "display_text": "じゃあ、そのパン屋の看板、何色？",
+     "spoken_text": "じゃあ、そのパン屋の看板、何色？",
+     "source_start": 215,
+     "source_end": 231,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-1",
+     "display_text": "赤。……あと、隣に花屋がある。",
+     "spoken_text": "赤。……あと、隣に花屋がある。",
+     "source_start": 232,
+     "source_end": 247,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-2",
+     "display_text": "花屋……あ、待って。今そっち見えた気がする。そのまま動かないで。",
+     "spoken_text": "花屋……あ、待って。今そっち見えた気がする。そのまま動かないで。",
+     "source_start": 248,
+     "source_end": 280,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "颯太が言われた通りに立ち止まっていると、背後から軽い足音が近づいてきた。",
+     "spoken_text": "颯太が言われた通りに立ち止まっていると、背後から軽い足音が近づいてきた。",
+     "source_start": 281,
+     "source_end": 317,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "見つけた。後ろ、振り向いて。",
+     "spoken_text": "見つけた。後ろ、振り向いて。",
+     "source_start": 318,
+     "source_end": 332,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": null,
+     "display_text": "振り返ると、スマートフォンを耳に当てたままの陽菜が、得意げに手を振っていた。",
+     "spoken_text": "振り返ると、スマートフォンを耳に当てたままの陽菜が、得意げに手を振っていた。",
+     "source_start": 333,
+     "source_end": 371,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-2",
+     "display_text": "ほら、やっぱり東口じゃなかった。",
+     "spoken_text": "ほら、やっぱり東口じゃなかった。",
+     "source_start": 372,
+     "source_end": 388,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u15",
+     "speaker_id": "character-1",
+     "display_text": "……悪かったよ。電話、切っていい？",
+     "spoken_text": "……悪かったよ。電話、切っていい？",
+     "source_start": 389,
+     "source_end": 406,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u16",
+     "speaker_id": "character-2",
+     "display_text": "どうぞ。目の前にいるんだから。",
+     "spoken_text": "どうぞ。目の前にいるんだから。",
+     "source_start": 407,
+     "source_end": 422,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u17",
+     "speaker_id": null,
+     "display_text": "陽菜は通話を切り、颯太の袖を引いて歩き出した。",
+     "spoken_text": "陽菜は通話を切り、颯太の袖を引いて歩き出した。",
+     "source_start": 423,
+     "source_end": 446,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "one-sided-call",
+   "kind": "synthetic",
+   "title": "八百屋の二階の下宿人",
+   "pattern": "片側だけ聞こえる電話と、届いたメッセージの読み上げ",
+   "why": "電話の相手の声は台詞にならず、地の文で要約される。読み上げるのはその場の人物。どの台詞も通信ではない。",
+   "expected": {
+    "lines": {
+     "s1-u11": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u13": {
+      "voice": [
+       "present"
+      ]
+     }
+    },
+    "absent": [],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14",
+     "s1-u15"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "八百屋の二階の下宿人",
+     "genre": "日常",
+     "mood": "穏やかでにぎやか"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "坂口 千夏",
+      "age": "20",
+      "gender": "女性",
+      "role": "主人公",
+      "settings": "八百屋の二階に下宿する大学生。実家の母と仲が良いが、電話が長くて困っている。",
+      "voice": "柔らかい若い女声。"
+     },
+     {
+      "id": "character-2",
+      "name": "大河内 鉄平",
+      "age": "62",
+      "gender": "男性",
+      "role": "八百屋の店主",
+      "settings": "千夏の大家。世話焼きで、つい会話に割り込む。",
+      "voice": "張りのある年配の男声。べらんめえ口調。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-shop",
+      "name": "八百屋の店先",
+      "description": "野菜が山積みになった商店街の八百屋。",
+      "time_of_day": "夕方",
+      "atmosphere": "商店街の活気"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-shop",
+    "character_ids": [
+     "character-1",
+     "character-2"
+    ],
+    "objectives": "千夏が母からの電話と弟からのメッセージに振り回され、鉄平が茶々を入れる。",
+    "start_state": "店番を手伝う千夏のスマートフォンが鳴る。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "千夏が母と電話するが、母の声は聞こえず千夏の相槌だけが続く。"
+     },
+     {
+      "id": "event_2",
+      "description": "千夏が弟から届いたメッセージを鉄平に読み上げる。"
+     }
+    ],
+    "end_state": "千夏が週末に実家へ帰ると決める。",
+    "atmosphere": "にぎやかで温かい"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "夕方の商店街は買い物客で賑わっていた。千夏が大根を並べ直していると、エプロンのポケットでスマートフォンが震えた。",
+     "spoken_text": "夕方の商店街は買い物客で賑わっていた。千夏が大根を並べ直していると、エプロンのポケットでスマートフォンが震えた。",
+     "source_start": 0,
+     "source_end": 56,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-1",
+     "display_text": "あ、お母さんだ。……もしもし？ うん、元気だよ。",
+     "spoken_text": "あ、お母さんだ。……もしもし？ うん、元気だよ。",
+     "source_start": 57,
+     "source_end": 81,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": null,
+     "display_text": "受話器の向こうで、母が近所の噂話を早口でまくしたてているのが漏れ聞こえる。千夏は苦笑しながら相槌を打った。",
+     "spoken_text": "受話器の向こうで、母が近所の噂話を早口でまくしたてているのが漏れ聞こえる。千夏は苦笑しながら相槌を打った。",
+     "source_start": 82,
+     "source_end": 135,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-1",
+     "display_text": "うん。……うん。え、田中さんちの犬が？ それは大変だったね。",
+     "spoken_text": "うん。……うん。え、田中さんちの犬が？ それは大変だったね。",
+     "source_start": 136,
+     "source_end": 166,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-2",
+     "display_text": "なんだい、またおっかさんか。長くなるぞ、こりゃ。",
+     "spoken_text": "なんだい、またおっかさんか。長くなるぞ、こりゃ。",
+     "source_start": 167,
+     "source_end": 191,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-1",
+     "display_text": "しっ。……ううん、なんでもない。大家さん。うん、よろしく伝えとく。",
+     "spoken_text": "しっ。……ううん、なんでもない。大家さん。うん、よろしく伝えとく。",
+     "source_start": 192,
+     "source_end": 225,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": null,
+     "display_text": "十分ほど話し続けたあと、母はようやく満足したらしく、千夏は通話を終えた。",
+     "spoken_text": "十分ほど話し続けたあと、母はようやく満足したらしく、千夏は通話を終えた。",
+     "source_start": 226,
+     "source_end": 262,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "はあ……今日も長かった。",
+     "spoken_text": "はあ……今日も長かった。",
+     "source_start": 263,
+     "source_end": 275,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": null,
+     "display_text": "息をつく間もなく、今度は短い通知音が鳴った。千夏は画面を覗き込み、思わず噴き出した。",
+     "spoken_text": "息をつく間もなく、今度は短い通知音が鳴った。千夏は画面を覗き込み、思わず噴き出した。",
+     "source_start": 276,
+     "source_end": 318,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-2",
+     "display_text": "今度は誰だい。",
+     "spoken_text": "今度は誰だい。",
+     "source_start": 319,
+     "source_end": 326,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-1",
+     "display_text": "弟からです。読みますね。『姉ちゃん、母さんの電話に付き合ってくれてありがとう。おかげで俺は解放された』だって。",
+     "spoken_text": "弟からです。読みますね。『姉ちゃん、母さんの電話に付き合ってくれてありがとう。おかげで俺は解放された』だって。",
+     "source_start": 327,
+     "source_end": 382,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "はっはっは！ 弟のほうが一枚上手だな。",
+     "spoken_text": "はっはっは！ 弟のほうが一枚上手だな。",
+     "source_start": 383,
+     "source_end": 402,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-1",
+     "display_text": "まったくもう。『週末帰ってこい、母さんが寂しがってる』……ですって。",
+     "spoken_text": "まったくもう。『週末帰ってこい、母さんが寂しがってる』……ですって。",
+     "source_start": 403,
+     "source_end": 437,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-2",
+     "display_text": "帰ってやんな。店番なら俺一人で十分だ。",
+     "spoken_text": "帰ってやんな。店番なら俺一人で十分だ。",
+     "source_start": 438,
+     "source_end": 457,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u15",
+     "speaker_id": "character-1",
+     "display_text": "……そうですね。たまには、顔を見せてきます。",
+     "spoken_text": "……そうですね。たまには、顔を見せてきます。",
+     "source_start": 458,
+     "source_end": 480,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "recollection-of-the-dead-and-the-present",
+   "kind": "synthetic",
+   "title": "時計屋の遺したもの",
+   "pattern": "亡くなった祖父の言葉と、目の前の兄の昔の言葉を思い出す",
+   "why": "回想の声。祖父はその場にいない。兄は舞台にいるが、回想の台詞は今の兄の発言ではない。",
+   "expected": {
+    "lines": {
+     "s1-u6": {
+      "voice": [
+       "recollection"
+      ]
+     },
+     "s1-u11": {
+      "voice": [
+       "recollection"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14",
+     "s1-u15",
+     "s1-u16"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "時計屋の遺したもの",
+     "genre": "ヒューマンドラマ",
+     "mood": "静かで温かい"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "望月 紗季",
+      "age": "24",
+      "gender": "女性",
+      "role": "主人公",
+      "settings": "亡き祖父の時計屋を畳むために帰郷した。祖父に時計の修理を教わった過去がある。",
+      "voice": "落ち着いた若い女声。"
+     },
+     {
+      "id": "character-2",
+      "name": "望月 遼",
+      "age": "28",
+      "gender": "男性",
+      "role": "兄",
+      "settings": "地元に残って会社勤めをしている。口数は少ないが妹思い。",
+      "voice": "低く穏やかな男声。"
+     },
+     {
+      "id": "character-3",
+      "name": "望月 源一郎",
+      "age": "84",
+      "gender": "男性",
+      "role": "祖父（故人）",
+      "settings": "町の時計屋を六十年営んだ職人。半年前に亡くなった。",
+      "voice": "しわがれた温かい老人の声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-clock-shop",
+      "name": "閉店した時計屋",
+      "description": "壁一面に止まった時計が掛かった、古い個人商店。",
+      "time_of_day": "午後",
+      "atmosphere": "埃と油の匂い、止まった時間"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-clock-shop",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "紗季が祖父の作業机を片付けながら、祖父と兄の言葉を思い出し、店を続ける気持ちに気づく。",
+    "start_state": "紗季と遼が、閉店した時計屋で遺品を整理している。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "紗季が祖父の修理道具を見つけ、祖父に言われた言葉を思い出す。"
+     },
+     {
+      "id": "event_2",
+      "description": "遼が昔、紗季に言った言葉を紗季が思い出す。"
+     },
+     {
+      "id": "event_3",
+      "description": "紗季が店を続けたいと遼に打ち明ける。"
+     }
+    ],
+    "end_state": "遼が紗季の決意を受け入れる。",
+    "atmosphere": "止まった時計が再び動き出す予感"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "閉ざされたシャッターの隙間から、午後の光が細く差し込んでいる。壁一面の時計は、どれも同じ時刻で止まっていた。",
+     "spoken_text": "閉ざされたシャッターの隙間から、午後の光が細く差し込んでいる。壁一面の時計は、どれも同じ時刻で止まっていた。",
+     "source_start": 0,
+     "source_end": 54,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "道具は全部、箱に詰めていいか。",
+     "spoken_text": "道具は全部、箱に詰めていいか。",
+     "source_start": 55,
+     "source_end": 70,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "待って。それ、おじいちゃんのルーペ。",
+     "spoken_text": "待って。それ、おじいちゃんのルーペ。",
+     "source_start": 71,
+     "source_end": 89,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": null,
+     "display_text": "紗季は兄の手から、真鍮の縁が擦り切れたルーペを受け取った。冷たい重みが、指先に懐かしかった。",
+     "spoken_text": "紗季は兄の手から、真鍮の縁が擦り切れたルーペを受け取った。冷たい重みが、指先に懐かしかった。",
+     "source_start": 90,
+     "source_end": 136,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": null,
+     "display_text": "小学生の頃、この机の横に座って、祖父の手元を飽きずに眺めていた。分解された歯車の前で、祖父はいつも同じことを言った。",
+     "spoken_text": "小学生の頃、この机の横に座って、祖父の手元を飽きずに眺めていた。分解された歯車の前で、祖父はいつも同じことを言った。",
+     "source_start": 137,
+     "source_end": 195,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-3",
+     "display_text": "時計はな、急かしても直らん。止まった理由を、ちゃんと聞いてやるんだ。",
+     "spoken_text": "時計はな、急かしても直らん。止まった理由を、ちゃんと聞いてやるんだ。",
+     "source_start": 196,
+     "source_end": 230,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-1",
+     "display_text": "……止まった理由を、聞いてやる。",
+     "spoken_text": "……止まった理由を、聞いてやる。",
+     "source_start": 231,
+     "source_end": 247,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-2",
+     "display_text": "じいちゃんの口癖だな。",
+     "spoken_text": "じいちゃんの口癖だな。",
+     "source_start": 248,
+     "source_end": 259,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": null,
+     "display_text": "遼が小さく笑った。その横顔を見て、紗季はもう一つの声を思い出した。",
+     "spoken_text": "遼が小さく笑った。その横顔を見て、紗季はもう一つの声を思い出した。",
+     "source_start": 260,
+     "source_end": 293,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": null,
+     "display_text": "高校三年の冬。東京の大学に行くと決めた夜、駅のホームで、兄は不器用にこう言ったのだ。",
+     "spoken_text": "高校三年の冬。東京の大学に行くと決めた夜、駅のホームで、兄は不器用にこう言ったのだ。",
+     "source_start": 294,
+     "source_end": 336,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-2",
+     "display_text": "店のことは気にするな。お前は、お前の時計を動かせばいい。",
+     "spoken_text": "店のことは気にするな。お前は、お前の時計を動かせばいい。",
+     "source_start": 337,
+     "source_end": 365,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-1",
+     "display_text": "お兄ちゃん、あのとき言ったよね。私は私の時計を動かせって。",
+     "spoken_text": "お兄ちゃん、あのとき言ったよね。私は私の時計を動かせって。",
+     "source_start": 366,
+     "source_end": 395,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-2",
+     "display_text": "……覚えてたのか。",
+     "spoken_text": "……覚えてたのか。",
+     "source_start": 396,
+     "source_end": 405,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-1",
+     "display_text": "うん。だから決めた。この店、私が続けたい。",
+     "spoken_text": "うん。だから決めた。この店、私が続けたい。",
+     "source_start": 406,
+     "source_end": 427,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u15",
+     "speaker_id": null,
+     "display_text": "遼は長い間黙っていた。やがて、壁の時計を一つ外し、紗季の前に置いた。",
+     "spoken_text": "遼は長い間黙っていた。やがて、壁の時計を一つ外し、紗季の前に置いた。",
+     "source_start": 428,
+     "source_end": 462,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u16",
+     "speaker_id": "character-2",
+     "display_text": "なら、まずはこいつからだな。止まった理由、聞いてやれよ。",
+     "spoken_text": "なら、まずはこいつからだな。止まった理由、聞いてやれよ。",
+     "source_start": 463,
+     "source_end": 491,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "telepathy-across-the-city",
+   "kind": "synthetic",
+   "title": "灰の王都と三人の見習い",
+   "pattern": "離れた場所の仲間と念話で話す。隣の仲間には聞こえない",
+   "why": "機器を使わない通信。その場にいる仲間の台詞と、念話の相手の台詞が混ざる。",
+   "expected": {
+    "lines": {
+     "s1-u5": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     },
+     "s1-u9": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     },
+     "s1-u13": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     },
+     "s1-u16": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     }
+    },
+    "absent": [
+     "character-2"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14",
+     "s1-u15",
+     "s1-u16",
+     "s1-u17",
+     "s1-u18"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "灰の王都と三人の見習い",
+     "genre": "ファンタジー",
+     "mood": "緊迫と友情"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "リオ",
+      "age": "16",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "見習い剣士。王都の地下水路に潜入中。",
+      "voice": "元気な少年の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "セラ",
+      "age": "16",
+      "gender": "女性",
+      "role": "見習い魔導士",
+      "settings": "念話の術を使える。今は王都の時計塔の上から街を見張っている。",
+      "voice": "澄んだ少女の声。冷静。"
+     },
+     {
+      "id": "character-3",
+      "name": "ガド",
+      "age": "17",
+      "gender": "男性",
+      "role": "見習い斥候",
+      "settings": "リオと共に地下水路にいる。念話は使えない。",
+      "voice": "がさつな少年の声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-sewer",
+      "name": "王都の地下水路",
+      "description": "松明の灯りだけが頼りの、湿った石造りの水路。",
+      "time_of_day": "夜",
+      "atmosphere": "水音と闇の圧迫感"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-sewer",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "時計塔のセラが念話でリオを導き、リオとガドが追手を撒く。",
+    "start_state": "リオとガドが地下水路で道に迷い、背後から追手の足音が迫る。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "セラがリオの頭の中に念話で語りかける。"
+     },
+     {
+      "id": "event_2",
+      "description": "ガドにはセラの声が聞こえず、リオが中継する。"
+     },
+     {
+      "id": "event_3",
+      "description": "セラの指示で二人が隠し通路に逃げ込む。"
+     }
+    ],
+    "end_state": "追手を撒き、二人が地上への出口を見つける。",
+    "atmosphere": "暗闇の中に差す一筋の声"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "松明の炎が揺れ、湿った石壁に二人の影を長く伸ばしていた。背後の暗がりから、複数の足音が水を蹴る音が近づいてくる。",
+     "spoken_text": "松明の炎が揺れ、湿った石壁に二人の影を長く伸ばしていた。背後の暗がりから、複数の足音が水を蹴る音が近づいてくる。",
+     "source_start": 0,
+     "source_end": 56,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-3",
+     "display_text": "まずいぞ、リオ。分かれ道だ。どっちに行く？",
+     "spoken_text": "まずいぞ、リオ。分かれ道だ。どっちに行く？",
+     "source_start": 57,
+     "source_end": 78,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "分かんねえよ！ 地図、さっき水に落としたろ！",
+     "spoken_text": "分かんねえよ！ 地図、さっき水に落としたろ！",
+     "source_start": 79,
+     "source_end": 101,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": null,
+     "display_text": "そのとき、リオのこめかみの奥で、鈴を鳴らすような感覚が走った。",
+     "spoken_text": "そのとき、リオのこめかみの奥で、鈴を鳴らすような感覚が走った。",
+     "source_start": 102,
+     "source_end": 133,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-2",
+     "display_text": "リオ、聞こえる？ 私よ。時計塔の上から、あなたたちの松明の位置が見えてる。",
+     "spoken_text": "リオ、聞こえる？ 私よ。時計塔の上から、あなたたちの松明の位置が見えてる。",
+     "source_start": 134,
+     "source_end": 171,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-1",
+     "display_text": "セラ！？ ……ああ、聞こえる！",
+     "spoken_text": "セラ！？ ……ああ、聞こえる！",
+     "source_start": 172,
+     "source_end": 187,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "おい、誰と話してんだ。",
+     "spoken_text": "おい、誰と話してんだ。",
+     "source_start": 188,
+     "source_end": 199,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "セラだよ、念話だ。黙っててくれ。",
+     "spoken_text": "セラだよ、念話だ。黙っててくれ。",
+     "source_start": 200,
+     "source_end": 216,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-2",
+     "display_text": "右よ。右の水路を三十歩進んだら、壁に古い鉄の輪がある。それを引いて。",
+     "spoken_text": "右よ。右の水路を三十歩進んだら、壁に古い鉄の輪がある。それを引いて。",
+     "source_start": 217,
+     "source_end": 251,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-1",
+     "display_text": "右だ、ガド！ 三十歩先に鉄の輪！",
+     "spoken_text": "右だ、ガド！ 三十歩先に鉄の輪！",
+     "source_start": 252,
+     "source_end": 268,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "二人は水を跳ね上げて走った。言われた通り、苔むした壁に錆びた鉄の輪が埋め込まれている。",
+     "spoken_text": "二人は水を跳ね上げて走った。言われた通り、苔むした壁に錆びた鉄の輪が埋め込まれている。",
+     "source_start": 269,
+     "source_end": 312,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-3",
+     "display_text": "これか！ ……ぐっ、重てえ！",
+     "spoken_text": "これか！ ……ぐっ、重てえ！",
+     "source_start": 313,
+     "source_end": 327,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-2",
+     "display_text": "急いで。追手はもう分かれ道まで来てる。",
+     "spoken_text": "急いで。追手はもう分かれ道まで来てる。",
+     "source_start": 328,
+     "source_end": 347,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-1",
+     "display_text": "ガド、一緒に引くぞ！ せーのっ！",
+     "spoken_text": "ガド、一緒に引くぞ！ せーのっ！",
+     "source_start": 348,
+     "source_end": 364,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u15",
+     "speaker_id": null,
+     "display_text": "鈍い音を立てて壁の一部が沈み込み、人ひとり通れるほどの隙間が開いた。二人が転がり込むと同時に、壁は再び閉じた。",
+     "spoken_text": "鈍い音を立てて壁の一部が沈み込み、人ひとり通れるほどの隙間が開いた。二人が転がり込むと同時に、壁は再び閉じた。",
+     "source_start": 365,
+     "source_end": 420,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u16",
+     "speaker_id": "character-2",
+     "display_text": "……よかった。その先の梯子を登れば、パン屋の裏庭に出るわ。",
+     "spoken_text": "……よかった。その先の梯子を登れば、パン屋の裏庭に出るわ。",
+     "source_start": 421,
+     "source_end": 450,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u17",
+     "speaker_id": "character-1",
+     "display_text": "助かった。帰ったら焼き菓子おごるよ、セラ。",
+     "spoken_text": "助かった。帰ったら焼き菓子おごるよ、セラ。",
+     "source_start": 451,
+     "source_end": 472,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u18",
+     "speaker_id": "character-3",
+     "display_text": "おい、俺にも聞こえるように言えよ。何て言ってんだ？",
+     "spoken_text": "おい、俺にも聞こえるように言えよ。何て言ってんだ？",
+     "source_start": 473,
+     "source_end": 498,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "school-announcement",
+   "kind": "synthetic",
+   "title": "放送部は今日も平常運転",
+   "pattern": "校内放送で呼び出される",
+   "why": "スピーカー越しの声。放送している人物は放送室にいて、場面にはいない。",
+   "expected": {
+    "lines": {
+     "s1-u5": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14",
+     "s1-u15"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "放送部は今日も平常運転",
+     "genre": "学園コメディ",
+     "mood": "にぎやか"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "西園寺 湊",
+      "age": "16",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "目立つことが苦手な1年生。",
+      "voice": "控えめな少年の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "葉山 つぐみ",
+      "age": "16",
+      "gender": "女性",
+      "role": "クラスメイト",
+      "settings": "湊の隣の席。好奇心旺盛。",
+      "voice": "弾むような少女の声。"
+     },
+     {
+      "id": "character-3",
+      "name": "久遠寺 麗華",
+      "age": "17",
+      "gender": "女性",
+      "role": "放送部部長",
+      "settings": "放送を私物化しがちな2年生。湊をスカウトしようと狙っている。",
+      "voice": "芝居がかった艶のある女声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-classroom",
+      "name": "1年B組の教室",
+      "description": "昼休みの教室。弁当を広げる生徒たちで騒がしい。",
+      "time_of_day": "昼",
+      "atmosphere": "昼休みの喧騒"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-classroom",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "放送部部長の校内放送で湊が名指しされ、クラス中の注目を浴びる。",
+    "start_state": "昼休み、湊とつぐみが弁当を食べている。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "校内放送で麗華が湊を名指しで呼び出す。"
+     },
+     {
+      "id": "event_2",
+      "description": "つぐみが面白がって湊を放送室へ送り出す。"
+     }
+    ],
+    "end_state": "湊が観念して放送室へ向かう。",
+    "atmosphere": "賑やかで少し理不尽"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "昼休みの教室は、弁当の匂いと笑い声で満ちていた。湊は窓際の席で、黙々と卵焼きを口に運んでいる。",
+     "spoken_text": "昼休みの教室は、弁当の匂いと笑い声で満ちていた。湊は窓際の席で、黙々と卵焼きを口に運んでいる。",
+     "source_start": 0,
+     "source_end": 47,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "湊くん、今日も卵焼きだけ先に食べるんだね。",
+     "spoken_text": "湊くん、今日も卵焼きだけ先に食べるんだね。",
+     "source_start": 48,
+     "source_end": 69,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "……好きなものは先に食べる主義なんだ。",
+     "spoken_text": "……好きなものは先に食べる主義なんだ。",
+     "source_start": 70,
+     "source_end": 89,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": null,
+     "display_text": "そのとき、教室の前方に据え付けられたスピーカーから、軽やかなチャイムが鳴り響いた。",
+     "spoken_text": "そのとき、教室の前方に据え付けられたスピーカーから、軽やかなチャイムが鳴り響いた。",
+     "source_start": 90,
+     "source_end": 131,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-3",
+     "display_text": "ごきげんよう、全校生徒の皆さま。放送部部長、久遠寺麗華ですわ。",
+     "spoken_text": "ごきげんよう、全校生徒の皆さま。放送部部長、久遠寺麗華ですわ。",
+     "source_start": 132,
+     "source_end": 163,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-2",
+     "display_text": "あ、また部長さんだ。今日は何の放送だろ。",
+     "spoken_text": "あ、また部長さんだ。今日は何の放送だろ。",
+     "source_start": 164,
+     "source_end": 184,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "本日は特別に、一人の生徒を呼び出させていただきます。一年B組、西園寺湊くん。",
+     "spoken_text": "本日は特別に、一人の生徒を呼び出させていただきます。一年B組、西園寺湊くん。",
+     "source_start": 185,
+     "source_end": 223,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": null,
+     "display_text": "教室中の視線が、一斉に窓際へ集まった。湊の箸から卵焼きが落ちる。",
+     "spoken_text": "教室中の視線が、一斉に窓際へ集まった。湊の箸から卵焼きが落ちる。",
+     "source_start": 224,
+     "source_end": 256,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-1",
+     "display_text": "……え、僕？",
+     "spoken_text": "……え、僕？",
+     "source_start": 257,
+     "source_end": 263,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-3",
+     "display_text": "あなたの声には才能があります。至急、放送室までいらしてくださいな。来ないなら、明日も明後日も呼び続けますわよ。",
+     "spoken_text": "あなたの声には才能があります。至急、放送室までいらしてくださいな。来ないなら、明日も明後日も呼び続けますわよ。",
+     "source_start": 264,
+     "source_end": 319,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "スピーカーがぷつりと切れ、一拍おいて教室が爆笑に包まれた。",
+     "spoken_text": "スピーカーがぷつりと切れ、一拍おいて教室が爆笑に包まれた。",
+     "source_start": 320,
+     "source_end": 349,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "あはは！ 湊くん、有名人じゃん！",
+     "spoken_text": "あはは！ 湊くん、有名人じゃん！",
+     "source_start": 350,
+     "source_end": 366,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-1",
+     "display_text": "笑いごとじゃないよ……。",
+     "spoken_text": "笑いごとじゃないよ……。",
+     "source_start": 367,
+     "source_end": 379,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-2",
+     "display_text": "ほら、行ってきなよ。明日も呼ばれたら、もっと恥ずかしいよ？",
+     "spoken_text": "ほら、行ってきなよ。明日も呼ばれたら、もっと恥ずかしいよ？",
+     "source_start": 380,
+     "source_end": 409,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u15",
+     "speaker_id": "character-1",
+     "display_text": "……分かったよ。行けばいいんだろ。",
+     "spoken_text": "……分かったよ。行けばいいんだろ。",
+     "source_start": 410,
+     "source_end": 427,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "intercom-and-door",
+   "kind": "synthetic",
+   "title": "ルームシェアは前途多難",
+   "pattern": "インターホン越しの訪問者と、扉越しに叫ぶ同居人",
+   "why": "インターホンは通信。浴室の扉越しの声はその場（同じ部屋の続き）にいる人物の声で、通信ではない。",
+   "expected": {
+    "lines": {
+     "s1-u3": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u6": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u8": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u9": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {
+     "character-2": [
+      "s1-u13",
+      "start"
+     ]
+    }
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "ルームシェアは前途多難",
+     "genre": "日常コメディ",
+     "mood": "ドタバタ"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "藤井 奏",
+      "age": "23",
+      "gender": "女性",
+      "role": "主人公",
+      "settings": "在宅で働くイラストレーター。ルームシェア中。",
+      "voice": "少し低めの落ち着いた女声。"
+     },
+     {
+      "id": "character-2",
+      "name": "白石 ミオ",
+      "age": "23",
+      "gender": "女性",
+      "role": "同居人",
+      "settings": "通販好きで、荷物の受け取りをいつも奏に押し付ける。",
+      "voice": "高めで元気な女声。"
+     },
+     {
+      "id": "character-3",
+      "name": "配達員",
+      "age": "30",
+      "gender": "男性",
+      "role": "宅配業者",
+      "settings": "このマンション担当の配達員。",
+      "voice": "丁寧な男声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-apartment",
+      "name": "マンションのリビング",
+      "description": "二人暮らしの2LDK。玄関横にインターホンのモニターがある。",
+      "time_of_day": "朝",
+      "atmosphere": "慌ただしい朝"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-apartment",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "奏がインターホン越しに配達員と話す間、浴室のミオが扉越しに口を挟む。",
+    "start_state": "奏が仕事をしていると、インターホンが鳴る。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "配達員がインターホン越しに、ミオ宛ての大きな荷物を届けに来たと告げる。"
+     },
+     {
+      "id": "event_2",
+      "description": "浴室のミオが扉越しに受け取りを頼む。"
+     },
+     {
+      "id": "event_3",
+      "description": "ミオが浴室から出てきて奏に謝る。"
+     }
+    ],
+    "end_state": "奏が呆れながらも荷物を受け取る。",
+    "atmosphere": "朝のドタバタ"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "朝のリビング。奏がペンタブレットに向かっていると、玄関横のインターホンが軽快に鳴った。モニターには、帽子を被った配達員が映っている。",
+     "spoken_text": "朝のリビング。奏がペンタブレットに向かっていると、玄関横のインターホンが軽快に鳴った。モニターには、帽子を被った配達員が映っている。",
+     "source_start": 0,
+     "source_end": 66,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-1",
+     "display_text": "はい。",
+     "spoken_text": "はい。",
+     "source_start": 67,
+     "source_end": 70,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-3",
+     "display_text": "おはようございます、宅配便です。白石ミオ様宛てにお荷物をお届けに参りました。",
+     "spoken_text": "おはようございます、宅配便です。白石ミオ様宛てにお荷物をお届けに参りました。",
+     "source_start": 71,
+     "source_end": 109,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-1",
+     "display_text": "ミオ宛て……。少々お待ちください。",
+     "spoken_text": "ミオ宛て……。少々お待ちください。",
+     "source_start": 110,
+     "source_end": 127,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": null,
+     "display_text": "奏が振り返ると、浴室からシャワーの音が止まり、くぐもった声が響いた。",
+     "spoken_text": "奏が振り返ると、浴室からシャワーの音が止まり、くぐもった声が響いた。",
+     "source_start": 128,
+     "source_end": 162,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-2",
+     "display_text": "奏ー！ それ私の！ 受け取っといてー！",
+     "spoken_text": "奏ー！ それ私の！ 受け取っといてー！",
+     "source_start": 163,
+     "source_end": 182,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-1",
+     "display_text": "自分で出なさいよ。",
+     "spoken_text": "自分で出なさいよ。",
+     "source_start": 183,
+     "source_end": 192,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-2",
+     "display_text": "無理ー！ 今、泡だらけ！",
+     "spoken_text": "無理ー！ 今、泡だらけ！",
+     "source_start": 193,
+     "source_end": 205,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-3",
+     "display_text": "あの、かなり大きなお荷物ですので、玄関先までお運びしましょうか。",
+     "spoken_text": "あの、かなり大きなお荷物ですので、玄関先までお運びしましょうか。",
+     "source_start": 206,
+     "source_end": 238,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-1",
+     "display_text": "……大きい？ 何頼んだの、あの子。……はい、お願いします。",
+     "spoken_text": "……大きい？ 何頼んだの、あの子。……はい、お願いします。",
+     "source_start": 239,
+     "source_end": 268,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "オートロックを解除すると、モニターの映像がぷつりと消えた。",
+     "spoken_text": "オートロックを解除すると、モニターの映像がぷつりと消えた。",
+     "source_start": 269,
+     "source_end": 298,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": null,
+     "display_text": "数分後、浴室の扉が開き、タオルを頭に巻いたミオが顔を出した。",
+     "spoken_text": "数分後、浴室の扉が開き、タオルを頭に巻いたミオが顔を出した。",
+     "source_start": 299,
+     "source_end": 329,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-2",
+     "display_text": "ごめーん。人をダメにするクッション、セールだったの。",
+     "spoken_text": "ごめーん。人をダメにするクッション、セールだったの。",
+     "source_start": 330,
+     "source_end": 356,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-1",
+     "display_text": "玄関、通れなくなるんだけど。",
+     "spoken_text": "玄関、通れなくなるんだけど。",
+     "source_start": 357,
+     "source_end": 371,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "group-video-call",
+   "kind": "synthetic",
+   "title": "リモート課の三人",
+   "pattern": "自宅から、二人の同僚とビデオ会議をする",
+   "why": "通信相手が二人。計画の登場人物の三人のうち、その場にいるのは一人だけ。",
+   "expected": {
+    "lines": {
+     "s1-u2": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker",
+       "radio"
+      ]
+     },
+     "s1-u6": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker",
+       "radio"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u11": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     },
+     "s1-u12": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker"
+      ]
+     }
+    },
+    "absent": [
+     "character-2",
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "リモート課の三人",
+     "genre": "お仕事",
+     "mood": "ゆるく前向き"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "篠田 航",
+      "age": "29",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "フルリモートで働くエンジニア。自宅の書斎から会議に出る。",
+      "voice": "穏やかな男声。"
+     },
+     {
+      "id": "character-2",
+      "name": "宮下 彩",
+      "age": "33",
+      "gender": "女性",
+      "role": "チームリーダー",
+      "settings": "福岡の自宅から参加。段取りに厳しい。",
+      "voice": "きびきびした女声。"
+     },
+     {
+      "id": "character-3",
+      "name": "根本 太一",
+      "age": "25",
+      "gender": "男性",
+      "role": "後輩",
+      "settings": "カフェから参加しがち。回線が不安定。",
+      "voice": "人懐っこい若い男声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-study",
+      "name": "航の書斎",
+      "description": "モニター二台と観葉植物のある、狭い書斎。",
+      "time_of_day": "朝",
+      "atmosphere": "静かな在宅勤務"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-study",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "朝会で障害の原因を共有し、担当を決める。",
+    "start_state": "航がビデオ会議に入室すると、彩はすでに待っている。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "太一の回線が途切れ、音声だけ遅れて届く。"
+     },
+     {
+      "id": "event_2",
+      "description": "航が障害の原因を説明し、彩が担当を割り振る。"
+     }
+    ],
+    "end_state": "会議が終わり、航が一人で作業に戻る。",
+    "atmosphere": "画面越しの連帯感"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "書斎のモニターに、会議画面の小さな窓が三つ並ぶ。航が入室すると、左上の窓で彩がもう腕を組んで待っていた。",
+     "spoken_text": "書斎のモニターに、会議画面の小さな窓が三つ並ぶ。航が入室すると、左上の窓で彩がもう腕を組んで待っていた。",
+     "source_start": 0,
+     "source_end": 52,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "おはよう、篠田くん。根本くんはまだ？",
+     "spoken_text": "おはよう、篠田くん。根本くんはまだ？",
+     "source_start": 53,
+     "source_end": 71,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "おはようございます。……あ、今入ってきました。",
+     "spoken_text": "おはようございます。……あ、今入ってきました。",
+     "source_start": 72,
+     "source_end": 95,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-3",
+     "display_text": "おはざーす！ すみません、カフェのWi-Fiがちょっと――",
+     "spoken_text": "おはざーす！ すみません、カフェのWi-Fiがちょっと――",
+     "source_start": 96,
+     "source_end": 125,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": null,
+     "display_text": "太一の映像が固まり、音声だけが途切れ途切れに届く。",
+     "spoken_text": "太一の映像が固まり、音声だけが途切れ途切れに届く。",
+     "source_start": 126,
+     "source_end": 151,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-2",
+     "display_text": "根本くん、固まってる。カメラ切っていいから、音声だけ残して。",
+     "spoken_text": "根本くん、固まってる。カメラ切っていいから、音声だけ残して。",
+     "source_start": 152,
+     "source_end": 182,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "……りょ、了解です。聞こえてます？",
+     "spoken_text": "……りょ、了解です。聞こえてます？",
+     "source_start": 183,
+     "source_end": 200,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "聞こえてるよ。じゃあ、昨夜の障害の件から報告します。",
+     "spoken_text": "聞こえてるよ。じゃあ、昨夜の障害の件から報告します。",
+     "source_start": 201,
+     "source_end": 227,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-1",
+     "display_text": "原因は、夜間バッチの設定ファイルが古いまま本番に上がっていたことでした。",
+     "spoken_text": "原因は、夜間バッチの設定ファイルが古いまま本番に上がっていたことでした。",
+     "source_start": 228,
+     "source_end": 264,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-2",
+     "display_text": "了解。再発防止は篠田くん、手順書の更新は根本くん。いい？",
+     "spoken_text": "了解。再発防止は篠田くん、手順書の更新は根本くん。いい？",
+     "source_start": 265,
+     "source_end": 293,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-3",
+     "display_text": "うっす。午前中にやります。",
+     "spoken_text": "うっす。午前中にやります。",
+     "source_start": 294,
+     "source_end": 307,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "じゃあ今日はここまで。お疲れさま。",
+     "spoken_text": "じゃあ今日はここまで。お疲れさま。",
+     "source_start": 308,
+     "source_end": 325,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": null,
+     "display_text": "会議の窓が一つずつ消え、書斎に静けさが戻る。航は伸びをして、エディタを開いた。",
+     "spoken_text": "会議の窓が一つずつ消え、書斎に静けさが戻る。航は伸びをして、エディタを開いた。",
+     "source_start": 326,
+     "source_end": 365,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-1",
+     "display_text": "さて……やりますか。",
+     "spoken_text": "さて……やりますか。",
+     "source_start": 366,
+     "source_end": 376,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "transceiver-rescue",
+   "kind": "synthetic",
+   "title": "白嶺山岳救助隊",
+   "pattern": "トランシーバーで基地と交信する。途中から通信の手がかりが台詞にしかない",
+   "why": "最初だけ地の文に無線が書かれ、その後は「どうぞ」などの言葉だけが手がかり。",
+   "expected": {
+    "lines": {
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "radio"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "radio"
+      ]
+     },
+     "s1-u8": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "radio"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "radio"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "白嶺山岳救助隊",
+     "genre": "山岳ドラマ",
+     "mood": "緊迫"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "桐生 隼人",
+      "age": "31",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "山岳救助隊の隊員。現場に向かっている。",
+      "voice": "落ち着いた低めの男声。"
+     },
+     {
+      "id": "character-2",
+      "name": "真壁 杏",
+      "age": "26",
+      "gender": "女性",
+      "role": "隊員",
+      "settings": "隼人と組む若手隊員。",
+      "voice": "張りのある女声。"
+     },
+     {
+      "id": "character-3",
+      "name": "大森 源太",
+      "age": "55",
+      "gender": "男性",
+      "role": "隊長",
+      "settings": "麓のベースキャンプで指揮を執っている。",
+      "voice": "太く落ち着いた年配の男声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-ridge",
+      "name": "白嶺山の稜線",
+      "description": "吹雪が迫る、細い岩の稜線。",
+      "time_of_day": "午後",
+      "atmosphere": "風の轟音"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-ridge",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "隼人と杏が、隊長の無線指示を受けながら遭難者の位置へ向かう。",
+    "start_state": "吹雪が強まり、隼人と杏が稜線の分岐で立ち止まる。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "隊長が無線で天候の悪化を伝え、撤退を検討させる。"
+     },
+     {
+      "id": "event_2",
+      "description": "杏が遭難者の目印を見つけ、隼人が続行を進言する。"
+     },
+     {
+      "id": "event_3",
+      "description": "隊長が条件付きで続行を許可する。"
+     }
+    ],
+    "end_state": "二人が遭難者のいる岩陰へ向かう。",
+    "atmosphere": "吹雪の中の決断"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "稜線を叩く風が、ますます強くなっていた。隼人は胸元のトランシーバーを掴み、送信ボタンを押し込む。",
+     "spoken_text": "稜線を叩く風が、ますます強くなっていた。隼人は胸元のトランシーバーを掴み、送信ボタンを押し込む。",
+     "source_start": 0,
+     "source_end": 48,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-1",
+     "display_text": "ベース、こちら桐生。分岐点に到着。視界は約二十メートル。どうぞ。",
+     "spoken_text": "ベース、こちら桐生。分岐点に到着。視界は約二十メートル。どうぞ。",
+     "source_start": 49,
+     "source_end": 81,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": null,
+     "display_text": "短い雑音のあと、低い声が返ってきた。",
+     "spoken_text": "短い雑音のあと、低い声が返ってきた。",
+     "source_start": 82,
+     "source_end": 100,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-3",
+     "display_text": "桐生、こちらベース。三十分後に風速二十メートルを超える予報だ。撤退も視野に入れろ。どうぞ。",
+     "spoken_text": "桐生、こちらベース。三十分後に風速二十メートルを超える予報だ。撤退も視野に入れろ。どうぞ。",
+     "source_start": 101,
+     "source_end": 146,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-2",
+     "display_text": "隼人さん、あれ！ 岩の向こう、赤い布が見えます！",
+     "spoken_text": "隼人さん、あれ！ 岩の向こう、赤い布が見えます！",
+     "source_start": 147,
+     "source_end": 171,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-1",
+     "display_text": "遭難者の目印だ。……ベース、遭難者の目印を発見。距離は百メートル足らず。続行を進言します。どうぞ。",
+     "spoken_text": "遭難者の目印だ。……ベース、遭難者の目印を発見。距離は百メートル足らず。続行を進言します。どうぞ。",
+     "source_start": 172,
+     "source_end": 221,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "……百メートルか。",
+     "spoken_text": "……百メートルか。",
+     "source_start": 222,
+     "source_end": 231,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-3",
+     "display_text": "十五分だ。十五分で接触できなければ、何があっても引き返せ。どうぞ。",
+     "spoken_text": "十五分だ。十五分で接触できなければ、何があっても引き返せ。どうぞ。",
+     "source_start": 232,
+     "source_end": 265,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-1",
+     "display_text": "了解。十五分。どうぞ。",
+     "spoken_text": "了解。十五分。どうぞ。",
+     "source_start": 266,
+     "source_end": 277,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-3",
+     "display_text": "杏、桐生から離れるなよ。以上。",
+     "spoken_text": "杏、桐生から離れるなよ。以上。",
+     "source_start": 278,
+     "source_end": 293,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-2",
+     "display_text": "了解です！",
+     "spoken_text": "了解です！",
+     "source_start": 294,
+     "source_end": 299,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": null,
+     "display_text": "杏が雪を払いながら、隼人の後に続いた。",
+     "spoken_text": "杏が雪を払いながら、隼人の後に続いた。",
+     "source_start": 300,
+     "source_end": 319,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-1",
+     "display_text": "行くぞ。足元、確かめながらな。",
+     "spoken_text": "行くぞ。足元、確かめながらな。",
+     "source_start": 320,
+     "source_end": 335,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "call-cued-only-in-dialogue",
+   "kind": "synthetic",
+   "title": "夏祭りに行けなかった夜",
+   "pattern": "地の文がほとんど無く、台詞だけで電話と分かる",
+   "why": "場所は自室。祭り会場にいる相手は電話の向こう。通話を示すのは「もしもし」「電波」などの言葉だけ。",
+   "expected": {
+    "lines": {
+     "s1-u2": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u6": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u12": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     },
+     "s1-u14": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "phone"
+      ]
+     }
+    },
+    "absent": [
+     "character-2"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "夏祭りに行けなかった夜",
+     "genre": "青春",
+     "mood": "切なく温かい"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "瀬尾 柚希",
+      "age": "16",
+      "gender": "女性",
+      "role": "主人公",
+      "settings": "風邪をひいて夏祭りに行けなかった。",
+      "voice": "少しかすれた少女の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "久住 蒼",
+      "age": "16",
+      "gender": "男性",
+      "role": "同級生",
+      "settings": "一人で祭りに来ている。柚希に花火の音を聞かせようとする。",
+      "voice": "明るい少年の声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-yuzuki-room",
+      "name": "柚希の部屋",
+      "description": "窓の外に夏の夜空が見える、二階の部屋。",
+      "time_of_day": "夜",
+      "atmosphere": "遠くの祭り囃子"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-yuzuki-room",
+    "character_ids": [
+     "character-1",
+     "character-2"
+    ],
+    "objectives": "蒼が電話越しに祭りの様子と花火の音を柚希に届ける。",
+    "start_state": "ベッドで寝ている柚希の電話が鳴る。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "蒼が祭りの様子を実況する。"
+     },
+     {
+      "id": "event_2",
+      "description": "花火が上がり、二人がそれぞれの場所で同じ花火を見る。"
+     }
+    ],
+    "end_state": "柚希が来年の約束をする。",
+    "atmosphere": "離れていても同じ夜空"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": "character-1",
+     "display_text": "……もしもし。",
+     "spoken_text": "……もしもし。",
+     "source_start": 0,
+     "source_end": 7,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "あ、出た。生きてる？",
+     "spoken_text": "あ、出た。生きてる？",
+     "source_start": 8,
+     "source_end": 18,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "生きてるよ。熱、まだ下がらないけど。",
+     "spoken_text": "生きてるよ。熱、まだ下がらないけど。",
+     "source_start": 19,
+     "source_end": 37,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-2",
+     "display_text": "今さ、神社の階段のとこ。りんご飴、すげえ並んでる。",
+     "spoken_text": "今さ、神社の階段のとこ。りんご飴、すげえ並んでる。",
+     "source_start": 38,
+     "source_end": 63,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-1",
+     "display_text": "いいなあ。……ねえ、なんか声、遠い。",
+     "spoken_text": "いいなあ。……ねえ、なんか声、遠い。",
+     "source_start": 64,
+     "source_end": 82,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-2",
+     "display_text": "人多すぎて電波悪いんだよ。ちょっと待って、場所変える。",
+     "spoken_text": "人多すぎて電波悪いんだよ。ちょっと待って、場所変える。",
+     "source_start": 83,
+     "source_end": 110,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-2",
+     "display_text": "……どう？ これで聞こえる？",
+     "spoken_text": "……どう？ これで聞こえる？",
+     "source_start": 111,
+     "source_end": 125,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "うん、聞こえる。",
+     "spoken_text": "うん、聞こえる。",
+     "source_start": 126,
+     "source_end": 134,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": null,
+     "display_text": "そのとき、窓の外で低い破裂音が響いた。",
+     "spoken_text": "そのとき、窓の外で低い破裂音が響いた。",
+     "source_start": 135,
+     "source_end": 154,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-2",
+     "display_text": "あ、始まった！ 柚希、窓開けて！ 南のほう！",
+     "spoken_text": "あ、始まった！ 柚希、窓開けて！ 南のほう！",
+     "source_start": 155,
+     "source_end": 177,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-1",
+     "display_text": "……見える。ここからでも、ちゃんと見える。",
+     "spoken_text": "……見える。ここからでも、ちゃんと見える。",
+     "source_start": 178,
+     "source_end": 199,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "だろ？ 同じの見てるんだぜ、今。",
+     "spoken_text": "だろ？ 同じの見てるんだぜ、今。",
+     "source_start": 200,
+     "source_end": 216,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-1",
+     "display_text": "来年は、絶対一緒に行く。",
+     "spoken_text": "来年は、絶対一緒に行く。",
+     "source_start": 217,
+     "source_end": 229,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-2",
+     "display_text": "おう。りんご飴、二本な。",
+     "spoken_text": "おう。りんご飴、二本な。",
+     "source_start": 230,
+     "source_end": 242,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "video-letter-from-father",
+   "kind": "synthetic",
+   "title": "十八歳の誕生日に",
+   "pattern": "亡くなった父が残したビデオレターを再生する",
+   "why": "録画の再生。声の主は故人で、場面にはいない。回想ではなく、実際に音が流れている。",
+   "expected": {
+    "lines": {
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail",
+       "speaker"
+      ]
+     },
+     "s1-u6": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail",
+       "speaker"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail",
+       "speaker"
+      ]
+     },
+     "s1-u10": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "voicemail",
+       "speaker"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13",
+     "s1-u14"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "十八歳の誕生日に",
+     "genre": "家族ドラマ",
+     "mood": "静かで温かい"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "木崎 陽向",
+      "age": "18",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "十歳のときに父を亡くした。",
+      "voice": "まっすぐな青年の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "木崎 由美子",
+      "age": "46",
+      "gender": "女性",
+      "role": "母",
+      "settings": "夫に頼まれ、ビデオレターを八年間預かっていた。",
+      "voice": "柔らかい女声。"
+     },
+     {
+      "id": "character-3",
+      "name": "木崎 誠",
+      "age": "40",
+      "gender": "男性",
+      "role": "父（故人）",
+      "settings": "病床で、成長した息子に向けてビデオを撮った。",
+      "voice": "穏やかで少し照れくさそうな男声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-living",
+      "name": "木崎家の居間",
+      "description": "古いテレビとちゃぶ台のある、こぢんまりとした居間。",
+      "time_of_day": "夜",
+      "atmosphere": "誕生日の夜の静けさ"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-living",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "陽向が父のビデオレターを見て、父の思いを受け取る。",
+    "start_state": "誕生日の夜、母が陽向に一枚のディスクを渡す。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "テレビに病床の父が映り、陽向に語りかける。"
+     },
+     {
+      "id": "event_2",
+      "description": "陽向が母に、父がどんな人だったか尋ねる。"
+     }
+    ],
+    "end_state": "陽向が父の言葉を胸に、母に感謝を伝える。",
+    "atmosphere": "画面越しの再会"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "誕生日のケーキを片付けたあと、母は戸棚の奥から一枚のディスクを取り出した。",
+     "spoken_text": "誕生日のケーキを片付けたあと、母は戸棚の奥から一枚のディスクを取り出した。",
+     "source_start": 0,
+     "source_end": 37,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "お父さんからよ。十八歳になったら渡してくれって、頼まれてたの。",
+     "spoken_text": "お父さんからよ。十八歳になったら渡してくれって、頼まれてたの。",
+     "source_start": 38,
+     "source_end": 69,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": null,
+     "display_text": "陽向がディスクをプレーヤーに入れると、古いテレビの画面に、病室のベッドに座った父が映った。少し痩せているが、照れくさそうに笑っている。",
+     "spoken_text": "陽向がディスクをプレーヤーに入れると、古いテレビの画面に、病室のベッドに座った父が映った。少し痩せているが、照れくさそうに笑っている。",
+     "source_start": 70,
+     "source_end": 137,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-3",
+     "display_text": "よう、陽向。十八歳、おめでとう。……なんて言えばいいんだろうな、こういうの。",
+     "spoken_text": "よう、陽向。十八歳、おめでとう。……なんて言えばいいんだろうな、こういうの。",
+     "source_start": 138,
+     "source_end": 176,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-1",
+     "display_text": "……父さん。",
+     "spoken_text": "……父さん。",
+     "source_start": 177,
+     "source_end": 183,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-3",
+     "display_text": "お前がこれを見てるってことは、父さんはもう、そっちにはいないんだろう。ごめんな。",
+     "spoken_text": "お前がこれを見てるってことは、父さんはもう、そっちにはいないんだろう。ごめんな。",
+     "source_start": 184,
+     "source_end": 224,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "でも、母さんがいる。母さんの言うことは、だいたい正しいから、よく聞けよ。",
+     "spoken_text": "でも、母さんがいる。母さんの言うことは、だいたい正しいから、よく聞けよ。",
+     "source_start": 225,
+     "source_end": 261,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": null,
+     "display_text": "画面の中の父がいたずらっぽく笑い、隣で母が小さく吹き出した。",
+     "spoken_text": "画面の中の父がいたずらっぽく笑い、隣で母が小さく吹き出した。",
+     "source_start": 262,
+     "source_end": 292,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-2",
+     "display_text": "だいたい、ですって。",
+     "spoken_text": "だいたい、ですって。",
+     "source_start": 293,
+     "source_end": 303,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-3",
+     "display_text": "それから――好きなことを見つけろ。見つからなくても焦るな。父さんも三十過ぎまで見つからなかった。",
+     "spoken_text": "それから――好きなことを見つけろ。見つからなくても焦るな。父さんも三十過ぎまで見つからなかった。",
+     "source_start": 304,
+     "source_end": 352,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "映像はそこで、父が手を振る姿のまま止まった。",
+     "spoken_text": "映像はそこで、父が手を振る姿のまま止まった。",
+     "source_start": 353,
+     "source_end": 375,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-1",
+     "display_text": "母さん。父さんって、どんな人だった？",
+     "spoken_text": "母さん。父さんって、どんな人だった？",
+     "source_start": 376,
+     "source_end": 394,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-2",
+     "display_text": "見ての通りよ。照れ屋で、心配性で……あなたにそっくり。",
+     "spoken_text": "見ての通りよ。照れ屋で、心配性で……あなたにそっくり。",
+     "source_start": 395,
+     "source_end": 422,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u14",
+     "speaker_id": "character-1",
+     "display_text": "……ありがとう。母さんも、八年間。",
+     "spoken_text": "……ありがとう。母さんも、八年間。",
+     "source_start": 423,
+     "source_end": 440,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "hologram-briefing",
+   "kind": "synthetic",
+   "title": "第七辺境哨戒隊",
+   "pattern": "司令官がホログラムで部屋に投影されて命令を伝える",
+   "why": "姿は部屋に見えているが、本人は別の艦にいる。立ち絵で出すか枠で出すかが分かれうる。",
+   "expected": {
+    "lines": {
+     "s1-u2": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker",
+       "radio"
+      ]
+     },
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker",
+       "radio"
+      ]
+     },
+     "s1-u6": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker",
+       "radio"
+      ]
+     },
+     "s1-u9": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "speaker",
+       "radio"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "第七辺境哨戒隊",
+     "genre": "SF",
+     "mood": "硬質で緊迫"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "ユーリ・カナエ",
+      "age": "24",
+      "gender": "女性",
+      "role": "主人公",
+      "settings": "辺境哨戒艇の艇長。",
+      "voice": "凛とした女声。"
+     },
+     {
+      "id": "character-2",
+      "name": "ベン・オルソン",
+      "age": "27",
+      "gender": "男性",
+      "role": "副長",
+      "settings": "ユーリの副官。慎重派。",
+      "voice": "落ち着いた男声。"
+     },
+     {
+      "id": "character-3",
+      "name": "アドラー提督",
+      "age": "58",
+      "gender": "男性",
+      "role": "艦隊司令",
+      "settings": "旗艦から各哨戒艇に指令を出している。",
+      "voice": "重厚な老年の男声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-briefing-room",
+      "name": "哨戒艇のブリーフィングルーム",
+      "description": "中央にホログラム投影台がある狭い会議室。",
+      "time_of_day": "艦内時間の深夜",
+      "atmosphere": "張り詰めた静けさ"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-briefing-room",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "提督がホログラムで新たな任務を伝え、ユーリが受諾する。",
+    "start_state": "緊急通信の呼び出しで、ユーリとベンがブリーフィングルームに集まる。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "投影台に提督の立体映像が現れる。"
+     },
+     {
+      "id": "event_2",
+      "description": "提督が未確認艦の追跡を命じる。"
+     },
+     {
+      "id": "event_3",
+      "description": "ベンが危険を指摘し、ユーリが任務を受ける。"
+     }
+    ],
+    "end_state": "通信が終わり、二人が出撃準備に向かう。",
+    "atmosphere": "冷たい光の中の決断"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "呼び出し音が鳴り止むと同時に、中央の投影台が青白く光った。光の粒が集まり、等身大の老提督の姿を形づくる。輪郭は時折、わずかに揺らいでいた。",
+     "spoken_text": "呼び出し音が鳴り止むと同時に、中央の投影台が青白く光った。光の粒が集まり、等身大の老提督の姿を形づくる。輪郭は時折、わずかに揺らいでいた。",
+     "source_start": 0,
+     "source_end": 69,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-3",
+     "display_text": "夜分にすまんな、カナエ艇長。",
+     "spoken_text": "夜分にすまんな、カナエ艇長。",
+     "source_start": 70,
+     "source_end": 84,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "いえ、提督。ご用件を。",
+     "spoken_text": "いえ、提督。ご用件を。",
+     "source_start": 85,
+     "source_end": 96,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-3",
+     "display_text": "二時間前、第七宙域で未確認艦が観測された。君の艇が最も近い。追跡し、所属を確認してもらいたい。",
+     "spoken_text": "二時間前、第七宙域で未確認艦が観測された。君の艇が最も近い。追跡し、所属を確認してもらいたい。",
+     "source_start": 97,
+     "source_end": 144,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-2",
+     "display_text": "提督、我々の艇には武装がほとんどありません。相手が軍艦なら――",
+     "spoken_text": "提督、我々の艇には武装がほとんどありません。相手が軍艦なら――",
+     "source_start": 145,
+     "source_end": 176,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-3",
+     "display_text": "交戦は許可しない。見るだけだ、オルソン副長。それ以上は求めん。",
+     "spoken_text": "交戦は許可しない。見るだけだ、オルソン副長。それ以上は求めん。",
+     "source_start": 177,
+     "source_end": 208,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": null,
+     "display_text": "提督の映像がわずかにノイズで乱れ、また元に戻った。",
+     "spoken_text": "提督の映像がわずかにノイズで乱れ、また元に戻った。",
+     "source_start": 209,
+     "source_end": 234,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "了解しました。第七哨戒隊、追跡任務を受領します。",
+     "spoken_text": "了解しました。第七哨戒隊、追跡任務を受領します。",
+     "source_start": 235,
+     "source_end": 259,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-3",
+     "display_text": "頼んだぞ。……無事に戻れ。",
+     "spoken_text": "頼んだぞ。……無事に戻れ。",
+     "source_start": 260,
+     "source_end": 273,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": null,
+     "display_text": "光の粒がほどけるように散り、投影台は再び暗くなった。",
+     "spoken_text": "光の粒がほどけるように散り、投影台は再び暗くなった。",
+     "source_start": 274,
+     "source_end": 300,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-2",
+     "display_text": "見るだけ、ですか。いつもそう言うんですよね、あの人は。",
+     "spoken_text": "見るだけ、ですか。いつもそう言うんですよね、あの人は。",
+     "source_start": 301,
+     "source_end": 328,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-1",
+     "display_text": "だから、見て帰ってくるのよ。準備を。",
+     "spoken_text": "だから、見て帰ってくるのよ。準備を。",
+     "source_start": 329,
+     "source_end": 347,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "inner-voice-and-sealed-demon",
+   "kind": "synthetic",
+   "title": "封魔の少年と放課後",
+   "pattern": "本人の心の声と、体に封じられた魔物の声",
+   "why": "（）の心の声はその場の人物の台詞。体内の魔物の声は姿の無い念話で、隣の友人には聞こえない。",
+   "expected": {
+    "lines": {
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     },
+     "s1-u6": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     },
+     "s1-u11": {
+      "voice": [
+       "present"
+      ]
+     },
+     "s1-u12": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "telepathy"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "封魔の少年と放課後",
+     "genre": "現代ファンタジー",
+     "mood": "コミカルで少し不穏"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "御影 律",
+      "age": "15",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "体内に古い魔物を封じられている高校1年生。周囲には秘密にしている。",
+      "voice": "素直な少年の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "朝倉 ひより",
+      "age": "15",
+      "gender": "女性",
+      "role": "幼なじみ",
+      "settings": "律の秘密を知らない。",
+      "voice": "明るい少女の声。"
+     },
+     {
+      "id": "character-3",
+      "name": "黒鴉",
+      "age": "不詳",
+      "gender": "不明",
+      "role": "封じられた魔物",
+      "settings": "律の体内に封じられ、律にだけ話しかけられる。",
+      "voice": "低く響く、皮肉っぽい声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-crepe-stand",
+      "name": "駅前のクレープ屋",
+      "description": "放課後の学生で賑わう屋台。",
+      "time_of_day": "夕方",
+      "atmosphere": "甘い匂いと喧騒"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-crepe-stand",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "ひよりとクレープを食べる律に、体内の黒鴉が茶々を入れ、律が平静を装う。",
+    "start_state": "律とひよりがクレープの列に並んでいる。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "黒鴉が律の頭の中でクレープを欲しがる。"
+     },
+     {
+      "id": "event_2",
+      "description": "律が心の中で言い返し、ひよりに不審がられる。"
+     }
+    ],
+    "end_state": "律が黒鴉の分までクレープを買う羽目になる。",
+    "atmosphere": "賑やかな放課後と、律だけが知る秘密"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "駅前のクレープ屋には、放課後の学生が長い列を作っていた。甘い生地の匂いが風に乗って流れてくる。",
+     "spoken_text": "駅前のクレープ屋には、放課後の学生が長い列を作っていた。甘い生地の匂いが風に乗って流れてくる。",
+     "source_start": 0,
+     "source_end": 47,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "律、何にする？ 私はいちごカスタード！",
+     "spoken_text": "律、何にする？ 私はいちごカスタード！",
+     "source_start": 48,
+     "source_end": 67,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "うーん、チョコバナナかな。",
+     "spoken_text": "うーん、チョコバナナかな。",
+     "source_start": 68,
+     "source_end": 81,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-3",
+     "display_text": "小僧。我は、その一番上の、金色のやつを所望する。",
+     "spoken_text": "小僧。我は、その一番上の、金色のやつを所望する。",
+     "source_start": 82,
+     "source_end": 106,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": null,
+     "display_text": "頭の奥で響く低い声に、律の肩がびくりと跳ねた。",
+     "spoken_text": "頭の奥で響く低い声に、律の肩がびくりと跳ねた。",
+     "source_start": 107,
+     "source_end": 130,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": "character-1",
+     "display_text": "（黙ってろよ、黒鴉。お前、食べられないだろ）",
+     "spoken_text": "（黙ってろよ、黒鴉。お前、食べられないだろ）",
+     "source_start": 131,
+     "source_end": 153,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "味覚は共有しておる。二つ食え。",
+     "spoken_text": "味覚は共有しておる。二つ食え。",
+     "source_start": 154,
+     "source_end": 169,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-2",
+     "display_text": "……律？ さっきから、なんか顔がうるさいよ。",
+     "spoken_text": "……律？ さっきから、なんか顔がうるさいよ。",
+     "source_start": 170,
+     "source_end": 192,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-1",
+     "display_text": "え、いや、なんでもない！ ……すみません、チョコバナナと、その金色のやつも。",
+     "spoken_text": "え、いや、なんでもない！ ……すみません、チョコバナナと、その金色のやつも。",
+     "source_start": 193,
+     "source_end": 231,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-2",
+     "display_text": "二つも食べるの？",
+     "spoken_text": "二つも食べるの？",
+     "source_start": 232,
+     "source_end": 240,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": "character-1",
+     "display_text": "（誰のせいだと思ってるんだ……）",
+     "spoken_text": "（誰のせいだと思ってるんだ……）",
+     "source_start": 241,
+     "source_end": 257,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-3",
+     "display_text": "うむ。よき心がけである。",
+     "spoken_text": "うむ。よき心がけである。",
+     "source_start": 258,
+     "source_end": 270,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": null,
+     "display_text": "律は二つのクレープを両手に持ち、ひよりの怪訝な視線から目を逸らした。",
+     "spoken_text": "律は二つのクレープを両手に持ち、ひよりの怪訝な視線から目を逸らした。",
+     "source_start": 271,
+     "source_end": 305,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "recollection-then-quoted",
+   "kind": "synthetic",
+   "title": "最後の大会の前に",
+   "pattern": "不在の親友の言葉を思い出し、その言葉を目の前の相手に自分の口で伝える",
+   "why": "同じ文面が、回想の声（親友）と、その場の引用（主人公）の両方で出てくる。",
+   "expected": {
+    "lines": {
+     "s1-u5": {
+      "voice": [
+       "recollection"
+      ]
+     },
+     "s1-u8": {
+      "voice": [
+       "present"
+      ]
+     }
+    },
+    "absent": [
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "最後の大会の前に",
+     "genre": "スポーツ青春",
+     "mood": "熱く切ない"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "葛西 大和",
+      "age": "17",
+      "gender": "男性",
+      "role": "主人公",
+      "settings": "陸上部のエース。転校した親友・海斗との約束を胸に走っている。",
+      "voice": "力強い少年の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "仁科 結",
+      "age": "16",
+      "gender": "女性",
+      "role": "後輩マネージャー",
+      "settings": "怪我で走れなくなり、部を辞めようとしている。",
+      "voice": "か細い少女の声。"
+     },
+     {
+      "id": "character-3",
+      "name": "鳴海 海斗",
+      "age": "17",
+      "gender": "男性",
+      "role": "親友（転校済み）",
+      "settings": "去年の春に遠くの町へ転校した、大和の元相棒。",
+      "voice": "からっとした明るい少年の声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-track",
+      "name": "夕暮れのグラウンド",
+      "description": "部員が帰ったあとの陸上トラック。",
+      "time_of_day": "夕方",
+      "atmosphere": "長い影と静けさ"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-track",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "部を辞めようとする結を、大和が海斗の言葉を借りて引き止める。",
+    "start_state": "結が退部届を持って大和の前に立っている。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "大和が、転校前の海斗に言われた言葉を思い出す。"
+     },
+     {
+      "id": "event_2",
+      "description": "大和がその言葉を結に伝える。"
+     }
+    ],
+    "end_state": "結が退部届をしまい、マネージャーとして残ると決める。",
+    "atmosphere": "受け継がれる言葉"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "部員の帰ったグラウンドに、長い影が伸びていた。結は両手で退部届を握りしめ、大和の前に立っている。",
+     "spoken_text": "部員の帰ったグラウンドに、長い影が伸びていた。結は両手で退部届を握りしめ、大和の前に立っている。",
+     "source_start": 0,
+     "source_end": 48,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-2",
+     "display_text": "先輩。私、もう走れないなら、ここにいる意味がないと思うんです。",
+     "spoken_text": "先輩。私、もう走れないなら、ここにいる意味がないと思うんです。",
+     "source_start": 49,
+     "source_end": 80,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": "character-1",
+     "display_text": "……意味がない、か。",
+     "spoken_text": "……意味がない、か。",
+     "source_start": 81,
+     "source_end": 91,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": null,
+     "display_text": "大和はトラックの白線に目を落とした。去年の春、転校が決まった海斗と、このスタートラインに並んで座った日のことが蘇る。",
+     "spoken_text": "大和はトラックの白線に目を落とした。去年の春、転校が決まった海斗と、このスタートラインに並んで座った日のことが蘇る。",
+     "source_start": 92,
+     "source_end": 150,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-3",
+     "display_text": "走れなくなっても、トラックの横には立てるだろ。俺はさ、お前が走るのを見てるだけで、けっこう楽しかったんだぜ。",
+     "spoken_text": "走れなくなっても、トラックの横には立てるだろ。俺はさ、お前が走るのを見てるだけで、けっこう楽しかったんだぜ。",
+     "source_start": 151,
+     "source_end": 205,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": null,
+     "display_text": "あの日の海斗の笑い声が、夕風に混じって聞こえた気がした。",
+     "spoken_text": "あの日の海斗の笑い声が、夕風に混じって聞こえた気がした。",
+     "source_start": 206,
+     "source_end": 234,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-1",
+     "display_text": "昔、俺の相棒が言ってたんだ。",
+     "spoken_text": "昔、俺の相棒が言ってたんだ。",
+     "source_start": 235,
+     "source_end": 249,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-1",
+     "display_text": "走れなくなっても、トラックの横には立てる。見てるだけで、けっこう楽しかった、って。",
+     "spoken_text": "走れなくなっても、トラックの横には立てる。見てるだけで、けっこう楽しかった、って。",
+     "source_start": 250,
+     "source_end": 291,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-2",
+     "display_text": "……見てるだけで。",
+     "spoken_text": "……見てるだけで。",
+     "source_start": 292,
+     "source_end": 301,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": "character-1",
+     "display_text": "あいつがいなくなってから、俺は一人で走ってる。でも、横に誰かいてくれたら、もっと速く走れる気がする。",
+     "spoken_text": "あいつがいなくなってから、俺は一人で走ってる。でも、横に誰かいてくれたら、もっと速く走れる気がする。",
+     "source_start": 302,
+     "source_end": 352,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "結は退部届に目を落とし、それから、ゆっくりと折りたたんでポケットにしまった。",
+     "spoken_text": "結は退部届に目を落とし、それから、ゆっくりと折りたたんでポケットにしまった。",
+     "source_start": 353,
+     "source_end": 391,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "……じゃあ、明日からタイム、計ります。手加減しませんから。",
+     "spoken_text": "……じゃあ、明日からタイム、計ります。手加減しませんから。",
+     "source_start": 392,
+     "source_end": 421,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  },
+  {
+   "id": "group-chat-at-night",
+   "kind": "synthetic",
+   "title": "締切前夜の文芸部",
+   "pattern": "グループチャットの文面を、送り主の声で読む",
+   "why": "送り主は二人とも自宅にいる。本人が打つ返信は、その場の台詞として扱う。",
+   "expected": {
+    "lines": {
+     "s1-u4": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "message"
+      ]
+     },
+     "s1-u7": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "message"
+      ]
+     },
+     "s1-u8": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "message"
+      ]
+     },
+     "s1-u9": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "message"
+      ]
+     },
+     "s1-u12": {
+      "voice": [
+       "remote"
+      ],
+      "channel": [
+       "message"
+      ]
+     }
+    },
+    "absent": [
+     "character-2",
+     "character-3"
+    ],
+    "arrives": {}
+   },
+   "batches": [
+    [
+     "s1-u1",
+     "s1-u2",
+     "s1-u3",
+     "s1-u4",
+     "s1-u5",
+     "s1-u6",
+     "s1-u7",
+     "s1-u8",
+     "s1-u9",
+     "s1-u10"
+    ],
+    [
+     "s1-u11",
+     "s1-u12",
+     "s1-u13"
+    ]
+   ],
+   "setting": {
+    "world": {
+     "title": "締切前夜の文芸部",
+     "genre": "学園日常",
+     "mood": "ゆるく慌ただしい"
+    },
+    "characters": [
+     {
+      "id": "character-1",
+      "name": "江波 栞里",
+      "age": "16",
+      "gender": "女性",
+      "role": "主人公",
+      "settings": "文芸部の部誌の編集担当。締切前夜に原稿を待っている。",
+      "voice": "落ち着いた少女の声。"
+     },
+     {
+      "id": "character-2",
+      "name": "小日向 蓮",
+      "age": "16",
+      "gender": "男性",
+      "role": "部員",
+      "settings": "いつも締切ぎりぎりの書き手。",
+      "voice": "のんびりした少年の声。"
+     },
+     {
+      "id": "character-3",
+      "name": "真田 彩葉",
+      "age": "17",
+      "gender": "女性",
+      "role": "部長",
+      "settings": "部員に甘いが、締切には厳しい。",
+      "voice": "ハキハキした少女の声。"
+     }
+    ],
+    "relationships": {
+     "pairs": []
+    },
+    "main_character_ids": [
+     "character-1"
+    ],
+    "locations": [
+     {
+      "id": "loc-shiori-room",
+      "name": "栞里の部屋",
+      "description": "机にノートパソコンと部誌のゲラが広がる自室。",
+      "time_of_day": "深夜",
+      "atmosphere": "静かな夜更かし"
+     }
+    ]
+   },
+   "hints": {},
+   "plan": {
+    "id": "s1",
+    "location_id": "loc-shiori-room",
+    "character_ids": [
+     "character-1",
+     "character-2",
+     "character-3"
+    ],
+    "objectives": "締切前夜、グループチャットで蓮の原稿を催促し、受け取る。",
+    "start_state": "栞里が自室で、蓮の原稿の到着を待っている。",
+    "required_events": [
+     {
+      "id": "event_1",
+      "description": "蓮がチャットで言い訳をし、彩葉が釘を刺す。"
+     },
+     {
+      "id": "event_2",
+      "description": "蓮が原稿ファイルを送る。"
+     }
+    ],
+    "end_state": "栞里が原稿を受け取り、編集に取りかかる。",
+    "atmosphere": "画面の光と夜の静けさ"
+   },
+   "lines": [
+    {
+     "id": "s1-u1",
+     "speaker_id": null,
+     "display_text": "深夜零時を回った。栞里はゲラの束を脇に寄せ、スマートフォンのグループチャットを開いた。",
+     "spoken_text": "深夜零時を回った。栞里はゲラの束を脇に寄せ、スマートフォンのグループチャットを開いた。",
+     "source_start": 0,
+     "source_end": 43,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u2",
+     "speaker_id": "character-1",
+     "display_text": "『蓮くん、原稿まだ？ 明日の朝が締切だよ』……送信。",
+     "spoken_text": "『蓮くん、原稿まだ？ 明日の朝が締切だよ』……送信。",
+     "source_start": 44,
+     "source_end": 70,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u3",
+     "speaker_id": null,
+     "display_text": "数分後、通知音が鳴った。",
+     "spoken_text": "数分後、通知音が鳴った。",
+     "source_start": 71,
+     "source_end": 83,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u4",
+     "speaker_id": "character-2",
+     "display_text": "ごめん、あと三行。いや、五行。たぶん。",
+     "spoken_text": "ごめん、あと三行。いや、五行。たぶん。",
+     "source_start": 84,
+     "source_end": 103,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u5",
+     "speaker_id": "character-1",
+     "display_text": "たぶん、って……。",
+     "spoken_text": "たぶん、って……。",
+     "source_start": 104,
+     "source_end": 113,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u6",
+     "speaker_id": null,
+     "display_text": "すぐに、もう一つの吹き出しが画面に現れる。",
+     "spoken_text": "すぐに、もう一つの吹き出しが画面に現れる。",
+     "source_start": 114,
+     "source_end": 135,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u7",
+     "speaker_id": "character-3",
+     "display_text": "蓮。三行でも五行でもいいから、一時までに送りなさい。栞里を寝かせてあげて。",
+     "spoken_text": "蓮。三行でも五行でもいいから、一時までに送りなさい。栞里を寝かせてあげて。",
+     "source_start": 136,
+     "source_end": 173,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u8",
+     "speaker_id": "character-2",
+     "display_text": "部長、起きてたんですか。",
+     "spoken_text": "部長、起きてたんですか。",
+     "source_start": 174,
+     "source_end": 186,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u9",
+     "speaker_id": "character-3",
+     "display_text": "起きてるわよ。部長だもの。",
+     "spoken_text": "起きてるわよ。部長だもの。",
+     "source_start": 187,
+     "source_end": 200,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u10",
+     "speaker_id": null,
+     "display_text": "栞里は思わず小さく笑い、キーボードの横で冷めたココアに口をつけた。",
+     "spoken_text": "栞里は思わず小さく笑い、キーボードの横で冷めたココアに口をつけた。",
+     "source_start": 201,
+     "source_end": 234,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u11",
+     "speaker_id": null,
+     "display_text": "零時五十八分。ファイルの添付と一緒に、短いメッセージが届いた。",
+     "spoken_text": "零時五十八分。ファイルの添付と一緒に、短いメッセージが届いた。",
+     "source_start": 235,
+     "source_end": 266,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u12",
+     "speaker_id": "character-2",
+     "display_text": "送った。……いつもありがとう、栞里。",
+     "spoken_text": "送った。……いつもありがとう、栞里。",
+     "source_start": 267,
+     "source_end": 285,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    },
+    {
+     "id": "s1-u13",
+     "speaker_id": "character-1",
+     "display_text": "……まったく。じゃあ、ここからは私の仕事ね。",
+     "spoken_text": "……まったく。じゃあ、ここからは私の仕事ね。",
+     "source_start": 286,
+     "source_end": 308,
+     "inner_emotion": "未指定",
+     "voice_emotion": "neutral",
+     "delivery": null
+    }
+   ]
+  }
+ ]
+}
