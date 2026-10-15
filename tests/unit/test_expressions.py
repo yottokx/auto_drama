@@ -139,10 +139,10 @@ def test_a_visible_face_changes_in_place_without_holding_the_line():
     scenario = compile_scenario(script, assets)
     # Beside the two changes of face, the entrance states which picture the character comes on with.
     assert scenario.count('wait="false"]') == 2 and scenario.count("[chara_mod ") == 3
-    smile = scenario.index('[chara_mod name="ad_aki" storage="aki_base_smile.png" time="150" wait="false"]')
+    smile = scenario.index('[chara_mod name="ad_aki" storage="aki_base_smile.png" time="150" cross="false" wait="false"]')
     assert scenario.index("*utterance_line_002") < smile < scenario.index('[ad_say id="line_002"]')
     # There is no picture of anger: the script still asks for it, and the ordinary portrait is shown.
-    back = scenario.index('[chara_mod name="ad_aki" storage="aki_sprite.png" time="150" wait="false"]')
+    back = scenario.index('[chara_mod name="ad_aki" storage="aki_sprite.png" time="150" cross="false" wait="false"]')
     assert scenario.index("*utterance_line_003") < back < scenario.index('[ad_say id="line_003"]')
     # Returning to the ordinary face from a face without a picture changes nothing on screen.
     assert "[chara_mod" not in scenario[scenario.index("*utterance_line_004"):]

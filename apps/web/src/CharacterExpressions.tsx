@@ -121,8 +121,9 @@ export function PortraitExpressionPanel({ projectId, characterId, characterName,
   const [tick, setTick] = useState(0)
   const wasWorking = useRef(false)
   const endpoint = `/api/expressions/projects/${encodeURIComponent(projectId)}`
+  // Another portrait starts empty; looking again at the same one keeps what is shown until the answer comes.
+  useEffect(() => { setData(null); setError('') }, [endpoint, baseArtifactId])
   useEffect(() => {
-    setData(null); setError('')
     if (!baseArtifactId) return
     const controller = new AbortController()
     void request<PortraitExpressions>(`${endpoint}?base=${encodeURIComponent(baseArtifactId)}`, controller.signal)
@@ -158,7 +159,7 @@ export function PortraitExpressionPanel({ projectId, characterId, characterName,
       pictures={view.pictures} notes={view.notes} busy={disabled || sending || view.working}
       usage={usage ? usage.characters[characterId] ?? {} : undefined}
       portraitUrl={`/api/artifacts/${encodeURIComponent(baseArtifactId)}/content`}
-      hint={finished ? '作った表情は、「全章へ反映」を行うと本編に入ります。' : undefined}
+      hint={finished ? '作った表情は、画面下の「調整版を反映」を押すと本編に入ります。' : undefined}
       onGenerate={(character_id, wanted) => send('', { base_artifact_id: baseArtifactId, character_id, expressions: wanted.expressions, ...(wanted.redraw ? { redraw: true } : {}), ...(wanted.faceBox ? { face_box: wanted.faceBox } : {}) })}
       onDelete={async (_characterId, _outfitId, expression) => { const removed = await send('/remove', { base_artifact_id: baseArtifactId, expression }); if (removed) onChange?.(); return removed }}
       onExpand={onExpand}/>

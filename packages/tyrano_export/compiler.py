@@ -261,9 +261,12 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
                     if storage != shown:
                         # A hidden character only records the image its next appearance shows; a
                         # visible one changes without holding back the line the face belongs to.
+                        # The new face fades in over the old picture: fading both at once would
+                        # let the background show through the whole body, which has not changed.
                         result.append(
                             f'[chara_mod name="ad_{direction.character_id}" storage="{storage}" '
-                            + (f'time="{direction.duration_ms}" wait="false"]' if visible else 'time="0"]'))
+                            + (f'time="{direction.duration_ms}" cross="false" wait="false"]' if visible
+                               else 'time="0"]'))
                 case "focus":
                     result.append(f'[chara_ptext name="ad_{direction.character_id}"]')
                 case "blackout":

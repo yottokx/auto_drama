@@ -171,9 +171,9 @@ def test_a_chapter_shows_the_pictures_its_portraits_have_and_asks_for_the_rest(t
         assert asked == ["smile", "angry", "smile"]
         ordinary = files[main["image_asset_id"]]
         second_line, third, fourth = (scenario.index(f"*utterance_{line}") for line in lines[1:4])
-        assert f'storage="{pictures[(None, "smile")]}" time="150" wait="false"]' in scenario[second_line:third]
+        assert f'storage="{pictures[(None, "smile")]}" time="150" cross="false" wait="false"]' in scenario[second_line:third]
         # No picture of anger exists: the ordinary portrait comes back.
-        assert f'storage="{ordinary}" time="150" wait="false"]' in scenario[third:fourth]
+        assert f'storage="{ordinary}" time="150" cross="false" wait="false"]' in scenario[third:fourth]
         assert f'storage="{pictures[("look1", "smile")]}"' in scenario[fourth:]
         # The finished work says how often it asks for each face, pictured or not.
         state = production(client, project)

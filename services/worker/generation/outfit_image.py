@@ -140,7 +140,7 @@ def design_edit(payload: dict, llm) -> dict:
 
 # What each fixed expression asks of the face. Colour is left alone: a face tinted pale or
 # blue no longer matches the neck of the portrait it is put back onto.
-EXPRESSION_VERSION = 1
+EXPRESSION_VERSION = 2
 EXPRESSION_INSTRUCTIONS = {
     "smile": "Change only the facial expression to a gentle, closed-mouth smile.",
     "laugh": "Change only the facial expression to a big cheerful laugh: happily closed eyes and a wide open "
@@ -159,8 +159,9 @@ EXPRESSION_INSTRUCTIONS = {
                "gaze and a firmly closed mouth.",
     "fear": "Change only the facial expression to fear: wide eyes with small pupils, brows raised and drawn "
             "together, and a slightly open, tense mouth. Keep the skin color unchanged.",
-    "shy": "Change only the facial expression to bashfulness: a blush across the cheeks, eyes looking slightly "
-           "aside and a small shy smile.",
+    "shy": "Change only the facial expression to bashfulness: eyes looking slightly aside and a small shy "
+           "smile, with only a very subtle, barely visible hint of pale pink on the cheeks, no blush lines and "
+           "no red. Keep the skin color unchanged.",
 }
 assert set(EXPRESSION_INSTRUCTIONS) == set(EXPRESSIONS) - {DEFAULT_EXPRESSION}
 
