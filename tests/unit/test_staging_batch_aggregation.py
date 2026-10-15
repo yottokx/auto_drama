@@ -156,7 +156,7 @@ def test_explicit_retry_of_old_aggregate_failure_reuses_source_and_valid_batches
     assert len(after["steps"][staging_keys[-1]]["attempts"]) == 2
     assert source.read_bytes() == original_source
     assert all(path.read_bytes() == content for path, content in saved_requests.items())
-    assert after["request_ordinal"] == len(calls) == 8
-    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == 8 * 530
+    assert after["request_ordinal"] - len(control["voice_calls"]) == len(calls) == 8
+    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == (8 + len(control["voice_calls"])) * 530
     assert generate(request, tmp_path) == envelope
     assert len(calls) == 8

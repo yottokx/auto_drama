@@ -77,9 +77,9 @@ def test_cached_invalid_ids_then_unused_location_recovers_without_replanning(app
     state = read_json(tmp_path / "script/draft-state.json")
     assert state["steps"]["plan-001"]["attempts"] == saved_attempts
     assert all(path.read_bytes() == content for path, content in sources.items())
-    assert state["request_ordinal"] == 5
+    assert state["request_ordinal"] == 5 + len(control["voice_calls"])
     report = read_json(tmp_path / "script/report.json")
-    assert report["metrics"]["charged_tokens"] == 5 * 530
+    assert report["metrics"]["charged_tokens"] == (5 + len(control["voice_calls"])) * 530
     assert len(report["chapter_plan_normalizations"]) == 1
     assert digest(state["outline"]) == digest(before["outline"])
 

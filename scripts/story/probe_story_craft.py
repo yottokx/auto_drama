@@ -132,6 +132,8 @@ def prepare_conditions(source, manifest, state, payload, config):
     # This reader captures request material without running a production job or
     # owning its progress journal. Keep the diagnostic's baseline read-only.
     reader.progress_step = lambda *args, **kwargs: None
+    # Only the plan request is compared; who is heard is checked after it.
+    reader.cast_heard_voices = lambda number, plan, *args: plan
     reader.chapter_plan(1, reader.material(setting, None, 1), [])
     saved_request = read(source / "requests/plan-001-1.json")["request"]
     old_system = saved_request["messages"][0]["content"]

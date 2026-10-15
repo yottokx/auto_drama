@@ -182,7 +182,7 @@ def test_explicit_retry_of_old_reasoning_grammar_failure_starts_fresh_scene(
     assert (work / "job-request.json").read_bytes() == original_request
     assert (work / "script/experiment.json").read_bytes() == original_manifest
     assert (work / "script/sources/c001-s1.raw.txt").read_text(encoding="utf-8") == SECOND
-    assert after["request_ordinal"] == len(calls) == 6
-    assert read_json(work / "script/report.json")["metrics"]["charged_tokens"] == 6 * 530
+    assert after["request_ordinal"] - len(control["voice_calls"]) == len(calls) == 6
+    assert read_json(work / "script/report.json")["metrics"]["charged_tokens"] == (6 + len(control["voice_calls"])) * 530
     assert generate(request, work) == envelope
     assert len(calls) == 6

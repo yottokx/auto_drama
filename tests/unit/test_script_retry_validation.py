@@ -72,8 +72,8 @@ def test_explicit_retry_replaces_rejected_annotations_only(
     for key in ("outline", "plan-001", "c001-s1-text"):
         assert after["steps"][key] == before["steps"][key]
     assert all(path.read_bytes() == content for path, content in saved_requests.items())
-    assert after["request_ordinal"] == len(calls)
-    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == len(calls) * 530
+    assert after["request_ordinal"] == len(calls) + len(control["voice_calls"])
+    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == (len(calls) + len(control["voice_calls"])) * 530
     assert generate(request, tmp_path) == envelope
     assert len(calls) == 5 + len(expected)
 
@@ -150,5 +150,5 @@ def test_explicit_retry_after_two_uncached_interruptions(app_runtime, tmp_path):
     assert [call["purpose"] for call in calls[4:]] == ["script-scene", "script-staging"]
     assert envelope["result"]["scenes"][0]["raw_text"] == FIRST
     assert after["steps"]["c001-s1-text"]["attempts"][:2] == before["steps"]["c001-s1-text"]["attempts"]
-    assert after["request_ordinal"] == 6
-    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == 6 * 530
+    assert after["request_ordinal"] == 6 + len(control["voice_calls"])
+    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == (6 + len(control["voice_calls"])) * 530

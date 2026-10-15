@@ -116,6 +116,27 @@ def runtime(monkeypatch):
 
         def chat(self, stage, messages, *, allow_truncated=False, **extra):
             assert allow_truncated, "Source chunks must survive reaching the output limit."
+            schema = extra.get("response_format", {}).get("json_schema", {}).get("schema", {})
+            if self.purpose == "script-voices" and "SceneVoices" in schema.get("$defs", {}) and not control.get("voices"):
+                # Unless a test asks otherwise, everyone heard is already a character. These
+                # checks are counted in control["voice_calls"], apart from the calls under test.
+                self.requests += 1
+                control.setdefault("voice_calls", []).append(stage)
+                self.trace.append({"type": "llm_generation", "stage": stage, "request": self.requests,
+                                   "cache_hit": False, "elapsed_seconds": 0.01,
+                                   "usage": {"prompt_tokens": 500, "completion_tokens": 30}})
+                scenes = schema["$defs"]["SceneVoices"]["properties"]["scene_id"]["enum"]
+                return {"content": json.dumps({"scenes": [{"scene_id": scene, "voices": []} for scene in scenes]}),
+                        "_finish_reason": "stop"}
+            if self.purpose == "script-voices" and control.get("voices"):
+                value = control["voices"].pop(0)
+                self.requests += 1
+                self.trace.append({"type": "llm_generation", "stage": stage, "request": self.requests,
+                                   "cache_hit": False, "elapsed_seconds": 0.01,
+                                   "usage": {"prompt_tokens": 500, "completion_tokens": 30}})
+                calls.append({"stage": stage, "purpose": self.purpose, "messages": copy.deepcopy(messages),
+                              "profile": copy.deepcopy(self.profile), "extra": copy.deepcopy(extra)})
+                return {"content": json.dumps(value, ensure_ascii=False), "_finish_reason": "stop"}
             calls.append({"stage": stage, "purpose": self.purpose, "messages": copy.deepcopy(messages),
                           "profile": copy.deepcopy(self.profile), "extra": copy.deepcopy(extra)})
             assert control["responses"], f"Unexpected additional model call: {stage}"
@@ -564,7 +585,7 @@ def test_interrupted_allocation_resumes_saved_chain_without_regeneration(runtime
     assert report["status"] == "chapter_limit_reached"
     assert (tmp_path / "story-chain.json").read_bytes() == saved
     assert len(calls) == 7  # Cast, chain, interrupted/resumed allocation, plan, text, staging.
-    assert read_json(tmp_path / "draft-state.json")["request_ordinal"] == 7
+    assert read_json(tmp_path / "draft-state.json")["request_ordinal"] == 7 + len(control["voice_calls"])  # And one voices check.
 
 
 @pytest.mark.parametrize("ends", [(1, 1, 4), (2, 1, 4), (1, 2, 3), (1, 3, 5)])

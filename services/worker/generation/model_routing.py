@@ -31,7 +31,7 @@ def profile_purpose(payload: dict, purpose: str) -> str:
                 "speech_separation": "script_speech", "staging": "script_staging",
                 "scene_text": "script_writer", "story_outline": "script_planning",
                 "story_design": "script_planning", "plot_outline": "script_planning",
-                "chapter_plan": "script_planning",
+                "chapter_plan": "script_planning", "script-voices": "script_planning",
                 "supporting_character": "script_planning"}.get(purpose, purpose)
     if payload.get("workflow_policy") == "chapter_editor_v1":
         if purpose in {"initial-canon", "story-blueprint", "revise-blueprint",
@@ -97,7 +97,8 @@ def resolve_purpose_profile(config: dict, payload: dict, purpose: str) -> tuple[
     if script and category in {"script_planning", "script_handoff", "script_writer",
                                "script_speech", "script_staging"}:
         profile["reasoning_level"] = "none"
-        output_budget = {"script-allocation": 2048, "script-plan": 6144, "chapter_plan": 6144}.get(
+        output_budget = {"script-allocation": 2048, "script-plan": 6144, "chapter_plan": 6144,
+                         "script-voices": 2048}.get(
             purpose, 4096 if category == "script_handoff" else 8192)
         profile["max_tokens"] = min(output_budget,
                                     settings.get("max_output_tokens", 8192))

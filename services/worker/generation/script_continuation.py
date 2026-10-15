@@ -19,6 +19,7 @@ from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.continuity import narrative_hash
 
 from . import narrative, pipeline
+from . import script_voices as voices
 from .cancellation import GenerationCancelled, check_cancelled
 from .causal_runtime import digest
 from .context_budget import OutputTokenPolicy
@@ -1246,12 +1247,44 @@ class ScriptRun(DraftRun):
             ("最終章では、積み重ねた選択の結果として外的な課題と人物・関係の着地を描きます。"
              if number == self.manifest["approved_chapter_count"] else ""),
             planning_context, model, check, schema)
-        plan = project_plan(draft, self.options)
+        plan = self.cast_heard_voices(number, project_plan(draft, self.options), planning_context, known)
         used_ids = {cid for scene in plan.scenes for cid in scene.character_ids}
         main_ids = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
         self.progress_step(f"plan-{number:03d}", "script-plan", number, "completed", chapter_plan={
             "chapter_number": number, "scene_count": len(plan.scenes),
             "supporting_character_count": len(used_ids - main_ids - {"NARRATOR"})})
+        return plan
+
+    def cast_heard_voices(self, number, plan, context, known):
+        """Give every voice heard in the plan a speaker of its own (see script_voices)."""
+        names = {row["id"]: row["name"] for row in context["setting"]["characters"]}
+        names.update({row.id: row.name for row in plan.new_characters})
+
+        def check(value):
+            voices.unheard(value, plan)
+
+        answer = self.structured(f"voices-{number:03d}", voices.PURPOSE, number, voices.VOICES_INSTRUCTION,
+                                 voices.voices_context(plan, names), voices.ChapterVoices, check,
+                                 voices.voices_schema(plan, names))
+        taken = known | set(names) | {"NARRATOR"}
+        added = []
+        for index, (name, scene_ids) in enumerate(voices.unheard(answer, plan).items(), 1):
+            identifier = f"voice-{number}-{index}"
+            while identifier in taken:
+                identifier += "x"
+            taken.add(identifier)
+            person = self.structured(f"voice-character-{number:03d}-{index}", voices.PURPOSE, number,
+                                     voices.DEFINE_INSTRUCTION,
+                                     voices.define_context(context, plan, scene_ids, name, identifier),
+                                     voices.CharacterResult, None, voices.define_schema(identifier))
+            added.append((person, scene_ids))
+        if not added:
+            return plan
+        plan = voices.cast(plan, added)
+        narrative._validate_chapter_plan(plan, known | {row.id for row in plan.new_characters})
+        self.llm.trace.append({"type": "heard_voices_cast", "chapter": number, "characters": [
+            {"id": person.id, "name": person.name, "scenes": scene_ids,
+             "cast": person.id in {row.id for row in plan.new_characters}} for person, scene_ids in added]})
         return plan
 
     @property

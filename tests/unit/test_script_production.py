@@ -95,7 +95,7 @@ def test_three_separate_jobs_preserve_plot_sources_lineage_budgets_and_cache(app
         assert generate(request, work) == envelope  # uncertain upload retries do no inference
         request = following(request, envelope)
         previous = result
-    assert totals == [6, 10, 14] and len(calls) == 14
+    assert totals == [7, 12, 17] and len(calls) == 14  # Each plan is followed by a voices check.
     assert FIRST in prompt_text(calls[7]) and FIRST in prompt_text(calls[11])
     assert SECOND in prompt_text(calls[11])
     assert [call["purpose"] for call in calls].count("script-outline") == 1
@@ -292,8 +292,8 @@ def test_explicit_retry_replaces_rejected_legacy_plan_and_preserves_valid_work(a
     assert state["steps"]["outline"] == old["steps"]["outline"]
     assert state["steps"]["plan-001"]["attempts"][:2] == old["steps"]["plan-001"]["attempts"]
     assert state["steps"]["plan-001"]["retry_attempt_start"] == 2
-    assert state["request_ordinal"] == 6
-    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == 6 * 530
+    assert state["request_ordinal"] == 6 + len(control["voice_calls"])
+    assert read_json(tmp_path / "script/report.json")["metrics"]["charged_tokens"] == (6 + len(control["voice_calls"])) * 530
     assert all(path.read_bytes() == content for path, content in saved_files.items())
     assert (tmp_path / "script/experiment.json").read_bytes() == manifest
     assert (tmp_path / "job-request.json").read_bytes() == job_input

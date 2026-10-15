@@ -105,7 +105,7 @@ def test_legacy_third_chapter_context_failure_retries_32k_preserving_history(
     assert all(row["profile"]["context_size"] == 32768 for row in calls[-3:])
     assert calls[-3]["profile"]["model_id"] == model
     assert result["provenance"]["script_checkpoint"]["execution_settings_version"] == 1
-    assert read_json(tmp_path / "third/script/report.json")["metrics"]["charged_tokens"] == 14 * 530
+    assert read_json(tmp_path / "third/script/report.json")["metrics"]["charged_tokens"] == (14 + len(control["voice_calls"])) * 530
     assert generate(new_job, tmp_path / "third") == result
     assert len(calls) == 14
 
