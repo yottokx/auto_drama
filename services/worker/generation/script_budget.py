@@ -6,6 +6,8 @@ from pydantic import Field, model_validator
 
 from packages.contracts.script import Contract
 
+from .id_aliases import label_length as short_label_length
+
 
 class SceneSize(Contract):
     length_weight: int = Field(ge=1, le=10, strict=True)
@@ -39,7 +41,7 @@ def scene_output_budget(size: SceneSize, character_ids: list[str], policy: Scene
     spoken_lines = math.ceil(size.dialogue_characters / policy.characters_per_line)
     narrator_lines = math.ceil((size.body_characters - size.dialogue_characters)
                               / policy.characters_per_line)
-    label_length = max((len(cid) for cid in character_ids), default=0)
+    label_length = max((short_label_length(cid) for cid in character_ids), default=0)
     labels = (spoken_lines * (label_length + 3) + narrator_lines * len("NARRATOR: \n"))
     estimated = (size.body_characters * policy.body_tokens_per_character
                  + labels * policy.label_tokens_per_character + policy.fixed_tokens)

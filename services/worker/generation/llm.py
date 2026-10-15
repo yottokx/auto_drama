@@ -17,6 +17,7 @@ from .context_budget import (
     positive_integer,
     server_context_from_properties,
 )
+from .id_aliases import IdAliases
 from .processes import kill_owned_process, owned_process
 from .random_tools import TOOL_DEFINITIONS, RandomTools
 from .schemas import validate_schema
@@ -367,6 +368,9 @@ class LocalLLM:
             if number >= segment["from_request"]:
                 salt = segment["salt"]
         seed = (self.payload["seed"] + number + salt) % (2**31)
+        # The model sees short IDs; chat() maps its reply back before anything stores it.
+        aliases = IdAliases.for_request(messages, extra)
+        messages, extra = aliases.encode(messages), aliases.encode(extra)
         request = {"model": "m2-local", "messages": messages, "stream": False,
             "seed": seed, "temperature": self.profile["temperature"],
             "max_tokens": self.generation_tokens(), "top_p": self.profile.get("top_p", 0.95),
@@ -455,9 +459,13 @@ class LocalLLM:
                 raise
             generation_elapsed = time.monotonic() - generation_started
             check_cancelled()
+            aliases = IdAliases.for_request(messages, extra)
+            raw = {"raw_response": response, "id_aliases": aliases.backward} if aliases else {}
+            response = aliases.decode_response(response)
             cache = self.output / f"{self.requests:02d}-{stage}-{fingerprint[:16]}.json"
+            # "response" holds real IDs for every reader; the model's own words stay beside it.
             write_json(cache, {"request_sha256": fingerprint, "request": request,
-                               "runtime": self.runtime_identity(), "response": response,
+                               "runtime": self.runtime_identity(), "response": response, **raw,
                                "context_budget": budget,
                                "generation_elapsed_seconds": generation_elapsed})
         choices = response.get("choices", [])
