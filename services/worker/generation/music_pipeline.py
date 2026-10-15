@@ -247,9 +247,10 @@ def plan_music(payload: dict, llm) -> dict:
                 "scene": _scene_context(context, narrative, group[0]),
                 "continuity_group": [_scene_excerpt(context, narrative, scene, budget=budget) for scene in group],
                 "group_reason": [item.reason for item in decisions[index:end]]}
-            # Group excerpts carry all members. Avoid duplicating the complete
-            # first scene when a long chapter must fit the configured window.
-            material["scene"]["raw_text"] = prompts._clip_source_text(material["scene"]["raw_text"], 1600)
+            # Group excerpts carry every member's text, the first scene's included;
+            # a second copy under "scene" added length without changing the captions.
+            material["scene"].pop("raw_text", None)
+            material["scene"].pop("utterances", None)
             messages = [{"role": "system", "content": prompts.SYSTEM +
                 " Compose ONE coherent instrumental track for ALL supplied continuity_group members in order, "
                 "including their late turning points. Find their shared musical identity and appropriate development, "

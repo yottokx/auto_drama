@@ -94,6 +94,10 @@ def test_chapter_continuity_caption_contains_late_group_member_and_preserves_fro
     material = json.loads(llm.messages[1][1]["content"])
     assert [row["scene_id"] for row in material["continuity_group"]] == ["comic", "farewell"]
     assert "終盤で真相" in material["continuity_group"][1]["raw_text"]
+    # The first scene's text is sent once, inside the group, not again beside its plan.
+    assert material["continuity_group"][0]["raw_text"]
+    assert "raw_text" not in material["scene"] and "utterances" not in material["scene"]
+    assert material["scene"]["plan"] and material["scene"]["story_context"]
     assert result["scenes"][0]["transition"]["duration_ms"] == 500
     assert result["scenes"][0]["transition"]["music_fade_out_ms"] == 0
     assert result["scenes"][1]["transition"]["music_fade_out_ms"] == 0
