@@ -491,6 +491,14 @@ def separate_speech(llm: LocalLLM, context: str, plan: ScenePlan, raw: str,
             feedback = "\n元本文を変更せず分類だけを再試行します。前回の不備: " + str(error)
 
 
+def _staged_line(utterance: MappedUtterance) -> dict:
+    """A line for annotation; the spoken form is listed only where it differs from the shown one."""
+    value = utterance.model_dump()
+    if value["spoken_text"] == value["display_text"]:
+        del value["spoken_text"]
+    return value
+
+
 def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[MappedUtterance]):
     """Retry annotations against immutable source, in small output-safe batches."""
     emotions, directions = [], []
@@ -523,7 +531,7 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
             try:
                 staging = _structured(llm, "staging", "資料: " + context
                     + "\n計画: " + _data(plan) + "\n確定した本文とID: "
-                    + _data([item.model_dump() for item in batch])
+                    + _data([_staged_line(item) for item in batch])
                     + "\n本文を再入力・修正せず、各utterance_idについて内心inner_emotion、"
                     "声に出すvoice_emotion、声の出し方deliveryを別々に設定します。"
                     "地の文の声はneutral、deliveryが不要なら空文字。emotionsは提示した発話を"

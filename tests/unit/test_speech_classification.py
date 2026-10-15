@@ -284,8 +284,10 @@ def test_full_generation_normalizes_before_staging_and_retains_delivery_metadata
     ]
     staging_prompt = llm.calls[5][0][1][1]["content"]
     staged = json.loads(staging_prompt.split("\n確定した本文とID: ", 1)[1].split("\n本文を", 1)[0])
-    assert [item["spoken_text"] for item in staged if item["speaker_id"]] == [
+    assert [item["display_text"] for item in staged if item["speaker_id"]] == [
         "おかえり。", "ここにおいで。", "ワン！",
     ]
+    # The spoken form is listed only where it differs from the shown text.
+    assert not any("spoken_text" in item for item in staged)
     assert '"s1-u1": "穏やかに"' in staging_prompt
     assert next(item for item in llm.trace if item["type"] == "scene_text")["raw_text"] == raw
