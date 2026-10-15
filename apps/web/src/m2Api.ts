@@ -59,7 +59,10 @@ export function useM2Api() {
     // A poll sent before a mutation may return late. Never replace a newer revision.
     if (detailRef.current?.project.id === next.project.id && detailRef.current.draft.revision > next.draft.revision) return
     detailRef.current = next; setDetail(next)
-    setProjects(current => [next.project, ...current.filter(project => project.id !== next.project.id)])
+    // The library order comes from the server; polling the selected work must not reorder it.
+    setProjects(current => current.some(project => project.id === next.project.id)
+      ? current.map(project => project.id === next.project.id ? next.project : project)
+      : [next.project, ...current])
   }, [])
   const select = useCallback((id: string | null) => {
     generation.current += 1; selectedRef.current = id; detailRef.current = null
