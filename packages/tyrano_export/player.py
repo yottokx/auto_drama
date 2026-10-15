@@ -45,6 +45,7 @@ _PLAYER_ASSETS = {
     "data/others/auto_drama_player.js": (_DIRECTORY / "player.js").read_text("utf-8").encode(),
     "data/others/auto_drama_music.js": (_DIRECTORY / "music.js").read_text("utf-8").encode(),
     "data/others/auto_drama_transitions.js": (_DIRECTORY / "transitions.js").read_text("utf-8").encode(),
+    "data/others/auto_drama_voice_effects.js": (_DIRECTORY / "voice_effects.js").read_text("utf-8").encode(),
     "data/others/auto_drama_player.css": (_DIRECTORY / "player.css").read_text("utf-8").encode(),
 }
 
@@ -115,6 +116,7 @@ def player_html() -> bytes:
 <link rel="stylesheet" href="./data/others/auto_drama_player.css?v=''' + _REVISION + '''">
 <script defer src="./data/others/auto_drama_music.js?v=''' + _REVISION + '''"></script>
 <script defer src="./data/others/auto_drama_transitions.js?v=''' + _REVISION + '''"></script>
+<script defer src="./data/others/auto_drama_voice_effects.js?v=''' + _REVISION + '''"></script>
 <script defer src="./data/others/auto_drama_player.js?v=''' + _REVISION + '''"></script></head>
 <body>
 <div id="tyrano_base" class="tyrano_base" style="overflow:hidden"></div>

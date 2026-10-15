@@ -11,7 +11,7 @@ from .expressions import Expression
 from .m2 import CharacterId, CharacterResult
 from .m4 import ContinuityReview, StateHash, StoryState
 from .outfits import SceneOutfit
-from .script import Contract, Identifier, PortraitBounds
+from .script import Contract, FaceBox, Identifier, PortraitBounds, RemoteVoice
 from .story_workflow import (
     ChapterExtraction,
     ChapterIntent,
@@ -25,7 +25,8 @@ from .story_workflow import (
 Text = Annotated[str, StringConstraints(min_length=1, max_length=30_000)]
 Emotion = Literal["neutral", "happy", "sad", "angry", "surprised", "afraid", "calm"]
 M3_KINDS = ("m3_plan", "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone",
-            "m3_music_plan", "m3_music", "m3_event_cg_budget", "m3_event_cg_plan", "m3_event_cg")
+            "m3_music_plan", "m3_music", "m3_event_cg_budget", "m3_event_cg_plan", "m3_event_cg",
+            "m3_portrait_face")
 EMOTION_TAGS = {
     "neutral": "", "happy": "😊", "sad": "😢", "angry": "😠",
     "surprised": "😮", "afraid": "😟", "calm": "",
@@ -153,6 +154,8 @@ class MappedUtterance(Contract):
     inner_emotion: Text = "未指定"
     voice_emotion: Emotion = "neutral"
     delivery: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None
+    # Set by staging for a line whose speaker is heard but not there; absent from saved older lines.
+    remote: SkipJsonSchema[RemoteVoice | None] = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class NarrativeDirection(Contract):
@@ -273,7 +276,23 @@ class NarrativeResult(Contract):
 class GenerationEnvelope(Contract):
     schema_version: Literal[1]
     kind: Literal["m3_plan", "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone",
-                  "m3_music_plan", "m3_music", "m3_event_cg_budget", "m3_event_cg_plan", "m3_event_cg"]
+                  "m3_music_plan", "m3_music", "m3_event_cg_budget", "m3_event_cg_plan", "m3_event_cg",
+                  "m3_portrait_face"]
     result: dict
     provenance: dict
     trace: list = Field(max_length=10_000)
+
+
+class PortraitFace(Contract):
+    """Where the face is in one portrait, for the frame of a remote voice; none when none was found."""
+
+    portrait_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    width: Annotated[int, Field(strict=True, ge=1, le=100_000)]
+    height: Annotated[int, Field(strict=True, ge=1, le=100_000)]
+    face: FaceBox | None
+
+    @model_validator(mode="after")
+    def inside_the_picture(self) -> PortraitFace:
+        if self.face is not None and (self.face.right > self.width or self.face.bottom > self.height):
+            raise ValueError("the face lies outside the portrait")
+        return self

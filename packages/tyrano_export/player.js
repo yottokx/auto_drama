@@ -10,6 +10,8 @@
   const $ = id => document.getElementById(id);
 
   let k = null, script = null, states = null, stages = null, context = livePath ? null : {mode: "static"};
+  // The frame of each remote voice: whose bust, cut from which picture (auto_drama_remote.json).
+  let remoteFrames = {};
   let music = null, transitions = null, stageAdapter = null, bound = false, failed = false;
   let lines = [], lineIndex = new Map(), characters = new Map(), assets = new Map(), cues = new Map(), scenes = new Map();
   // gen invalidates every pending callback when a jump replaces the current position.
@@ -29,6 +31,7 @@
   document.body.insertAdjacentHTML("beforeend", `
 <div id="adn-shield"><div id="adn">
   <section id="adn-win" aria-live="polite">
+    <div id="adn-remote" aria-hidden="true" hidden><img alt=""></div>
     <div id="adn-col">
       <div id="adn-namerow"><span id="adn-name"></span><span id="adn-voice" aria-hidden="true"><i></i><i></i><i></i></span><span id="adn-rule"></span><span id="adn-pages"></span></div>
       <div id="adn-body"></div>
@@ -156,6 +159,33 @@
     return pages.length ? pages : [text];
   }
 
+  /* ── その場にいない声: 本文の左に枠付きの胸像。舞台に同じ人物がいれば暗くする ── */
+  // The frame sits from the name's top to the last text line; the text column starts after it.
+  const REMOTE_LEFT = 44, REMOTE_GAP = 22, COLUMN_RIGHT = 900;
+  // What a line's voice goes through; a remembered one is echoed, a message is not treated.
+  const voiceEffect = line => line?.remote ? (line.remote.source === "recollection" ? "recollection" : line.remote.channel) : null;
+  function showRemote(line) {
+    const frame = line?.remote ? remoteFrames[line.id] : null, box = $("adn-remote"), column = $("adn-col");
+    k?.layer.getLayer("0", "fore").get(0)?.querySelectorAll(".adn-heard").forEach(item => item.classList.remove("adn-heard"));
+    if (!frame) {
+      box.hidden = true;
+      column.style.removeProperty("--col-l"); column.style.removeProperty("--col-w");
+      return;
+    }
+    const picture = box.firstElementChild, src = "./data/fgimage/" + encodeURIComponent(frame.storage);
+    if (picture.getAttribute("src") !== src) picture.src = src;
+    box.hidden = false;
+    const [x, y, , height] = frame.crop, scale = box.offsetHeight / height;
+    Object.assign(picture.style, {width: frame.width * scale + "px", left: -x * scale + "px", top: -y * scale + "px"});
+    const left = REMOTE_LEFT + box.offsetWidth + REMOTE_GAP;
+    column.style.setProperty("--col-l", left + "px");
+    column.style.setProperty("--col-w", COLUMN_RIGHT - left + "px");
+    // The same person on stage is listening, not speaking: the voice comes from elsewhere.
+    if (frame.on_stage) {
+      k?.layer.getLayer("0", "fore").get(0)?.querySelector(".tyrano_chara.ad_" + frame.speaker)?.classList.add("adn-heard");
+    }
+  }
+
   /* ── 音声 ── */
   const soundUrl = id => {
     const asset = assets.get(id);
@@ -163,12 +193,13 @@
   };
   // Voices play through the engine's bundled Howler: the recorder captures Howler's
   // master gain, and BGM keeps its own independent gain in music.js.
-  function sound(url, done) {
+  function sound(url, done, effect = null) {
     let finished = false;
     const finish = () => { if (finished) return; finished = true; howl.unload(); done(); };
     const howl = new window.Howl({src: [url], volume: cfg.voice / 100,
       onend: finish, onloaderror: finish, onplayerror: finish});
     howl.play();
+    if (effect) window.AutoDramaVoiceEffects?.route(howl, effect);
     return {stop() { if (finished) return; finished = true; howl.stop(); howl.unload(); },
       volume: value => howl.volume(value), duration: () => howl.duration(),
       position: () => Number(howl.seek()) || 0};
@@ -187,7 +218,7 @@
       voice = null; voiceOn = false; $("adn-voice").classList.remove("on");
       // The last page has waited for the voice; anything earlier keeps its own pace.
       if (tagState === "say" && lastPage() && cur.typed >= cur.pages[cur.page].length) completeSay(false);
-    });
+    }, voiceEffect(line));
     voice = playing; voiceOn = true; $("adn-voice").classList.add("on");
   }
   // Decode the next line ahead of time. Howler shares decoded audio by URL, so the
@@ -268,6 +299,7 @@
   function relayout() {
     if (!["say", "after", "wait"].includes(tagState) || cur.index < 0) return;
     const waiting = cur.phase === "wait" || tagState !== "say";
+    showRemote(lines[cur.index]); // The frame grows with the text size, and the column with it.
     cur.pages = paginate(lines[cur.index].display_text);
     showPage(tagState === "say" ? Math.min(cur.page, cur.pages.length - 1) : cur.pages.length - 1, {complete: true});
     if (waiting) { cur.phase = "wait"; showMarker(); } else if (lastPage()) cur.phase = "speaking"; else toWait();
@@ -328,7 +360,7 @@
   define("ad_gate", {}, () => { tagState = "gate"; gate = true; });
   define("ad_line", {id: ""}, pm => {
     tagState = "line"; cur.index = lineIndex.get(pm.id); cur.phase = "idle"; cur.advance = false;
-    clearText(); stopVoice(); remember("auto", cur.index, true);
+    clearText(); stopVoice(); showRemote(null); remember("auto", cur.index, true);
     next();
   });
   define("ad_transition", {cue: ""}, pm => {
@@ -359,6 +391,7 @@
     tagState = "say"; cur.index = index; cur.advance = false; pendingComplete = false;
     ui.classList.remove("away");
     $("adn-name").textContent = characters.get(line.speaker_id)?.name || "";
+    showRemote(line); // Before paging: the frame narrows the text column.
     cur.pages = paginate(line.display_text);
     if (k.stat.is_skip) {
       showPage(cur.pages.length - 1, {complete: true});
@@ -379,7 +412,7 @@
   });
   define("ad_end", {}, () => {
     tagState = "end"; ended = true;
-    setAuto(false); setSkip(false); clearText(); stopVoice();
+    setAuto(false); setSkip(false); clearText(); stopVoice(); showRemote(null);
     remember("auto", lines.length - 1, true);
     $("adn-end").hidden = false; $("adn-next").hidden = true; nextBuild = null; pollAt = 0;
     $("adn-end-note").textContent = context.mode === "live" ? "次の章の公開状況を確認しています。" :
@@ -458,7 +491,7 @@
           const playing = play.dataset.on; stopLogVoice();
           if (playing) return;
           play.dataset.on = "1"; play.textContent = "止める";
-          const replay = sound(url, () => { if (logVoice === replay) stopLogVoice(); });
+          const replay = sound(url, () => { if (logVoice === replay) stopLogVoice(); }, voiceEffect(line));
           logVoice = replay;
         });
         acts.append(play);
@@ -682,6 +715,10 @@
   Promise.all([readJson("./script.json"),
     readJson("./data/others/auto_drama_states.json", fresh)]).then(async ([value, entries]) => {
     if (needsStages(value)) stages = await readJson("./data/others/auto_drama_stages.json", fresh);
+    // Without its frames a remote voice is still heard, treated, beside the full-width text.
+    if (value.utterances.some(line => line.remote)) {
+      remoteFrames = (await readJson("./data/others/auto_drama_remote.json", fresh).catch(() => ({}))).lines || {};
+    }
     lines = value.utterances; lineIndex = new Map(lines.map((line, index) => [line.id, index]));
     characters = new Map(value.characters.map(item => [item.id, item]));
     assets = new Map(value.assets.map(item => [item.id, item]));

@@ -24,7 +24,13 @@ from services.worker.process_lock import WorkerAlreadyRunning, worker_process_lo
 logger = logging.getLogger(__name__)
 
 
+# Jobs that load no model leave every resident one where it is.
+MODEL_FREE_KINDS = frozenset({"m3_portrait_face"})
+
+
 def prepare_media_job(kind: str):
+    if kind in MODEL_FREE_KINDS:
+        return
     prepare_job(kind)
     image_session.prepare_job(kind)
     llm_session.prepare_job(kind)

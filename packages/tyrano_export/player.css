@@ -64,6 +64,16 @@ html, body { margin: 0; background: #000; }
 #adn-body .rest { visibility: hidden; }
 #adn-measure { position: absolute; left: 0; top: 0; width: var(--col-w); visibility: hidden; pointer-events: none; }
 
+/* その場にいない声の枠: 名前の上端から本文の最終行まで。ウィンドウ上端のぼかしには出ない */
+#adn-remote { position: absolute; left: 44px; top: 138px; z-index: 1; overflow: hidden;
+  height: calc(30px + var(--fs) * var(--lh) * var(--lines)); aspect-ratio: 3 / 4;
+  border: 1px solid rgba(220, 203, 162, .55); border-radius: 2px;
+  background: radial-gradient(120% 90% at 50% 30%, rgba(220, 203, 162, .16), rgba(5, 7, 10, .72) 70%);
+  box-shadow: 0 0 0 4px rgba(5, 7, 10, .45), 0 6px 18px rgba(0, 0, 0, .5); }
+#adn-remote img { position: absolute; max-width: none; }
+/* 舞台の同じ人物は聞いているだけ: その声はよそから届いている */
+.tyrano_chara.adn-heard { filter: brightness(.6) !important; }
+
 /* 待機マーク: 続きのページがあるときは山形、発話の終わりは菱形 */
 #adn .mark { display: inline-block; margin-left: .45em; vertical-align: .08em; }
 #adn .mark.more { width: .36em; height: .36em; border-right: 1.5px solid var(--paper); border-bottom: 1.5px solid var(--paper);

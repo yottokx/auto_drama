@@ -80,3 +80,50 @@ def composite(base: bytes, edited: bytes, box: tuple[int, int, int, int]) -> byt
     stream = io.BytesIO()
     result.save(stream, "PNG")
     return stream.getvalue()
+
+
+# A production step: where the face is in the portrait of someone heard as a remote voice. It
+# needs no model kept in memory, so it runs between any two jobs without unloading one.
+KIND = "m3_portrait_face"
+DETECTOR_ID = "anime-face-detection"
+
+
+def ready() -> bool:
+    """Whether the pinned detector weights are on this machine."""
+    try:
+        manifest = json.loads((pipeline.ROOT / "config/m0-models-image.json").read_text(encoding="utf-8-sig"))
+        entry = next(row for row in manifest["models"] if row["id"] == DETECTOR_ID)
+        item = entry["files"][0]
+        path = pipeline.ROOT / entry["local_dir"] / item["path"]
+        return path.is_file() and path.stat().st_size == item["size"]
+    except (OSError, ValueError, KeyError, StopIteration):
+        return False
+
+
+def generate_job(job: dict, work_dir: Path) -> bytes:
+    """Find the face in the portrait the coordinator named; the client fetched it by hash."""
+    from PIL import Image
+
+    from packages.contracts.m3 import GenerationEnvelope, PortraitFace
+
+    payload = job["payload"]
+    portrait = Path(work_dir) / "portrait.png"
+    expected = payload["portrait"]["sha256"]
+    data = portrait.read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError("The portrait differs from the one the job names.")
+    with Image.open(io.BytesIO(data)) as image:
+        width, height = image.size
+    try:
+        left, top, right, bottom = detect(portrait, pipeline.load_config())
+        left, top = max(0, min(left, width - 1)), max(0, min(top, height - 1))
+        right, bottom = max(left + 1, min(right, width)), max(top + 1, min(bottom, height))
+        face = {"left": left, "top": top, "right": right, "bottom": bottom}
+    except FaceNotFound:
+        # The frame is then cut from the top of the silhouette.
+        face = None
+    result = PortraitFace(portrait_sha256=expected, width=width, height=height, face=face)
+    envelope = GenerationEnvelope(schema_version=1, kind=KIND, result=result.model_dump(mode="json"),
+                                  provenance={"model": DETECTOR_ID, "detector_version": DETECTOR_VERSION},
+                                  trace=[])
+    return pipeline._bundle(envelope.model_dump(), {})

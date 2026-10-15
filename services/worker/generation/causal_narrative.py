@@ -657,7 +657,8 @@ def _write_scene(run, setting, memory, proposal, names, cast):
     utterances = parse_scene_text(raw, plan.id, ids)
     staging = legacy._staging(run.llm, encoded(local_context) + "\n声の指示: " + encoded(hints), plan, utterances)
     utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
-        "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None})
+        "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None,
+            "remote": legacy.remote_voice(u, a)})
         for u, a in zip(utterances, staging.emotions, strict=True)]
     review = legacy._review_scene(run.llm, encoded(local_context), plan, utterances)
     return NarrativeScene(id=plan.id, plan=plan, raw_text=raw, utterances=utterances,

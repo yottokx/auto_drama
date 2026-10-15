@@ -232,6 +232,17 @@
           "maxItems": 300,
           "title": "Expressions",
           "type": "array"
+        },
+        "face": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FaceBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -327,6 +338,17 @@
           "minimum": 0.1,
           "title": "Scale",
           "type": "number"
+        },
+        "face": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FaceBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -604,6 +626,44 @@
         "expression"
       ],
       "title": "ExpressionDirection",
+      "type": "object"
+    },
+    "FaceBox": {
+      "additionalProperties": false,
+      "description": "Where the face is in a look's own picture, in its pixels, as the face detector found it.",
+      "properties": {
+        "left": {
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Left",
+          "type": "integer"
+        },
+        "top": {
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Top",
+          "type": "integer"
+        },
+        "right": {
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Right",
+          "type": "integer"
+        },
+        "bottom": {
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Bottom",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "left",
+        "top",
+        "right",
+        "bottom"
+      ],
+      "title": "FaceBox",
       "type": "object"
     },
     "FocusDirection": {
@@ -1037,6 +1097,64 @@
       "title": "PositionDirection",
       "type": "object"
     },
+    "RemoteVoice": {
+      "additionalProperties": false,
+      "description": "Its speaker is shown in a frame beside the text, not on stage, and the voice is treated.",
+      "properties": {
+        "source": {
+          "enum": [
+            "remote",
+            "recollection"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "enum": [
+                "phone",
+                "voicemail",
+                "radio",
+                "speaker",
+                "telepathy",
+                "message"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channel"
+        },
+        "expression": {
+          "default": "neutral",
+          "enum": [
+            "neutral",
+            "smile",
+            "laugh",
+            "angry",
+            "sad",
+            "cry",
+            "surprised",
+            "confused",
+            "anxious",
+            "serious",
+            "fear",
+            "shy"
+          ],
+          "title": "Expression",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "RemoteVoice",
+      "type": "object"
+    },
     "SceneTransitionCue": {
       "additionalProperties": false,
       "properties": {
@@ -1156,6 +1274,17 @@
           ],
           "default": null,
           "title": "Audio Asset Id"
+        },
+        "remote": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RemoteVoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

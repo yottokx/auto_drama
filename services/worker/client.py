@@ -235,6 +235,9 @@ class WorkerClient:
                 heartbeat.check()
             if job["kind"] == "m3_event_cg":
                 self._prepare_cg_references(job, directory, heartbeat)
+            if job["kind"] == "m3_portrait_face":
+                self._prepare_outfit_reference(job, directory, "portrait", "portrait.png")
+                heartbeat.check()
             if job["kind"] == "m2_outfit_image":
                 if job["payload"].get("reference_image") is not None or not job["payload"].get("material_sheet"):
                     self._prepare_outfit_reference(job, directory)

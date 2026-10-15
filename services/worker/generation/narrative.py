@@ -32,7 +32,7 @@ from packages.contracts.m3 import (
     SceneReview,
     StoryOutline,
 )
-from packages.contracts.script import Contract, Identifier
+from packages.contracts.script import Contract, Identifier, RemoteVoice
 from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.speech import parenthetical_candidates, separate_stage_directions
 from packages.narrative.staging import normalize_directions
@@ -83,6 +83,11 @@ class EmotionAnnotation(Contract):
     # The face of the person speaking the line; an answer saved before expressions existed has none.
     expression: Expression = Field(default=DEFAULT_EXPRESSION,
                                    exclude_if=lambda value: value == DEFAULT_EXPRESSION)
+    # Where the voice comes from and what it comes through; an older saved answer has neither.
+    voice_source: Literal["present", "remote", "recollection"] = Field(
+        default="present", exclude_if=lambda value: value == "present")
+    voice_channel: Literal["none", "phone", "voicemail", "radio", "speaker", "telepathy", "message"] = Field(
+        default="none", exclude_if=lambda value: value == "none")
 
 
 class ExpressionAnnotation(Contract):
@@ -499,6 +504,37 @@ def _staged_line(utterance: MappedUtterance) -> dict:
     return value
 
 
+VOICE_SOURCE_INSTRUCTION = (
+    "各emotionsに、その発話の声がどこから聞こえるかをvoice_sourceで付けます。"
+    "present: 話者がその場にいて直接話す声。姿が見えていない画面外・扉越し・背後からの声、"
+    "心の声、手紙やメッセージや留守電の文面を自分の口で読む・引用する・呟く場合もpresent。"
+    "remote: 話者がその場におらず、電話・通信機・スピーカー・画面・録音や録画の再生・念話・"
+    "文字のメッセージを通して届く声。"
+    "recollection: いま話されている声ではなく、人物が思い出している過去の言葉。"
+    "地の文（話者のない行）はpresent。"
+    "voice_channelはremoteのときだけ次から選び、それ以外はnone。"
+    "phone=電話の通話、voicemail=留守電や録音・録画の再生、radio=無線・通信機・インカム、"
+    "speaker=館内放送・インターホン・モニターやホログラムなど映像や拡声器越しの通信、"
+    "telepathy=機器を介さず頭に直接届く声、message=文字のメッセージやチャットの文面。"
+    "計画の登場人物でも、その場にいるとは限りません。本文の状況から判断します。"
+)
+
+
+def _voice_sources_agree(emotions) -> None:
+    for item in emotions:
+        if (item.voice_source == "remote") != (item.voice_channel != "none"):
+            raise ValueError("A remote voice names its channel; any other voice has channel none.")
+
+
+def remote_voice(utterance: MappedUtterance, annotation) -> RemoteVoice | None:
+    """A speaker's line heard without them there; narration is always spoken in the scene."""
+    if utterance.speaker_id is None or annotation.voice_source == "present":
+        return None
+    return RemoteVoice(source=annotation.voice_source,
+                       channel=annotation.voice_channel if annotation.voice_source == "remote" else None,
+                       expression=annotation.expression)
+
+
 def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[MappedUtterance]):
     """Retry annotations against immutable source, in small output-safe batches."""
     emotions, directions = [], []
@@ -507,8 +543,9 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
         schema = Staging.model_json_schema()
         emotion = schema["$defs"]["EmotionAnnotation"]
         emotion["properties"]["utterance_id"]["enum"] = [u.id for u in batch]
-        # The model must state the face of every line; only a saved older answer may lack it.
-        emotion["required"] = [*emotion["required"], "expression"]
+        # The model must state the face and the voice's source of every line; only a saved
+        # older answer may lack them.
+        emotion["required"] = [*emotion["required"], "expression", "voice_source", "voice_channel"]
         # Exactly one annotation per line, so neither an empty nor a runaway list can be emitted.
         schema["properties"]["emotions"].update(minItems=len(batch), maxItems=len(batch))
         expression = schema["$defs"]["ExpressionAnnotation"]["properties"]
@@ -545,9 +582,11 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
                     "話者以外の登場人物の表情がその行で変わるとき（聞き手の反応、地の文に書かれた"
                     "表情の変化）だけ、directionsにkind=expressionでその人物のcharacter_idと表情を"
                     "追加します。表情は次に変わるまで続くので、変わらない行には付けません。"
+                    + VOICE_SOURCE_INSTRUCTION
                     + feedback, Staging, schema=schema)
                 if [e.utterance_id for e in staging.emotions] != [u.id for u in batch]:
                     raise ValueError("Emotion annotations must preserve every source ID in order.")
+                _voice_sources_agree(staging.emotions)
                 _directions(plan, batch, staging)
                 emotions.extend(staging.emotions)
                 directions.extend(staging.directions)
@@ -562,17 +601,46 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
     return SceneStaging(emotions=emotions, directions=directions)
 
 
+# How long someone heard first, through a phone or the like, takes to come on in person.
+ARRIVAL_MS = 300
+
+
+def _entrances(plan: ScenePlan, utterances: list[MappedUtterance], heard: set[str]) -> dict[str, str]:
+    """Where each person comes on stage; anyone only heard remotely or remembered never does.
+
+    Everyone is there from the scene's start, except a person whose first lines are heard
+    without them there: they come on at their first line spoken in person.
+    """
+    entrances = {}
+    for character_id in plan.character_ids:
+        spoken = [item for item in utterances if item.speaker_id == character_id]
+        if not spoken or spoken[0].id not in heard:
+            entrances[character_id] = utterances[0].id
+            continue
+        arrival = next((item for item in spoken if item.id not in heard), None)
+        if arrival is not None:
+            entrances[character_id] = arrival.id
+    return entrances
+
+
 def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Staging | SceneStaging,
                 *, trace: list[dict] | None = None):
     directions = []
-    positions = ("left", "right", "center") if len(plan.character_ids) > 1 else ("center",)
-    for index, character_id in enumerate(plan.character_ids):
+    sources = {row.utterance_id: row.voice_source for row in staging.emotions}
+    heard = {item.id for item in utterances
+             if item.speaker_id is not None and sources.get(item.id, "present") != "present"}
+    entrances = _entrances(plan, utterances, heard)
+    present = [character_id for character_id in plan.character_ids if character_id in entrances]
+    positions = ("left", "right", "center") if len(present) > 1 else ("center",)
+    for index, character_id in enumerate(present):
+        late = entrances[character_id] != utterances[0].id
         directions.append(NarrativeDirection(
-            id=f"{plan.id}-d{len(directions) + 1}", utterance_id=utterances[0].id,
+            id=f"{plan.id}-d{len(directions) + 1}", utterance_id=entrances[character_id],
             kind="enter", timing="before", character_id=character_id,
-            position=positions[index % len(positions)], duration_ms=0,
+            position=positions[index % len(positions)], duration_ms=ARRIVAL_MS if late else 0,
         ))
     known = {item.id for item in utterances}
+    speakers = {item.id: item.speaker_id for item in utterances}
     listed: dict[str, dict[str, str]] = {}
     for direction in staging.directions:
         if direction.utterance_id not in known:
@@ -585,6 +653,10 @@ def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Sta
             continue
         if direction.kind in {"pause", "blackout"} and direction.duration_ms <= 0:
             raise ValueError("Pause/blackout staging requires a positive duration.")
+        if (direction.kind == "focus" and direction.utterance_id in heard
+                and direction.character_id == speakers[direction.utterance_id]):
+            # A voice from elsewhere does not light up its speaker, even one standing on stage.
+            continue
         directions.append(NarrativeDirection(
             id=f"{plan.id}-d{len(directions) + 1}",
             utterance_id=direction.utterance_id, kind=direction.kind, timing=direction.timing,
@@ -592,8 +664,10 @@ def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Sta
             position=None, duration_ms=direction.duration_ms,
         ))
     faces = {row.utterance_id: row.expression for row in staging.emotions}
+    # A remote line's face belongs to its frame; the stage portrait of the same person keeps its own.
     for utterance_id, character_id, expression in expression_changes(
-            [(item.id, item.speaker_id, faces.get(item.id, DEFAULT_EXPRESSION)) for item in utterances], listed):
+            [(item.id, None if item.id in heard else item.speaker_id, faces.get(item.id, DEFAULT_EXPRESSION))
+             for item in utterances], listed):
         directions.append(NarrativeDirection(
             id=f"{plan.id}-d{len(directions) + 1}", utterance_id=utterance_id, kind="expression",
             timing="before", character_id=character_id, position=None, duration_ms=EXPRESSION_FADE_MS,
@@ -930,7 +1004,8 @@ def generate_narrative(payload: dict, llm: LocalLLM) -> dict:
                                + _data(delivery_hints), plan, utterances)
             utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
                 "voice_emotion": a.voice_emotion,
-                "delivery": delivery_hints.get(u.id) or a.delivery or None})
+                "delivery": delivery_hints.get(u.id) or a.delivery or None,
+                "remote": remote_voice(u, a)})
                 for u, a in zip(utterances, staging.emotions, strict=True)]
             # Only content review can ask the writer to revise text. Formatting or
             # mapping failures above never silently rewrite an accepted source.

@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from .expressions import Expression
+from .expressions import DEFAULT_EXPRESSION, Expression
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Text = Annotated[str, StringConstraints(min_length=1, max_length=100_000)]
@@ -85,6 +85,46 @@ class PortraitBounds(Contract):
         return self
 
 
+PixelCoordinate = Annotated[int, Field(strict=True, ge=0, le=100_000)]
+
+
+class FaceBox(Contract):
+    """Where the face is in a look's own picture, in its pixels, as the face detector found it."""
+
+    left: PixelCoordinate
+    top: PixelCoordinate
+    right: PixelCoordinate
+    bottom: PixelCoordinate
+
+    @model_validator(mode="after")
+    def ordered(self) -> Self:
+        if self.right <= self.left or self.bottom <= self.top:
+            raise ValueError("a face box must be ordered and not empty")
+        return self
+
+
+# A line whose speaker is not there in person: heard through something, or remembered.
+VoiceSource = Literal["remote", "recollection"]
+VoiceChannel = Literal["phone", "voicemail", "radio", "speaker", "telepathy", "message"]
+
+
+class RemoteVoice(Contract):
+    """Its speaker is shown in a frame beside the text, not on stage, and the voice is treated."""
+
+    source: VoiceSource
+    # What a remote voice comes through; a remembered one comes through nothing.
+    channel: VoiceChannel | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The face in the frame. A speaker who is also on stage keeps the stage face.
+    expression: Expression = Field(default=DEFAULT_EXPRESSION,
+                                   exclude_if=lambda value: value == DEFAULT_EXPRESSION)
+
+    @model_validator(mode="after")
+    def channel_matches_source(self) -> Self:
+        if (self.source == "remote") != (self.channel is not None):
+            raise ValueError("a remote voice names its channel; a remembered one has none")
+        return self
+
+
 def portrait_key(character_id: str, outfit_id: str | None = None) -> str:
     """Name one look of a character; the base portrait keeps the character's own ID."""
     return character_id if outfit_id in (None, "default") else f"{character_id}--{outfit_id}"
@@ -99,6 +139,7 @@ class CharacterOutfit(Contract):
     body_bounds: PortraitBounds | None = Field(default=None, exclude_if=lambda value: value is None)
     offset_y: DisplayOffset = Field(default=0, exclude_if=lambda value: value == 0)
     scale: DisplayScale = Field(default=1, exclude_if=lambda value: value == 1)
+    face: FaceBox | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CharacterExpression(Contract):
@@ -125,6 +166,8 @@ class Character(Contract):
     # An expression picture shares its look's place on the stage: only the face differs.
     expressions: list[CharacterExpression] = Field(default_factory=list, max_length=300,
                                                    exclude_if=lambda value: not value)
+    # Known only for portraits of people heard as remote voices; an expression shares its look's.
+    face: FaceBox | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class PortraitTransform(Contract):
@@ -163,6 +206,7 @@ class Utterance(Contract):
     voice_emotion: Annotated[str, StringConstraints(min_length=1, max_length=80)] = "neutral"
     delivery: Annotated[str, StringConstraints(min_length=1, max_length=200)] | None = None
     audio_asset_id: Identifier | None = None
+    remote: RemoteVoice | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class DirectionBase(Contract):
@@ -372,6 +416,8 @@ class Script(Contract):
         for utterance in self.utterances:
             if utterance.speaker_id is not None and utterance.speaker_id not in characters:
                 raise ValueError(f"unknown speaker: {utterance.speaker_id}")
+            if utterance.remote is not None and utterance.speaker_id is None:
+                raise ValueError("only a speaker's line can be a remote voice")
             asset(utterance.audio_asset_id, "audio")
         music_anchors = [value.utterance_id for value in self.music_cues]
         if len(music_anchors) != len(set(music_anchors)):

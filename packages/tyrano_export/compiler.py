@@ -12,6 +12,7 @@ from packages.contracts import Script
 from packages.contracts.script import portrait_key
 
 from .player import player_files
+from .portrait import _silhouette
 from .presentation import BACKGROUND, PORTRAIT_Z_INDEX, script_portrait_layouts
 
 # Entering, leaving and changing an event CG: the previous picture fades over the next one.
@@ -301,7 +302,9 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
             lines.append(f'[ad_music cue="{music_by_anchor[utterance.id].id}"]')
         lines.extend(direction_lines(utterance.id, "before"))
         character = characters.get(utterance.speaker_id)
-        lines.append(f'[chara_ptext name="ad_{character.id}"]' if character and character.image_asset_id
+        # A voice from elsewhere lights up no one on stage; the player dims its speaker if present.
+        lines.append(f'[chara_ptext name="ad_{character.id}"]'
+                     if character and character.image_asset_id and utterance.remote is None
                      else '[chara_ptext name=""]')
         lines.extend(direction_lines(utterance.id, "start"))
         lines.append(f'[ad_say id="{utterance.id}"]')
@@ -354,6 +357,74 @@ def entry_states(script: Script, images: dict[str, bytes]) -> dict:
     return {"schema_version": 1, "entries": entries}
 
 
+# The frame of a remote voice shows the speaker from the shoulders up, 3:4: from 0.45 face heights
+# above the face to one below the chin. Without a known face, the top of the silhouette is used.
+BUST_ABOVE, BUST_BELOW, BUST_ASPECT = 0.45, 1.0, 3 / 4
+SILHOUETTE_BUST_WIDTH = 0.55
+
+
+def _bust(face, image: bytes) -> list[int]:
+    if face is not None:
+        face_height = face.bottom - face.top
+        top = face.top - BUST_ABOVE * face_height
+        crop_height = face_height * (1 + BUST_ABOVE + BUST_BELOW)
+        center = (face.left + face.right) / 2
+    else:
+        subject = _silhouette(image, "auto")
+        crop_height = subject.visible_width * SILHOUETTE_BUST_WIDTH / BUST_ASPECT
+        top = subject.top - 0.03 * crop_height
+        center = (subject.left + subject.right) / 2
+    crop_width = crop_height * BUST_ASPECT
+    return [round(center - crop_width / 2), round(top), round(crop_width), round(crop_height)]
+
+
+def remote_frames(script: Script, images: dict[str, bytes]) -> dict:
+    """What each remote voice's frame shows: its speaker's current look, with the line's face.
+
+    The look follows the speaker's entrances and changes even while they are off stage, so a
+    person only heard in a scene is framed in the look that scene gives them.
+    """
+    assets = {value.id: value for value in script.assets}
+    characters = {value.id: value for value in script.characters}
+    wardrobe = _Wardrobe(script, {})
+    directions: dict[str, list] = {}
+    for value in script.directions:
+        directions.setdefault(value.utterance_id, []).append(value)
+    lines = {}
+    for utterance in script.utterances:
+        for timing in ("before", "start", "after"):
+            if timing == "after" and utterance.remote is not None:
+                character = characters[utterance.speaker_id]
+                worn = wardrobe.worn.get(character.id)
+                look = None if worn in (None, "default") else next(
+                    (value for value in character.outfits if value.id == worn), None)
+                asset_id = look.image_asset_id if look else character.image_asset_id
+                if asset_id is not None:
+                    image = images[asset_id]
+                    width, height = _png_size(image)
+                    face_file = wardrobe.face_files.get((character.id, look.id if look else None,
+                                                         utterance.remote.expression))
+                    lines[utterance.id] = {
+                        "speaker": character.id,
+                        "source": utterance.remote.source,
+                        "channel": utterance.remote.channel,
+                        "storage": face_file or assets[asset_id].filename,
+                        "width": width, "height": height,
+                        "crop": _bust(look.face if look else character.face, image),
+                        "on_stage": character.id in wardrobe.slots,
+                    }
+            for direction in directions.get(utterance.id, []):
+                if direction.timing == timing and direction.kind in {"enter", "exit", "outfit", "expression"}:
+                    wardrobe.enter(direction)
+    return {"schema_version": 1, "lines": lines}
+
+
+def _png_size(image: bytes) -> tuple[int, int]:
+    if image[:8] != b"\x89PNG\r\n\x1a\n" or image[12:16] != b"IHDR":
+        raise ValueError("a portrait must be a PNG")
+    return int.from_bytes(image[16:20], "big"), int.from_bytes(image[20:24], "big")
+
+
 def player_overlay(script: Script, images: dict[str, bytes], script_bytes: bytes) -> dict[str, bytes]:
     """Everything the viewing screen needs besides script.json, assets and documents.
 
@@ -368,6 +439,8 @@ def player_overlay(script: Script, images: dict[str, bytes], script_bytes: bytes
     }
     if script.scene_transitions or script.event_cg_segments:
         files["data/others/auto_drama_stages.json"] = canonical_json(scene_stage_data(script, images))
+    if any(utterance.remote is not None for utterance in script.utterances):
+        files["data/others/auto_drama_remote.json"] = canonical_json(remote_frames(script, images))
     files.update(player_files(script_bytes))
     return files
 

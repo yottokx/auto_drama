@@ -13,6 +13,10 @@ def check_readiness() -> dict:
     if "m2_image" in status["available_job_kinds"]:
         # A shared design sheet drawn from words needs only the portrait model.
         status["available_job_kinds"].append("m2_material_image")
+        from . import portrait_face
+
+        if portrait_face.ready():
+            status["available_job_kinds"].append(portrait_face.KIND)
     try:
         music = music_readiness(pipeline.load_config(), pipeline.ROOT)
     except (OSError, ValueError, KeyError) as exc:
@@ -42,10 +46,13 @@ def available_job_kinds() -> list[str]:
 
 
 def generate_job(job: dict, work_dir: Path) -> bytes:
-    from . import pipeline
+    from . import pipeline, portrait_face
     from .event_cg_session import prepare_job as prepare_event_cg
     from .music_session import prepare_job
 
+    if job.get("kind") == portrait_face.KIND:
+        # Before any session prepares: finding a face must not unload a resident model.
+        return portrait_face.generate_job(job, work_dir)
     prepare_job(job.get("kind"))
     prepare_event_cg(job.get("kind"))
     if job.get("kind") == "m2_material_image":

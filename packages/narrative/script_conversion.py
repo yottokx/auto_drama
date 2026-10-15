@@ -21,7 +21,8 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                         allow_missing_audio: bool = False,
                         omitted_portraits: set[str] | None = None,
                         normalization_reports: list[dict] | None = None,
-                        expression_pictures: dict | None = None) -> Script:
+                        expression_pictures: dict | None = None,
+                        portrait_faces: dict | None = None) -> Script:
     """Use already-resolved assets without DB access, generation, or prose rewriting.
 
     Reference keys are the production requirement's ``(kind, target_id)`` pairs.
@@ -30,7 +31,11 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
 
     ``expression_pictures`` maps ``(character ID, look ID or None)`` to the asset of each
     expression that look has a picture of; their assets are among ``references``.
+
+    ``portrait_faces`` maps a portrait's image target to where the face is in it, for the frame
+    of a remote voice; a portrait without one is framed from its silhouette.
     """
+    portrait_faces = portrait_faces or {}
     narrative = NarrativeResult.model_validate(narrative)
     cast = {value.get("id", value["result"]["id"]): value["result"]
             for value in snapshot["characters"]}
@@ -69,6 +74,8 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
     def look(cid, oid, asset):
         value = {"id": oid, "image_asset_id": asset}
         target = image_target(cid, oid)
+        if target in portrait_faces:
+            value["face"] = portrait_faces[target]
         if target in portrait_settings:
             setting = PortraitSetting.model_validate(portrait_settings[target])
             if (setting.body_bounds is not None
@@ -81,7 +88,9 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                    **presentation(cid, value),
                    **({"outfits": [look(cid, oid, asset) for oid, asset in looks[cid].items()]}
                       if looks.get(cid) else {}),
-                   **({"expressions": faces(cid)} if cid not in omitted_portraits and faces(cid) else {})}
+                   **({"expressions": faces(cid)} if cid not in omitted_portraits and faces(cid) else {}),
+                   **({"face": portrait_faces[cid]} if cid in portrait_faces and cid not in omitted_portraits
+                      else {})}
                   for cid, value in cast.items() if ("m3_image", cid) in references or cid in omitted_portraits]
     utterances, directions = [], []
     for scene in narrative.scenes:
@@ -109,7 +118,8 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
                                "spoken_text": utterance.spoken_text,
                                "voice_emotion": utterance.voice_emotion,
                                "delivery": utterance.delivery,
-                               "audio_asset_id": audio["id"] if audio else None})
+                               "audio_asset_id": audio["id"] if audio else None,
+                               **({"remote": utterance.remote.model_dump(mode="json")} if utterance.remote else {})})
         normalized, report = normalize_directions([
             row.model_dump(mode="json") for row in scene.directions])
         if report["changes"] and normalization_reports is not None:
@@ -137,6 +147,13 @@ def narrative_to_script(narrative: NarrativeResult, snapshot: dict, references: 
             if direction.kind != "focus":
                 value["duration_ms"] = direction.duration_ms
             directions.append(value)
+        # A person only heard in this scene never comes on, yet their frame shows the scene's look.
+        entered = {row.character_id for row in scene.directions if row.kind == "enter"}
+        for cid, outfit_id in sorted(worn.items()):
+            if cid not in entered and cid not in omitted_portraits:
+                directions.append({"id": stable_id("look", scene.id + cid), "kind": "outfit",
+                                   "utterance_id": first, "timing": "before", "duration_ms": 0,
+                                   "character_id": script_character_id(cid), "outfit_id": outfit_id})
     return Script.model_validate({"schema_version": 1, "id": script_id,
                                   "title": narrative.title, "characters": characters,
                                   "utterances": utterances, "directions": directions,

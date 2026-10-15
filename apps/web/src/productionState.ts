@@ -47,7 +47,7 @@ export const jobNames: Record<string, string> = {
   m3_voice_clone: '台詞の音声', m3_dialogue: '台詞の音声',
   m3_music_plan: 'BGM・場面転換の設計', m3_music: '場面のBGM', music: '場面のBGM',
   m3_event_cg_budget: '作品全体のCG配分', m3_event_cg_plan: 'イベントCGの選定・指示作成',
-  m3_event_cg: 'イベントCGの画像',
+  m3_event_cg: 'イベントCGの画像', m3_portrait_face: '通信の声の枠に使う顔の位置',
 }
 export const assetPhaseOrder = ['m3_image', 'm3_background', 'm3_voice', 'm3_voice_clone'] as const
 export const llmStageNames: Record<JobProgressStep['stage'], string> = {

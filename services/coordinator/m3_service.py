@@ -14,6 +14,7 @@ from packages.contracts.event_cg import CG_KINDS, image_input_sha256
 from packages.contracts.m3 import (
     EMOTION_TAGS,
     M3_KINDS,
+    PortraitFace,
     PortraitSetting,
     PortraitSettingsUpdate,
     ProductionPlot,
@@ -937,6 +938,14 @@ class M3Service(ChapterProduction):
                             "delivery": utterance.delivery,
                         },
                     )
+        heard = {utterance.speaker_id for scene in narrative.scenes for utterance in scene.utterances
+                 if utterance.remote is not None}
+        for (target,) in connection.execute(
+                "SELECT target_id FROM m3_requirement WHERE production_id=? AND kind='m3_image' "
+                "ORDER BY rowid", (production["id"],)).fetchall():
+            # The frame of a remote voice is cut around the face of the portrait it shows.
+            if target.partition("--")[0] in heard:
+                self._requirement(connection, production, "m3_portrait_face", target, {})
         if self._root(connection, production)["music_enabled"]:
             from .music_service import context
 
@@ -993,6 +1002,7 @@ class M3Service(ChapterProduction):
                 references = {
                     row["target_id"]: row for row in requirements if row["kind"] == "m3_voice"
                 }
+                portraits = {row["target_id"]: row for row in requirements if row["kind"] == "m3_image"}
                 for requirement in requirements:
                     if requirement["artifact_id"] or requirement["job_id"]:
                         continue
@@ -1020,6 +1030,18 @@ class M3Service(ChapterProduction):
                         descriptor = prepare_image(self, connection, production, requirement, descriptor)
                         if descriptor is None:
                             continue
+                    if requirement["kind"] == "m3_portrait_face":
+                        portrait = portraits[requirement["target_id"]]
+                        if not portrait["artifact_id"]:
+                            continue
+                        artifact = required(connection, "artifact", portrait["artifact_id"])
+                        if artifact["kind"] == "portrait_omission":
+                            # No portrait, so no frame: the omission itself settles the face.
+                            connection.execute("UPDATE m3_requirement SET artifact_id=? WHERE id=?",
+                                               (artifact["id"], requirement["id"]))
+                            requirement["artifact_id"] = artifact["id"]
+                            continue
+                        descriptor["portrait"] = {"artifact_id": artifact["id"], "sha256": artifact["sha256"]}
                     if requirement["kind"] == "m3_voice_clone":
                         reference = references[descriptor["character_id"]]
                         if not reference["artifact_id"]:
@@ -1160,7 +1182,7 @@ class M3Service(ChapterProduction):
         references, content = {}, {}
         omitted_portraits = set()
         for item in requirements:
-            if item["kind"] in {"m3_music_plan", "m3_music"} | CG_KINDS:
+            if item["kind"] in {"m3_music_plan", "m3_music", "m3_portrait_face"} | CG_KINDS:
                 continue
             record = required(connection, "artifact", item["artifact_id"])
             data = self.store.read(record)
@@ -1200,6 +1222,18 @@ class M3Service(ChapterProduction):
             references[(item["kind"], item["target_id"])] = reference
             content[identifier] = data
         portrait_record, portrait_settings = self._portrait_settings(connection, production)
+        portrait_faces = {}
+        for item in requirements:
+            if item["kind"] != "m3_portrait_face":
+                continue
+            record = required(connection, "artifact", item["artifact_id"])
+            if record["kind"] != "portrait_face" or record["project_id"] != production["project_id"]:
+                continue
+            found = PortraitFace.model_validate_json(self.store.read(record))
+            shown = references.get(("m3_image", item["target_id"]))
+            # A face found in an earlier version of a portrait does not frame a retaken one.
+            if found.face is not None and shown is not None and shown["sha256"] == found.portrait_sha256:
+                portrait_faces[item["target_id"]] = found.face.model_dump(mode="json")
         staging_reports = []
         script = narrative_to_script(
             narrative, snapshot, references, script_id="chapter-" + production["id"],
@@ -1207,6 +1241,7 @@ class M3Service(ChapterProduction):
             omitted_portraits=omitted_portraits,
             normalization_reports=staging_reports,
             expression_pictures=self._expression_pictures(connection, production, references, content),
+            portrait_faces=portrait_faces,
         )
         from .music_service import add_to_script
 
@@ -1372,6 +1407,11 @@ class M3Service(ChapterProduction):
 
             cg_result = (validate_cg_result(job["kind"], envelope["result"], payload, files)
                          if job["kind"] in CG_KINDS else None)
+            portrait_face = None
+            if job["kind"] == "m3_portrait_face":
+                portrait_face = PortraitFace.model_validate(envelope["result"])
+                if portrait_face.portrait_sha256 != payload["portrait"]["sha256"]:
+                    raise ValueError("The face belongs to another portrait")
             omission = None
             if job["kind"] == "m3_image" and envelope["result"]:
                 omission = PortraitOmission.model_validate(envelope["result"]["portrait"])
@@ -1520,8 +1560,12 @@ class M3Service(ChapterProduction):
                     "m3_event_cg_budget": "event_cg_budget",
                     "m3_event_cg_plan": "event_cg_plan",
                     "m3_event_cg": "event_cg",
+                    "m3_portrait_face": "portrait_face",
                 }[job["kind"]]
                 filename = "voice.wav" if kind == "audio" else "image.png"
+                if portrait_face is not None:
+                    filename = "portrait-face.json"
+                    files[filename] = encode_json(portrait_face.model_dump(mode="json"))
                 if music_plan is not None:
                     filename = "music-plan.json"
                     files[filename] = encode_json(music_plan.model_dump(mode="json"))

@@ -948,7 +948,8 @@ class ScriptRun(DraftRun):
                                      + json.dumps(hints, ensure_ascii=False), plan, utterances)
         self.progress_step(scope + "-staging", "script-staging", number, "completed")
         utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
-            "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None})
+            "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None,
+            "remote": narrative.remote_voice(u, a)})
             for u, a in zip(utterances, staging.emotions, strict=True)]
         normalizations = []
         directions = narrative._directions(plan, utterances, staging, trace=normalizations)
