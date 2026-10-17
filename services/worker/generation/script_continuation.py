@@ -1278,13 +1278,17 @@ class ScriptRun(DraftRun):
                                      voices.define_context(context, plan, scene_ids, name, identifier),
                                      voices.CharacterResult, None, voices.define_schema(identifier))
             added.append((person, scene_ids))
-        if not added:
+        heard = voices.uncast(answer, plan)
+        if not added and not heard:
             return plan
-        plan = voices.cast(plan, added)
+        before = {scene.id: scene.character_ids for scene in plan.scenes}
+        plan = voices.cast(plan, added, heard)
         narrative._validate_chapter_plan(plan, known | {row.id for row in plan.new_characters})
         self.llm.trace.append({"type": "heard_voices_cast", "chapter": number, "characters": [
             {"id": person.id, "name": person.name, "scenes": scene_ids,
-             "cast": person.id in {row.id for row in plan.new_characters}} for person, scene_ids in added]})
+             "cast": person.id in {row.id for row in plan.new_characters}} for person, scene_ids in added],
+            "joined": {scene.id: [cid for cid in scene.character_ids if cid not in before[scene.id]]
+                       for scene in plan.scenes if scene.character_ids != before[scene.id]}})
         return plan
 
     @property

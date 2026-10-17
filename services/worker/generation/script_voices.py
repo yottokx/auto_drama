@@ -6,7 +6,9 @@ may only use the planned cast's IDs, then gives those lines to someone on stage.
 reasoning, and even with it, a plan almost never adds such a person on its own.
 
 So after the plan, one light call names everyone heard in each scene. Anyone heard who is not
-yet a character is defined in a call of its own and cast in the scenes where they are heard.
+yet a character is defined in a call of its own. Everyone heard, whether defined now or already
+a character, is cast in the scenes where they are heard: a person defined in one chapter is a
+character in the next, and is just as likely to be left out of the scene they call into.
 """
 
 from __future__ import annotations
@@ -88,6 +90,19 @@ def unheard(answer: ChapterVoices, plan) -> dict[str, list[str]]:
     return heard
 
 
+def uncast(answer: ChapterVoices, plan) -> dict[str, list[str]]:
+    """The scenes each character is heard in without being cast there, by ID."""
+    cast_ids = {scene.id: scene.character_ids for scene in plan.scenes}
+    heard: dict[str, list[str]] = {}
+    for row in answer.scenes:
+        for voice in row.voices:
+            if voice.character_id and voice.character_id not in cast_ids[row.scene_id]:
+                scenes = heard.setdefault(voice.character_id, [])
+                if row.scene_id not in scenes:
+                    scenes.append(row.scene_id)
+    return heard
+
+
 def define_schema(identifier: str) -> dict:
     schema = CharacterResult.model_json_schema()
     schema["properties"]["id"]["enum"] = [identifier]
@@ -100,15 +115,20 @@ def define_context(context: dict, plan, scene_ids: list[str], name: str, identif
             + json.dumps(scenes, ensure_ascii=False) + f"\n定義する人物: {name}（id: {identifier}）"}
 
 
-def cast(plan, added: list[tuple[CharacterResult, list[str]]]):
-    """The plan with each new person defined and cast where heard, if the scene has room."""
+def cast(plan, added: list[tuple[CharacterResult, list[str]]], heard: dict[str, list[str]] | None = None):
+    """The plan with everyone heard cast where heard, if the scene has room.
+
+    `heard` is the existing characters heard where they are not cast (see uncast), and `added`
+    the people just defined; of those, only the ones cast somewhere become new characters.
+    """
+    voices = [*(heard or {}).items(), *((person.id, heard_in) for person, heard_in in added)]
     scenes, used = [], set()
     for scene in plan.scenes:
         ids = list(scene.character_ids)
-        for person, heard_in in added:
-            if scene.id in heard_in and person.id not in ids and len(ids) < MAX_CAST:
-                ids.append(person.id)
-                used.add(person.id)
+        for identifier, heard_in in voices:
+            if scene.id in heard_in and identifier not in ids and len(ids) < MAX_CAST:
+                ids.append(identifier)
+                used.add(identifier)
         scenes.append(scene.model_copy(update={"character_ids": ids}))
     return plan.model_copy(update={
         "new_characters": [*plan.new_characters, *(person for person, _ in added if person.id in used)],

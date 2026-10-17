@@ -76,6 +76,20 @@ def test_cast_adds_the_new_person_where_heard_unless_the_scene_is_full():
     assert [row.id for row in result.new_characters] == ["voice-1-1"]
 
 
+def test_characters_heard_where_they_are_not_cast_are_found_by_id():
+    # A grandfather defined in an earlier chapter is a character now; he still calls in uncast.
+    answer = heard(("s1", [("葵", "aoi", "present"), ("祖父", "voice-1-1", "remote")]),
+                   ("s2", [("蓮", "ren", "present"), ("祖父", "voice-1-1", "remote"), ("葵", "aoi", "present")]),
+                   ("s3", [("祖父", "voice-1-1", "recollection"), ("謎の声", "", "remote")]))
+    assert voices.uncast(answer, plan(["aoi"], ["ren", "aoi"], ["voice-1-1"])) == {"voice-1-1": ["s1", "s2"]}
+
+
+def test_cast_adds_existing_characters_where_heard_without_making_them_new():
+    result = voices.cast(plan(["aoi"], ["aoi", "ren", "helper"]), [], {"voice-1-1": ["s1", "s2"]})
+    assert [scene.character_ids for scene in result.scenes] == [["aoi", "voice-1-1"], ["aoi", "ren", "helper"]]
+    assert result.new_characters == []
+
+
 def test_unplanned_voice_is_defined_and_cast_in_the_chapter_plan(runtime, tmp_path):
     calls, control = runtime
     grandfather = person("voice-1-1").model_dump(mode="json")
@@ -106,3 +120,21 @@ def test_no_unheard_voice_leaves_the_plan_unchanged(runtime, tmp_path):
     expected = chapter_plan("s1")
     assert saved["scenes"][0]["character_ids"] == expected["scenes"][0]["character_ids"]
     assert saved["new_characters"] == []
+
+
+def test_existing_character_heard_outside_the_cast_joins_the_scene(runtime, tmp_path):
+    _calls, control = runtime
+    planned = chapter_plan("s1")
+    planned["scenes"][0]["character_ids"] = ["aoi"]
+    control["responses"] = [outline(), planned, FIRST, staging(FIRST)]
+    control["voices"] = [{"scenes": [{"scene_id": "s1", "voices": [
+        {"name": "葵", "character_id": "aoi", "how": "present"},
+        {"name": "蓮", "character_id": "ren", "how": "remote"}]}]}]
+    runner.run_script_debug(snapshot(), tmp_path, chapter_limit=1)
+    assert not control["voices"]  # No character is defined for someone who already is one.
+    saved = read_json(tmp_path / "chapters/chapter-001.plan.json")
+    assert saved["scenes"][0]["character_ids"] == ["aoi", "ren"]
+    assert saved["new_characters"] == []
+    traces = [row for path in tmp_path.rglob("llm-metrics.json") for row in read_json(path)]
+    assert [(row["characters"], row["joined"]) for row in traces if row.get("type") == "heard_voices_cast"] == [
+        ([], {"s1": ["ren"]})]
