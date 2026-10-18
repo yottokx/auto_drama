@@ -590,9 +590,22 @@
   }
 
   /* ── 開始 ── */
+  // A phone browser hides its address bar only while the page scrolls, and this page never
+  // does, so a touch screen held sideways views in fullscreen. It needs a tap, and leaving the
+  // page or the back gesture ends it, so any later tap, from the title screen on, asks again.
+  // Held upright the stage is a band across the middle, so the browser stays as it is.
+  const touch = window.matchMedia?.("(pointer: coarse)"), sideways = window.matchMedia?.("(orientation: landscape)");
+  function fillScreen() {
+    if (!touch?.matches || !sideways?.matches || document.fullscreenElement) return;
+    document.documentElement.requestFullscreen?.({navigationUI: "hide"})?.catch(() => {});
+  }
+  sideways?.addEventListener("change", () => {
+    if (touch.matches && !sideways.matches && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  });
   function begin(resumeIndex) {
     if (started || !bound || !gate) return;
     started = true;
+    fillScreen();
     music?.unlock().catch(() => toast("BGMの再生を準備できませんでした。"));
     window.Howler?.ctx?.resume?.().catch(() => {});
     if (resumeIndex === undefined) { $("adn-start").hidden = true; tagState = "idle"; next(); return; }
@@ -648,6 +661,7 @@
   $("adn-resume").addEventListener("click", () => begin(recall("auto")));
 
   function stageClick(target) {
+    fillScreen(); // the chapter title screen too, while it loads
     if (!started) return;
     if (ui.classList.contains("bare")) { ui.classList.remove("bare"); return; } // 戻すだけで送らない
     if (target?.closest?.("#adn-menu, #adn-mode, #adn-log, #adn-config, #adn-end .choices")) return;
@@ -760,7 +774,8 @@
         $("adn-resume").hidden = !(saved > 0);
         if (!entryTried && context.mode === "live") { entryTried = true; tryChapterEntry(); }
       } else if (Date.now() - loadingSince >= 15000) {
-        fail("鑑賞の準備を完了できません。通信状態を確認して再読み込みしてください。");
+        // A slow connection only delays the start; keep waiting so a late load still opens.
+        $("adn-start-note").textContent = "読み込みに時間がかかっています。終わらない場合は再読み込みしてください。";
       }
     }
     if (ended && context.mode === "live" && Date.now() >= pollAt) checkNext();

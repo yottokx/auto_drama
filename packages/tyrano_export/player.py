@@ -104,10 +104,11 @@ def player_html() -> bytes:
     dependencies.append(f'<script src="./data/system/KeyConfig.js?v={_REVISION}"></script>')
     dependencies.extend(f'<script src="./tyrano/{path}"></script>' for path in ENGINE_SCRIPTS)
     # The viewing screen builds its own window, menu, backlog and settings; only the
-    # engine's containers are declared here.
+    # engine's containers are declared here. minimum-scale=1 stops Android Chrome from widening
+    # the page to the unscaled 960px stage, which would make the engine fit it at 1:1.
     return ('''<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>AIオートドラマ 鑑賞</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
