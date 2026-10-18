@@ -19,6 +19,15 @@ class ScriptOptions(Contract):
     # Set for plans made since supporting characters are drawn and voiced during the plan review.
     # Absent from a saved plan when unset, so earlier plans keep their identity and their wording.
     planned_cast_appears: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experimental: a chapter plan sees later chapters in brief and is told which of its own
+    # planned steps the latest chapter already showed (script_route_progress). Absent when unset.
+    chapter_scope_guard: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experimental: the chapter allocation sees each way to cut the chain with every chapter's
+    # steps, and is asked for chapters of similar size. Absent when unset.
+    sized_allocation: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experiment only: no staging or outfit-moment calls. Every line gets a neutral emotion and
+    # the scene only its entrances, so a script can be read without the slowest step.
+    skip_staging: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def dialogue_fits_body(self):

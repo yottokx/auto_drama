@@ -19,6 +19,7 @@ from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.continuity import narrative_hash
 
 from . import narrative, pipeline
+from . import script_route_progress as route_progress
 from . import script_voices as voices
 from .cancellation import GenerationCancelled, check_cancelled
 from .causal_runtime import digest
@@ -78,6 +79,7 @@ from .script_plot import (
     PLOT_INSTRUCTION,
     PLOT_PRIORITY,
     PRESENTATION_INSTRUCTION,
+    SIZED_ALLOCATION_INSTRUCTION,
     ChapterAllocation,
     DetailedPlot,
     FixedChapterAllocation,
@@ -89,6 +91,7 @@ from .script_plot import (
     add_outfit_appearances,
     allocate_chain,
     bind_core_cast,
+    boundary_options,
     check_chain,
     check_chapters,
     check_core,
@@ -764,8 +767,10 @@ class ScriptRun(DraftRun):
 
     def material(self, setting, outline, number, brief="", *, stage="plan"):
         plot = DetailedPlot.model_validate(self.state["plot"])
-        return {"setting": setting, "outline": "", "future": future_material(
-                    plot, self.state["plot_sha256"], number, []),
+        future = future_material(plot, self.state["plot_sha256"], number, [])
+        if stage == "plan" and self.options.chapter_scope_guard:
+            future = route_progress.later_in_brief(future, number)
+        return {"setting": setting, "outline": "", "future": future,
                 "current_chapter": number,
                 "brief": self.options.for_stage(stage) + "\n" + brief,
                 "chapters": self.state["chapters"], "notes": self.state["notes"]}
@@ -943,11 +948,17 @@ class ScriptRun(DraftRun):
         separation, hints = speech_llm.validated(narrative.separate_speech, context_text, plan, raw, names)
         utterances = parse_scene_text(separation.raw_text, plan.id, set(plan.character_ids))
         self.progress_step(scope + "-speech", "script-speech", number, "completed")
-        self.progress_step(scope + "-staging", "script-staging", number, "running")
-        staging_llm = ExistingStages(self, scope + "-staging", "script-staging", number)
-        staging = staging_llm.validated(narrative._staging, context_text + "\n読み上げない声の指示: "
-                                     + json.dumps(hints, ensure_ascii=False), plan, utterances)
-        self.progress_step(scope + "-staging", "script-staging", number, "completed")
+        if self.options.skip_staging:
+            # The next scene and chapter read only the source text, which staging never changes.
+            staging = narrative.SceneStaging(emotions=[narrative.EmotionAnnotation(
+                utterance_id=u.id, inner_emotion="未指定", voice_emotion="neutral", delivery="")
+                for u in utterances], directions=[])
+        else:
+            self.progress_step(scope + "-staging", "script-staging", number, "running")
+            staging_llm = ExistingStages(self, scope + "-staging", "script-staging", number)
+            staging = staging_llm.validated(narrative._staging, context_text + "\n読み上げない声の指示: "
+                                         + json.dumps(hints, ensure_ascii=False), plan, utterances)
+            self.progress_step(scope + "-staging", "script-staging", number, "completed")
         utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
             "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None,
             "remote": narrative.remote_voice(u, a)})
@@ -957,7 +968,8 @@ class ScriptRun(DraftRun):
         if normalizations:
             self.llm.trace.extend(normalizations)
             self.state.setdefault("staging_normalizations", {})[scope] = normalizations
-        directions.extend(self.outfit_directions(scope, number, plan, following_plans, utterances))
+        if not self.options.skip_staging:
+            directions.extend(self.outfit_directions(scope, number, plan, following_plans, utterances))
         scene = NarrativeScene(id=plan.id, plan=plan, raw_text=separation.raw_text,
             utterances=utterances, directions=directions,
             review=SceneReview(policy="not_evaluated", passed=False, issues=[], events=[]))
@@ -1066,11 +1078,14 @@ class ScriptRun(DraftRun):
             self.state.update(story_chain=chain_data, story_chain_sha256=digest(chain_data))
             self.persist()
             write_json(self.output / "story-chain.json", chain_data)
+            sized = self.options.sized_allocation and len(chain.events) > 3
+            material = {"core": chain.core.model_dump(mode="json"), "event_count": len(chain.events), "events": [
+                {"event_number": n, **event.model_dump(mode="json")} for n, event in enumerate(chain.events, 1)]}
+            if sized:
+                material.update(total_steps=sum(len(event.steps) for event in chain.events),
+                                boundary_options=boundary_options(chain))
             allocation_context = {**context, "brief": self.options.for_stage("allocation") + "\n全3章へ配分する保存済みプロット（全て未実施）:\n"
-                                  + json.dumps({"core": chain.core.model_dump(mode="json"),
-                                      "event_count": len(chain.events), "events": [
-                                          {"event_number": n, **event.model_dump(mode="json")}
-                                          for n, event in enumerate(chain.events, 1)]}, ensure_ascii=False)}
+                                  + json.dumps(material, ensure_ascii=False)}
             if len(chain.events) == 3:
                 schema = FixedChapterAllocation.model_json_schema()
                 schema["$defs"]["ConversationTopic"]["properties"]["character_ids"]["items"]["enum"] = sorted(available)
@@ -1089,7 +1104,8 @@ class ScriptRun(DraftRun):
                 if outfits:
                     add_outfit_appearances(schema, outfits)
                 allocation = self.structured("chapter-allocation", "script-allocation", 1,
-                    ALLOCATION_INSTRUCTION + allocation_note + f"出来事は全{len(chain.events)}個です。last_eventはevent_numberを使い、"
+                    (SIZED_ALLOCATION_INSTRUCTION if sized else ALLOCATION_INSTRUCTION)
+                    + allocation_note + f"出来事は全{len(chain.events)}個です。last_eventはevent_numberを使い、"
                     f"3章の値を狭義昇順にし、第3章の値は必ず{len(chain.events)}にします。",
                     allocation_context, ChapterAllocation,
                     check_allocation, schema)
@@ -1255,6 +1271,21 @@ class ScriptRun(DraftRun):
             "supporting_character_count": len(used_ids - main_ids - {"NARRATOR"})})
         return plan
 
+    def mark_route_progress(self, number, context, previous_text):
+        """Name the planned steps of this chapter that the latest chapter already showed."""
+        steps = route_progress.route_steps(context["future"], number)
+        if not steps:
+            return context
+        check_context = {"setting": {}, "outline": "", "brief": route_progress.progress_brief(steps),
+                         "chapters": [], "notes": [], "continuation": previous_text}
+        answer = self.structured(f"route-done-{number:03d}", route_progress.PURPOSE, number,
+                                 route_progress.INSTRUCTION, check_context, route_progress.RouteProgress,
+                                 None, route_progress.progress_schema(steps))
+        if self.llm is not None:
+            self.llm.trace.append({"type": "route_progress", "chapter": number,
+                                   "done": [row.step for row in answer.done]})
+        return route_progress.mark_done(context, number, answer)
+
     def cast_heard_voices(self, number, plan, context, known):
         """Give every voice heard in the plan a speaker of its own (see script_voices)."""
         names = {row["id"]: row["name"] for row in context["setting"]["characters"]}
@@ -1331,6 +1362,8 @@ class ScriptRun(DraftRun):
                                                "source_sha256": previous_row["sha256"]})
                     self.persist()
                     _text(self.output / "notes" / f"chapter-{number - 1:03d}.md", note)
+            if number > 1 and self.options.chapter_scope_guard:
+                context = self.mark_route_progress(number, context, previous_row["text"])
             plan = self.chapter_plan(number, context, supporting)
             used = {cid for scene in plan.scenes for cid in scene.character_ids}
             registered = {row.id for row in supporting}

@@ -307,6 +307,78 @@ def allocate_chain(chain: StoryChain, allocation: ChapterAllocation) -> Detailed
     ends = [row.last_event for row in allocation.chapters]
     if ends != sorted(set(ends)) or ends[-1] != len(chain.events):
         raise ValueError("Chapter boundaries must partition every event exactly once in order.")
+    starts = [0, *ends[:-1]]
+    return _plot_from_chapters(chain, allocation.chapters,
+                               [chain.events[start:end] for start, end in zip(starts, ends, strict=True)],
+                               allocation.foreshadowing)
+
+
+class StepChapterBoundary(ChapterPresentation):
+    number: int = Field(ge=1, le=3, strict=True)
+    last_step: int = Field(ge=1, le=54, strict=True, description="当章の最後に割り当てる手順の通し番号（1始まり）。")
+
+
+class StepChapterAllocation(Contract):
+    """Experimental: chapter boundaries may fall between two steps of one event."""
+
+    chapters: list[StepChapterBoundary] = Field(min_length=3, max_length=3)
+    foreshadowing: list[Foreshadowing] = Field(max_length=30)
+
+
+def chapter_step_counts(chain: StoryChain, ends: list[int]) -> list[int]:
+    """Steps in each chapter for event boundaries ``ends``."""
+    sizes = [len(event.steps) for event in chain.events]
+    return [sum(sizes[start:end]) for start, end in zip([0, *ends[:-1]], ends, strict=True)]
+
+
+def boundary_options(chain: StoryChain) -> list[dict]:
+    """Every way to cut the chain into three chapters at event ends, with each chapter's steps."""
+    count = len(chain.events)
+    return [{"last_events": [first, second, count],
+             "steps_per_chapter": chapter_step_counts(chain, [first, second, count])}
+            for first in range(1, count - 1) for second in range(first + 1, count)]
+
+
+def numbered_chain_steps(chain: StoryChain) -> list[dict]:
+    """The chain's events with each step's position in the whole chain."""
+    rows, number = [], 0
+    for event_number, event in enumerate(chain.events, 1):
+        steps = []
+        for step in event.steps:
+            number += 1
+            steps.append({"step_number": number, **step.model_dump(mode="json")})
+        rows.append({"event_number": event_number, "start_condition": event.start_condition, "steps": steps})
+    return rows
+
+
+def split_chain(chain: StoryChain, ends: list[int]) -> list[list[ChainEvent]]:
+    """Cut the chain after the given step numbers; a cut event continues from its last kept result."""
+    total = sum(len(event.steps) for event in chain.events)
+    if ends != sorted(set(ends)) or len(ends) != 3 or ends[0] < 1 or ends[-1] != total:
+        raise ValueError(f"Chapter boundaries must partition all {total} steps exactly once in order.")
+    chapters, number = [[], [], []], 0
+    for event in chain.events:
+        condition = event.start_condition
+        for step in event.steps:
+            number += 1
+            events = chapters[next(index for index, end in enumerate(ends) if number <= end)]
+            if not events or events[-1][0] is not event:
+                events.append((event, condition, []))
+            events[-1][2].append(step)
+            condition = step.result
+    return [[ChainEvent(start_condition=condition, steps=steps) for _, condition, steps in rows]
+            for rows in chapters]
+
+
+def allocate_chain_by_steps(chain: StoryChain, allocation: StepChapterAllocation) -> DetailedPlot:
+    """Partition the chain at step boundaries, keeping every step once and in order."""
+    if [row.number for row in allocation.chapters] != [1, 2, 3]:
+        raise ValueError("Chapter allocation must preserve the three approved chapters.")
+    events = split_chain(chain, [row.last_step for row in allocation.chapters])
+    return _plot_from_chapters(chain, allocation.chapters, events, allocation.foreshadowing)
+
+
+def _plot_from_chapters(chain: StoryChain, presentations, chapter_events, foreshadowing) -> DetailedPlot:
     # Derive the legacy/export synopsis from events, never ask the model for a
     # second, independent promise of a turning point that may not be dramatized.
     core_data = chain.core.model_dump(exclude={"characters"})
@@ -315,11 +387,12 @@ def allocate_chain(chain: StoryChain, allocation: ChapterAllocation) -> Detailed
         for index, event in enumerate(chain.events, 1)
         for step in event.steps if step.character_id == row.character_id
     ) or "本人の転機は予定していない。") for row in chain.core.characters]
-    core = PlotCore(**core_data, characters=characters, foreshadowing=allocation.foreshadowing)
+    core = PlotCore(**core_data, characters=characters, foreshadowing=foreshadowing)
     check_core(core, {row.character_id for row in chain.core.characters}, 3)
-    chapters, start = [], 0
-    for boundary in allocation.chapters:
-        events = chain.events[start:boundary.last_event]
+    chapters = []
+    for boundary, events in zip(presentations, chapter_events, strict=True):
+        if not events:
+            raise ValueError(f"Chapter {boundary.number} has no planned step.")
         # The route is an export-compatible view. Generation receives the exact
         # events instead, avoiding a second competing synopsis of the same story.
         routes = [event.as_route() for event in events]
@@ -330,7 +403,6 @@ def allocate_chain(chain: StoryChain, allocation: ChapterAllocation) -> Detailed
         chapters.append(PlotChapter(number=boundary.number, title=boundary.title,
             role=boundary.role, route=route, events=events, conversation_topics=boundary.conversation_topics,
             outfit_appearances=boundary.outfit_appearances))
-        start = boundary.last_event
     return DetailedPlot(core=core, chapters=chapters)
 
 
@@ -415,15 +487,35 @@ PRESENTATION_INSTRUCTION = (
     "foreshadowingは連鎖に既にある仕込みと結果だけを章番号へ対応させ、なければ空配列です。"
 )
 
+EVENT_RULE = ("各章は連続した一つ以上の出来事を担当します。last_eventは入力のeventsの1始まりの位置です。"
+              "全出来事を一度ずつ、抜け・重複・並べ替えなしで割り当てます。")
+EQUAL_SHARE_NOT_NEEDED = "章数を増減せず、出来事を均等に三分割する必要もありません。"
+
 ALLOCATION_INSTRUCTION = PRESENTATION_INSTRUCTION + (
     "主筋の出来事を変更・重複させず、同じ結論の言い換え以外の応答や人物の接点を考えます。"
     "保存済みの出来事の連鎖を、順番と内容を保って全3章へ配分します。"
-    "各出来事の結果や選択が一区切りになる箇所で章を区切ります。各章は連続した一つ以上の出来事を担当します。"
-    "last_eventは入力のeventsの1始まりの位置です。全出来事を一度ずつ、抜け・重複・並べ替えなしで割り当てます。"
-    "章数を増減せず、出来事を均等に三分割する必要もありません。"
+    "各出来事の結果や選択が一区切りになる箇所で章を区切ります。" + EVENT_RULE + EQUAL_SHARE_NOT_NEEDED +
     "『対立→一部合意→最終合意』などの型を先に当てはめず、実際の出来事から各章の役割と題名を付けます。"
     "章末の引きを作るために合意を取り消したり、未決事項・事件を追加したりしません。"
     "foreshadowingは連鎖に既にある仕込みと結果だけを章番号へ対応させ、なければ空配列です。"
+)
+
+# Experimental chapter allocation that weighs each chapter's share (probe_allocation_balance.py).
+BALANCE_RULE = (
+    "各章は約10分の1話で、どの章も同じくらいの会話と出来事を担います。"
+    "第1章を導入の出来事一つだけで終えたり、最終章に残りを詰め込んだりしません。"
+)
+SIZED_ALLOCATION_RULE = (
+    "boundary_optionsは、区切り方ごとの各章の手順数です。結果や選択が一区切りになる区切りのうち、"
+    "各章の手順数が近いものを選びます。" + BALANCE_RULE
+)
+SIZED_ALLOCATION_INSTRUCTION = ALLOCATION_INSTRUCTION.replace(
+    EQUAL_SHARE_NOT_NEEDED, "章数を増減しません。").replace(EVENT_RULE, EVENT_RULE + SIZED_ALLOCATION_RULE)
+STEP_ALLOCATION_RULE = (
+    "各章は連続した一つ以上の手順を担当します。一つの出来事の途中、手順と手順の間で章を区切ることもできます。"
+    "その場合、残りの手順は次の章で、区切った手順の結果から続きます。"
+    "last_stepは入力のstep_number（全体の通し番号）です。全手順を一度ずつ、抜け・重複・並べ替えなしで割り当てます。"
+    "結果や選択が一区切りになる手順の後で、各章の手順数が近くなるよう区切ります。" + BALANCE_RULE
 )
 
 PLOT_INSTRUCTION = (
