@@ -183,6 +183,18 @@ def test_settling_keeps_only_real_choices_and_rejects_unknown_looks():
         settle_scene_outfits(FirstChapterPlan.model_validate(draft), outfits, [])
 
 
+def test_settling_merges_a_repeated_identical_choice_and_rejects_conflicting_ones():
+    outfits = snapshot_outfits(snapshot())
+    same = {"character_id": "aoi", "outfit_id": "festival", "change_to": None}
+    settled, notes = settle_scene_outfits(FirstChapterPlan.model_validate(plan(same, dict(same))), outfits, [])
+    assert [row.model_dump() for row in settled.scenes[0].outfits] == [
+        {"character_id": "aoi", "outfit_id": "festival"}]
+    assert notes == [{"scene_id": "s1", "character_id": "aoi", "dropped": "repeated_entry"}]
+    other = {"character_id": "aoi", "outfit_id": "default", "change_to": None}
+    with pytest.raises(ValueError, match="one outfits entry"):
+        settle_scene_outfits(FirstChapterPlan.model_validate(plan(same, other)), outfits, [])
+
+
 @pytest.mark.parametrize("answers", [[moments(None)], [{"moments": []}, {"moments": []}]])
 def test_change_the_text_does_not_show_leaves_the_portrait_until_the_next_entrance(runtime, tmp_path, answers):
     _, control = runtime

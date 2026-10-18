@@ -164,15 +164,20 @@ def settle_scene_outfits(plan, outfits: dict, required: list[tuple[str, str]]):
     """
     scenes, notes = [], []
     for scene in plan.scenes:
-        kept, seen = [], set()
+        kept, seen = [], {}
         for row in scene.outfits:
             known = {item.id for item in outfits.get(row.character_id, [])}
             if not {row.outfit_id, row.change_to or row.outfit_id} <= known:
                 raise ValueError(f"Scene {scene.id}: {row.character_id} has no such look. "
                                  f"Use one of {sorted(known)} for this character.")
             if row.character_id in seen:
+                # The same choice written twice says nothing new; two different ones are ambiguous.
+                if row == seen[row.character_id]:
+                    notes.append({"scene_id": scene.id, "character_id": row.character_id,
+                                  "dropped": "repeated_entry"})
+                    continue
                 raise ValueError(f"Scene {scene.id}: give {row.character_id} one outfits entry.")
-            seen.add(row.character_id)
+            seen[row.character_id] = row
             if row.character_id not in scene.character_ids:
                 notes.append({"scene_id": scene.id, "character_id": row.character_id,
                               "dropped": "character_not_in_scene"})
