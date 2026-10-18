@@ -189,15 +189,12 @@ class M2Service:
 
         HistoryService(self.coordinator).finish(connection, project_id)
 
-    def _view(self, connection: sqlite3.Connection, project_id: str, state: dict) -> dict:
-        jobs = [
-            public(dict(row))
-            for row in connection.execute(
-                "SELECT * FROM job WHERE project_id=? ORDER BY created_at,id", (project_id,)
-            )
-        ]
+    @staticmethod
+    def _summary(connection: sqlite3.Connection, project_id: str, state: dict) -> dict:
         project = public(required(connection, "project", project_id))
-        active = next((job for job in jobs if job["id"] == state["activeJobId"]), None)
+        active = connection.execute(
+            "SELECT status FROM job WHERE id=? AND project_id=?", (state["activeJobId"], project_id)
+        ).fetchone()
         project["status"] = (
             "ready" if state["draft"]["approved"] else active["status"] if active else "draft"
         )
@@ -206,6 +203,17 @@ class M2Service:
                 "SELECT updated_at FROM m2_draft WHERE project_id=?", (project_id,)
             ).fetchone()[0]
         )
+        return project
+
+    def _view(self, connection: sqlite3.Connection, project_id: str, state: dict) -> dict:
+        jobs = [
+            public(dict(row))
+            for row in connection.execute(
+                "SELECT * FROM job WHERE project_id=? ORDER BY created_at,id", (project_id,)
+            )
+        ]
+        project = self._summary(connection, project_id, state)
+        active = next((job for job in jobs if job["id"] == state["activeJobId"]), None)
         history = {}
         draft = copy.deepcopy(state["draft"])
         draft["hasProduction"] = self._has_production(connection, project_id)
@@ -262,8 +270,9 @@ class M2Service:
                     "SELECT project_id FROM m2_draft ORDER BY updated_at DESC,project_id"
                 )
             ]
+            # Every open editor polls this list, so it reads only what a library entry shows.
             return [
-                self._view(connection, identifier, self._load(connection, identifier))["project"]
+                self._summary(connection, identifier, self._load(connection, identifier))
                 for identifier in ids
             ]
 
