@@ -18,6 +18,7 @@ from packages.contracts.expressions import (
 )
 from packages.contracts.m2 import CharacterResult
 from packages.contracts.m3 import (
+    STAGE_PORTRAITS,
     CharacterArc,
     Emotion,
     EventReview,
@@ -127,6 +128,28 @@ class SceneStaging(Staging):
     the enter events added by the harness. Keep Staging's request schema stable.
     """
     directions: list[FocusAnnotation | PauseAnnotation | ExpressionAnnotation]
+
+
+class CentralCharacter(Contract):
+    character_id: str
+    enters_at: str
+    leaves_at: str
+    reason: str = Field(min_length=1, max_length=200)
+
+
+class SceneCentral(Contract):
+    central: list[CentralCharacter] = Field(min_length=1, max_length=STAGE_PORTRAITS)
+
+
+CENTRAL_INSTRUCTION = (
+    "\n本文は変更しません。この場面の登場人物は{count}人です。立ち絵で画面に出せるのは{stage}人までです。"
+    "場面全体を読み、この場面の中心となる人物を1〜{stage}人選んでcentralに書きます。人数を{stage}人に"
+    "揃える必要はありません（二人の口論が中心ならその二人、教師が授業をする場面なら教師一人）。"
+    "中心となる人物だけが、その場にいる間、立ち絵で表示されます。それ以外の人物は、その場にいても、"
+    "話す行でもメッセージウィンドウに顔だけを表示します。遠くから聞こえる声や回想の声の人物は選びません。"
+    "各人物について、本文でその場に来る行をenters_at、その場を去る行をleaves_atに書きます。場面の最初から"
+    "その場にいる人物のenters_atと、場面の最後までその場にいる人物のleaves_atは空文字にします。"
+    "reasonにその人物を中心とした理由を短く書きます。")
 
 
 class SpeechMeaning(Contract):
@@ -601,6 +624,95 @@ def _staging(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[Mapp
     return SceneStaging(emotions=emotions, directions=directions)
 
 
+def central_cast(llm: LocalLLM, context: str, plan: ScenePlan, utterances: list[MappedUtterance],
+                 sources: dict[str, str], names: dict[str, str] | None = None) -> list[tuple[str, int, int]]:
+    """The people who stand on stage in a scene too crowded or with someone silent, and when.
+
+    One answer covers the whole scene: who is central, and the line each comes in and the line
+    each goes. Everyone else is shown by a face beside their lines. Slips that change nothing
+    are fixed here rather than rejected: a repeated person counts once, coming in on the first
+    line is being there from the start, and going before coming means staying to the end.
+    ``sources`` says where each line's voice comes from (staging); someone only heard is dropped.
+    So is someone silent whose name (``names``) the text never mentions: they are not there.
+    Spans are line indexes, end exclusive.
+    """
+    text = "".join(u.display_text for u in utterances)
+    ids = [item.id for item in utterances]
+    order = {uid: index for index, uid in enumerate(ids)}
+    schema = SceneCentral.model_json_schema()
+    item = schema["$defs"]["CentralCharacter"]["properties"]
+    item["character_id"]["enum"] = plan.character_ids
+    item["enters_at"]["enum"] = ["", *ids]
+    item["leaves_at"]["enum"] = ["", *ids]
+    answer = _structured(llm, "staging", "資料: " + context + "\n計画: " + _data(plan)
+                         + "\n確定した本文とID: " + _data([_staged_line(u) for u in utterances])
+                         + CENTRAL_INSTRUCTION.format(count=len(plan.character_ids), stage=STAGE_PORTRAITS),
+                         SceneCentral, schema=schema)
+    spans = {}
+    for row in answer.central:
+        spoken = [u for u in utterances if u.speaker_id == row.character_id]
+        if row.character_id in spans or (spoken and all(sources.get(u.id, "present") != "present" for u in spoken)):
+            continue
+        if not spoken and names and row.character_id in names and not any(
+                part in text for part in _name_parts(names[row.character_id])):
+            continue
+        start = order[row.enters_at] if row.enters_at else 0
+        # The line that tells of someone leaving still shows them; they go after it.
+        end = order[row.leaves_at] + 1 if row.leaves_at else len(ids)
+        spans[row.character_id] = (start, end if end > start else len(ids))
+    if trace := getattr(llm, "trace", None):
+        trace.append({"type": "central_cast", "scene_id": plan.id,
+                      "answer": answer.model_dump(mode="json"), "spans": spans})
+    return [(cid, start, end) for cid, (start, end) in spans.items()]
+
+
+def _name_parts(name: str) -> list[str]:
+    """The ways a text may call someone: family name, given name, nickname, without readings."""
+    bare = re.sub(r"[（(][^）)]*[）)]", " ", name)
+    return [part for part in re.split(r"[\s・「」『』/／、]+", bare) if part]
+
+
+def on_stage(stage: list[tuple[str, int, int]], index: int) -> list[str]:
+    """Who of the central people stands on stage at this line."""
+    return [cid for cid, start, end in stage if start <= index < end]
+
+
+# Where one, two or three portraits stand.
+STAGE_POSITIONS = {1: ("center",), 2: ("left", "right"), 3: ("left", "center", "right")}
+
+
+def _stage_directions(plan: ScenePlan, utterances: list[MappedUtterance], stage: list[tuple[str, int, int]]):
+    """Entrances, exits and moves for the central people; those who stay keep their place."""
+    directions, order, places = [], [], {}
+
+    def add(utterance_id, kind, timing, character_id, position, duration_ms):
+        directions.append(NarrativeDirection(
+            id=f"{plan.id}-d{len(directions) + 1}", utterance_id=utterance_id, kind=kind, timing=timing,
+            character_id=character_id, position=position, duration_ms=duration_ms))
+
+    for index, item in enumerate(utterances):
+        here = on_stage(stage, index)
+        if set(here) == set(order):
+            continue
+        leaving = [cid for cid in order if cid not in here]
+        coming = [cid for cid in here if cid not in order]
+        # A newcomer takes the place of someone leaving; others join on the right.
+        arranged = [cid if cid in here else (coming.pop(0) if coming else None) for cid in order]
+        arranged = [cid for cid in arranged if cid] + coming
+        previous = utterances[index - 1].id if index else None
+        for cid in leaving:
+            add(previous, "exit", "after", cid, None, ARRIVAL_MS)
+        for slot, cid in enumerate(arranged):
+            position = STAGE_POSITIONS[len(arranged)][slot]
+            if cid not in order:
+                add(item.id, "enter", "before", cid, position, ARRIVAL_MS if index else 0)
+            elif places[cid] != position:
+                add(item.id, "position", "before", cid, position, ARRIVAL_MS)
+            places[cid] = position
+        order = arranged
+    return directions
+
+
 # How long someone heard first, through a phone or the like, takes to come on in person.
 ARRIVAL_MS = 300
 
@@ -624,21 +736,32 @@ def _entrances(plan: ScenePlan, utterances: list[MappedUtterance], heard: set[st
 
 
 def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Staging | SceneStaging,
-                *, trace: list[dict] | None = None):
+                *, trace: list[dict] | None = None, stage: list[tuple[str, int, int]] | None = None):
+    """Entrances, staging and faces of one scene.
+
+    With ``stage`` (central_cast), only the central people stand on stage, each for their span;
+    anyone else speaks from a frame, like a remote voice, and lights up or changes no portrait.
+    """
     directions = []
     sources = {row.utterance_id: row.voice_source for row in staging.emotions}
     heard = {item.id for item in utterances
              if item.speaker_id is not None and sources.get(item.id, "present") != "present"}
-    entrances = _entrances(plan, utterances, heard)
-    present = [character_id for character_id in plan.character_ids if character_id in entrances]
-    positions = ("left", "right", "center") if len(present) > 1 else ("center",)
-    for index, character_id in enumerate(present):
-        late = entrances[character_id] != utterances[0].id
-        directions.append(NarrativeDirection(
-            id=f"{plan.id}-d{len(directions) + 1}", utterance_id=entrances[character_id],
-            kind="enter", timing="before", character_id=character_id,
-            position=positions[index % len(positions)], duration_ms=ARRIVAL_MS if late else 0,
-        ))
+    index_of = {item.id: index for index, item in enumerate(utterances)}
+    if stage is not None:
+        heard |= {item.id for index, item in enumerate(utterances)
+                  if item.speaker_id is not None and item.speaker_id not in on_stage(stage, index)}
+        directions.extend(_stage_directions(plan, utterances, stage))
+    else:
+        entrances = _entrances(plan, utterances, heard)
+        present = [character_id for character_id in plan.character_ids if character_id in entrances]
+        positions = ("left", "right", "center") if len(present) > 1 else ("center",)
+        for index, character_id in enumerate(present):
+            late = entrances[character_id] != utterances[0].id
+            directions.append(NarrativeDirection(
+                id=f"{plan.id}-d{len(directions) + 1}", utterance_id=entrances[character_id],
+                kind="enter", timing="before", character_id=character_id,
+                position=positions[index % len(positions)], duration_ms=ARRIVAL_MS if late else 0,
+            ))
     known = {item.id for item in utterances}
     speakers = {item.id: item.speaker_id for item in utterances}
     listed: dict[str, dict[str, str]] = {}
@@ -647,9 +770,13 @@ def _directions(plan: ScenePlan, utterances: list[MappedUtterance], staging: Sta
             raise ValueError("Staging references an unknown utterance.")
         if direction.kind in {"focus", "expression"} and direction.character_id not in plan.character_ids:
             raise ValueError("Staging names an unknown character.")
+        absent = stage is not None and direction.character_id not in on_stage(stage, index_of[direction.utterance_id])
         if direction.kind == "expression":
-            # Faces are settled below, together with the speakers' own.
-            listed.setdefault(direction.utterance_id, {})[direction.character_id] = direction.expression
+            # Faces are settled below, together with the speakers' own; no portrait, no face to change.
+            if not absent:
+                listed.setdefault(direction.utterance_id, {})[direction.character_id] = direction.expression
+            continue
+        if direction.kind == "focus" and absent:
             continue
         if direction.kind in {"pause", "blackout"} and direction.duration_ms <= 0:
             raise ValueError("Pause/blackout staging requires a positive duration.")

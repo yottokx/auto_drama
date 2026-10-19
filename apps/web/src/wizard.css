@@ -57,6 +57,12 @@
 .wizard-approval-record .m2-job-history { margin-bottom: 0; }
 .wizard-approval-title { display: flex; align-items: center; gap: 14px; background: #f1f3e8; padding: 19px; border: 1px solid #e0e5d4; border-radius: 6px; color: #7d8e69; }
 .wizard-approval-title h3 { font-family: 'Yu Mincho', serif; font-size: 21px; font-weight: 500; overflow-wrap: anywhere; }
+/* 承認時の登場キャラ数: 目安を初期値に、メインを含む上限を選ぶ */
+.wizard-cast-limit { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 14px; margin: 16px 0 0; padding: 14px 15px; border: 1px solid #e0e5d4; border-radius: 6px; color: #5f6a55; font-size: 13px; }
+.wizard-cast-limit span { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+.wizard-cast-limit span small { font-weight: 400; color: #8a9180; font-size: 11px; }
+.wizard-cast-limit input { width: 72px; padding: 6px 8px; font-size: 15px; text-align: right; border: 1px solid #cfd6c2; border-radius: 4px; }
+.wizard-cast-limit > small { grid-column: 1 / -1; color: #7d8476; font-size: 11px; line-height: 1.7; }
 .wizard-approval-title p { font-size: 11px; margin-top: 5px; }
 .wizard-library-card { display: flex; align-items: stretch; gap: 25px; border: 1px solid #dce2ce; border-radius: 7px; background: #fffefa; width: min(560px, 100%); padding: 0; overflow: hidden; text-align: left; }
 .wizard-library-art { display: grid; place-items: center; width: 150px; min-height: 200px; background: #e6ecdd; color: #9dab89; flex-shrink: 0; }

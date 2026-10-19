@@ -23,6 +23,10 @@ from .story_workflow import (
 )
 
 Text = Annotated[str, StringConstraints(min_length=1, max_length=30_000)]
+# The most people one scene may hold: every planned character and the few a chapter may add.
+SCENE_CAST_MAX = 16
+# At most this many portraits stand on stage; a scene of more people names its central ones.
+STAGE_PORTRAITS = 3
 Emotion = Literal["neutral", "happy", "sad", "angry", "surprised", "afraid", "calm"]
 M3_KINDS = ("m3_plan", "m3_narrative", "m3_background", "m3_image", "m3_voice", "m3_voice_clone",
             "m3_music_plan", "m3_music", "m3_event_cg_budget", "m3_event_cg_plan", "m3_event_cg",
@@ -133,7 +137,11 @@ class RequiredEvent(Contract):
 class ScenePlan(Contract):
     id: Identifier
     location_id: Identifier
-    character_ids: list[CharacterId] = Field(min_length=1, max_length=3)
+    # A plan that opens the scene cast may put the whole cast in one scene. Generated schemas
+    # still ask for three, so earlier workflows send what they always sent; a plan made with the
+    # open cast widens its own schema (script_chapter_plan.open_scene_schema).
+    character_ids: list[CharacterId] = Field(min_length=1, max_length=SCENE_CAST_MAX,
+                                             json_schema_extra={"maxItems": 3})
     objectives: Text
     start_state: Text
     required_events: list[RequiredEvent] = Field(min_length=1, max_length=8)

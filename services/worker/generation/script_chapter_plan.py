@@ -3,7 +3,7 @@
 from pydantic import Field, model_validator
 
 from packages.contracts.m2 import CharacterResult
-from packages.contracts.m3 import Location, ScenePlan
+from packages.contracts.m3 import SCENE_CAST_MAX, Location, ScenePlan
 from packages.contracts.outfits import DEFAULT_OUTFIT, SceneOutfit
 from packages.contracts.script import Contract, Identifier
 
@@ -155,6 +155,11 @@ def add_scene_outfits(schema: dict, outfits: dict) -> None:
                                      "description": "別の姿を持つ人物の、当場面での姿。該当者がいなければ空配列。"}
     scene["properties"] = properties
     scene["required"].append("outfits")
+
+
+def open_scene_schema(schema: dict) -> None:
+    """Let a scene list everyone in it; the generated schema otherwise asks for three at most."""
+    schema["$defs"]["WeightedScene"]["properties"]["character_ids"]["maxItems"] = SCENE_CAST_MAX
 
 
 def settle_scene_outfits(plan, outfits: dict, required: list[tuple[str, str]]):

@@ -168,6 +168,8 @@ class GenerateWorld(Action):
 class SimpleAction(Action):
     action: Literal["confirm-world", "generate-characters", "approve"]
     reconfirm: bool = Field(default=False, strict=True)
+    # Approve only: the most characters the work may have, mains included. Absent: the guideline.
+    cast_limit: int | None = Field(default=None, ge=1, le=11, strict=True)
 
 
 class OutfitInput(Contract):

@@ -101,7 +101,9 @@ def test_a_new_plan_asks_for_every_planned_character_and_an_earlier_one_keeps_it
         project = action(client, project, "approve")
         worker = plan_worker(client)
         job = claim(client, worker)
-        assert job["payload"]["script_options"] == {"planned_cast_appears": True}
+        # Without a chosen character count, the guideline for the current settings is used.
+        assert job["payload"]["script_options"] == {
+            "planned_cast_appears": True, "open_scene_cast": True, "cast_limit": project["castLimit"]["guide"]}
         complete_plan(client, job, worker)
         # A plan begun before this option existed has none; revising it must not introduce it.
         with client.app.state.coordinator.db.transaction() as connection:
@@ -116,3 +118,16 @@ def test_a_new_plan_asks_for_every_planned_character_and_an_earlier_one_keeps_it
         plan_action(client, project, "revise", target="plot", instruction="第1章をもう少し穏やかに。")
         revised = claim(client, worker)
         assert "script_options" not in revised["payload"]
+
+
+def test_the_character_count_chosen_at_approval_reaches_the_plan(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        assert project["castLimit"] == {"guide": project["castLimit"]["guide"], "max": 11}
+        mains = len(project["draft"]["characters"])
+        # Fewer than the mains is refused: by the contract at zero, by the service otherwise.
+        action(client, project, "approve", cast_limit=mains - 1, status=400 if mains > 1 else 422)
+        project = action(client, project, "approve", cast_limit=7)
+        job = claim(client, plan_worker(client))
+        assert job["payload"]["script_options"]["cast_limit"] == 7
+        assert job["payload"]["script_options"]["open_scene_cast"] is True

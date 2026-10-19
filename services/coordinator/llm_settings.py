@@ -46,6 +46,19 @@ def generation_profile(coordinator, connection=None) -> dict:
             "reasoning_level": llm["reasoning_level"], "prompt_version": 4}
 
 
+def script_profile(coordinator, connection=None) -> dict:
+    """The model settings a plan and its script will run with, as execution_settings gives them."""
+    payload = {"phase": "planning"}
+    return execution_settings(coordinator, connection, payload, kind="m3_plan")["profile"]
+
+
+def cast_limit_choice(coordinator, connection=None) -> dict:
+    """What STEP3 offers for a work's character count: the guideline for the current settings."""
+    from services.worker.generation.script_cast import CAST_LIMIT_MAX, cast_limit_guide
+
+    return {"guide": cast_limit_guide(script_profile(coordinator, connection)), "max": CAST_LIMIT_MAX}
+
+
 def execution_settings(coordinator, connection, payload, *, kind, revision=0, profile=None):
     """Snapshot a fresh execution; story, workflow and voice settings stay separate."""
     current = dict(profile if profile is not None else generation_profile(coordinator, connection))

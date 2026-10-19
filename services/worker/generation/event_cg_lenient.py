@@ -69,6 +69,25 @@ def schema(limit, variants, lines, people):
     return _object({"cgs": {"type": "array", "maxItems": limit, "items": _object(properties)}})
 
 
+# The most people one event CG draws: every reference image raises the memory it needs.
+CG_PEOPLE = 3
+TIMING_ORDER = {"before": 0, "start": 1, "after": 2}
+
+
+def _standing(scene, utterance_id):
+    """Who stands on stage as this line begins, by the scene's entrances and exits."""
+    order = {row["id"]: index for index, row in enumerate(scene["utterances"])}
+    here, line = set(), order[utterance_id]
+    for row in sorted(scene.get("directions", []), key=lambda row: (order[row["utterance_id"]], TIMING_ORDER[row["timing"]])):
+        if (order[row["utterance_id"]], TIMING_ORDER[row["timing"]]) > (line, 0):
+            break
+        if row["kind"] == "enter":
+            here.add(row["character_id"])
+        elif row["kind"] == "exit":
+            here.discard(row["character_id"])
+    return here
+
+
 def fit(answer, payload, limit):
     """Fit the planner's choices to the script. Only an unusable choice is left out."""
     scenes = payload["context"]["narrative"]["scenes"]
@@ -90,6 +109,10 @@ def fit(answer, payload, limit):
         end = last + 1 if start <= last < scene_end else scene_end
         people = [cid for cid in referenced if cid in raw.get("character_ids", []) and cid in cast[scene_id]]
         people = people or [cid for cid in referenced if cid in cast[scene_id]][:3]
+        if len(people) > CG_PEOPLE:
+            # A picture holds three at most; those standing on stage at its first line come first.
+            standing = _standing(scenes[[scene["id"] for scene in scenes].index(scene_id)], rows[start][1])
+            people = ([cid for cid in people if cid in standing] + [cid for cid in people if cid not in standing])[:CG_PEOPLE]
         if not people:
             continue
         chosen.append({"start": start, "end": end, "scene_id": scene_id, "people": people, "raw": raw})

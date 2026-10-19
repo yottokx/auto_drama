@@ -1099,12 +1099,13 @@
     },
     "RemoteVoice": {
       "additionalProperties": false,
-      "description": "Its speaker is shown in a frame beside the text, not on stage, and the voice is treated.",
+      "description": "Its speaker is shown in a frame beside the text, not on stage.\n\nA remote or remembered voice is also treated; an offstage speaker is in the room and sounds so.",
       "properties": {
         "source": {
           "enum": [
             "remote",
-            "recollection"
+            "recollection",
+            "offstage"
           ],
           "title": "Source",
           "type": "string"

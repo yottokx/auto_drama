@@ -80,9 +80,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--cast-results", type=Path, required=True, help="probe_cast_size.py results.json")
-    parser.add_argument("--title", required=True)
-    parser.add_argument("--arm", required=True, help="for example surroundings@1879534044")
+    parser.add_argument("--cast-results", type=Path,
+                        help="probe_cast_size.py results.json; without it the cast plan is generated")
+    parser.add_argument("--title")
+    parser.add_argument("--arm", help="for example surroundings@1879534044")
     parser.add_argument("--context-size", type=int)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--chapter-limit", type=int)
@@ -91,7 +92,7 @@ def main() -> int:
                         help="open: a scene may hold up to the whole cast (8), not three; "
                              "acting: open, and a scene lists only the people who speak or act in it")
     args = parser.parse_args()
-    cast = chosen_cast(args.cast_results, args.title, args.arm)
+    cast = chosen_cast(args.cast_results, args.title, args.arm) if args.cast_results else None
     if args.scene_cast != "capped":
         open_scene_cast()
     original = script_continuation.ScriptRun.structured
@@ -99,7 +100,7 @@ def main() -> int:
     def structured(self, key, purpose, number, prompt, context, model, validate=None, schema=None):
         if purpose == "script-plan" and args.scene_cast != "capped":
             prompt = scene_cast_instruction(prompt, args.scene_cast)
-        if key != "cast-plan":
+        if key != "cast-plan" or cast is None:
             return original(self, key, purpose, number, prompt, context, model, validate, schema)
         return validate(cast) if validate else cast
 

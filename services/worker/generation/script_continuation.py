@@ -9,12 +9,14 @@ from pathlib import Path
 
 from packages.contracts.job_progress import ChapterPlanProgress
 from packages.contracts.m3 import (
+    SCENE_CAST_MAX,
     NarrativeDirection,
     NarrativeResult,
     NarrativeScene,
     SceneReview,
 )
 from packages.contracts.outfits import DEFAULT_OUTFIT, outfits_after, snapshot_outfits
+from packages.contracts.script import RemoteVoice
 from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.continuity import narrative_hash
 
@@ -46,8 +48,11 @@ from .script_cast import (
     CastPlan,
     CastReferenceRepair,
     ScriptOptions,
+    SurroundedCastPlan,
     apply_connection_repair,
     approved_main_assignments,
+    cast_instruction,
+    cast_schema,
     check_cast,
     connection_repair_material,
     script_metrics,
@@ -61,6 +66,7 @@ from .script_chapter_plan import (
     FirstChapterPlan,
     OutfitMoments,
     add_scene_outfits,
+    open_scene_schema,
     outfit_moment_schema,
     pending_outfit_changes,
     project_plan,
@@ -404,6 +410,17 @@ class ScriptRun(DraftRun):
         """Alternate looks by main character; empty for an ordinary production."""
         return snapshot_outfits(self.payload["approval_snapshot"])
 
+    @property
+    def cast_room(self) -> int | None:
+        """How many supporting characters the user's character count leaves; None without one."""
+        if self.options.cast_limit is None:
+            return None
+        return max(0, self.options.cast_limit - len(self.payload["approval_snapshot"]["characters"]))
+
+    @property
+    def cast_model(self):
+        return CastPlan if self.cast_room is None else SurroundedCastPlan
+
     def cast_plan(self):
         if (self.manifest["approved_chapter_count"] != 3
                 and "planning_protocol" not in self.manifest
@@ -423,8 +440,11 @@ class ScriptRun(DraftRun):
             return value
         context = {"setting": self.setting(), "outline": "", "brief": self.options.for_stage("cast"),
                    "chapters": [], "notes": []}
+        model, room = self.cast_model, self.cast_room
 
         def prepare(value, source_row=None):
+            if room is not None and len(value.supporting_characters) > room:
+                raise ValueError(f"Plan at most {room} supporting characters.")
             try:
                 check_cast(value, main)
             except CastConnectionError:
@@ -438,7 +458,9 @@ class ScriptRun(DraftRun):
             if row["status"] != "completed" or row.get("reply", {}).get("_finish_reason") != "stop":
                 continue
             try:
-                candidate = CastPlan.model_validate_json(row["reply"]["content"])
+                candidate = model.model_validate_json(row["reply"]["content"])
+                if room is not None and len(candidate.supporting_characters) > room:
+                    raise ValueError("Too many supporting characters.")
                 check_cast(candidate, main)
             except CastConnectionError:
                 value = prepare(candidate, row)
@@ -448,14 +470,23 @@ class ScriptRun(DraftRun):
                 value = candidate
             break
         if value is None:
-            instruction = CAST_INSTRUCTION
-            if "planning_protocol" in self.manifest:
-                instruction = instruction.replace("全3章では", f"全{self.manifest['approved_chapter_count']}章では")
+            if room is not None:
+                instruction = cast_instruction(self.manifest["approved_chapter_count"], room)
+            else:
+                instruction = CAST_INSTRUCTION
+                if "planning_protocol" in self.manifest:
+                    instruction = instruction.replace("全3章では", f"全{self.manifest['approved_chapter_count']}章では")
             value = self.structured("cast-plan", "script-cast", 1, instruction, context,
-                                    CastPlan, prepare)
+                                    model, prepare, cast_schema(model, room) if room is not None else None)
+        surroundings = getattr(value, "surroundings", None)
+        if isinstance(value, SurroundedCastPlan):
+            value = value.plan()
         data = value.model_dump(mode="json")
         record = {"plan": data, "sha256": digest(data), "input_sha256": self.manifest["input_sha256"],
                   "protocol": self.manifest["generator_protocol"]}
+        if surroundings is not None:
+            # Who the plan saw around the mains; kept beside the plan as a record only.
+            record["surroundings"] = surroundings
         write_json(self.output / "cast-plan.json", record)
         self.state["cast_plan"] = record
         self.persist()
@@ -471,7 +502,7 @@ class ScriptRun(DraftRun):
                 if row["status"] != "completed" or row.get("reply", {}).get("_finish_reason") != "stop":
                     continue
                 try:
-                    candidate = CastPlan.model_validate_json(row["reply"]["content"])
+                    candidate = self.cast_model.model_validate_json(row["reply"]["content"])
                 except ValueError:
                     continue
                 if digest(candidate.model_dump(mode="json")) == source_hash:
@@ -959,12 +990,32 @@ class ScriptRun(DraftRun):
             staging = staging_llm.validated(narrative._staging, context_text + "\n読み上げない声の指示: "
                                          + json.dumps(hints, ensure_ascii=False), plan, utterances)
             self.progress_step(scope + "-staging", "script-staging", number, "completed")
+        stage = None
+        silent = any(not any(u.speaker_id == cid for u in utterances) for cid in plan.character_ids)
+        if (self.options.open_scene_cast and not self.options.skip_staging
+                and (len(plan.character_ids) > narrative.STAGE_PORTRAITS or silent)):
+            # Only so many portraits fit, and someone planned but silent may not be there at all:
+            # the scene's central people stand on stage while there.
+            self.progress_step(scope + "-stage-cast", "script-staging", number, "running")
+            cast_llm = ExistingStages(self, scope + "-stage-cast", "script-staging", number)
+            stage = cast_llm.validated(narrative.central_cast, context_text, plan, utterances,
+                                       {row.utterance_id: row.voice_source for row in staging.emotions},
+                                       names)
+            self.progress_step(scope + "-stage-cast", "script-staging", number, "completed")
+
+        def remote(index, utterance, annotation):
+            heard = narrative.remote_voice(utterance, annotation)
+            if (heard is None and stage is not None and utterance.speaker_id is not None
+                    and utterance.speaker_id not in narrative.on_stage(stage, index)):
+                return RemoteVoice(source="offstage", expression=annotation.expression)
+            return heard
+
         utterances = [u.model_copy(update={"inner_emotion": a.inner_emotion or "未指定",
             "voice_emotion": a.voice_emotion, "delivery": hints.get(u.id) or a.delivery or None,
-            "remote": narrative.remote_voice(u, a)})
-            for u, a in zip(utterances, staging.emotions, strict=True)]
+            "remote": remote(index, u, a)})
+            for index, (u, a) in enumerate(zip(utterances, staging.emotions, strict=True))]
         normalizations = []
-        directions = narrative._directions(plan, utterances, staging, trace=normalizations)
+        directions = narrative._directions(plan, utterances, staging, trace=normalizations, stage=stage)
         if normalizations:
             self.llm.trace.extend(normalizations)
             self.state.setdefault("staging_normalizations", {})[scope] = normalizations
@@ -1223,6 +1274,8 @@ class ScriptRun(DraftRun):
         schema = model.model_json_schema()
         if outfits:
             add_scene_outfits(schema, outfits)
+        if self.options.open_scene_cast:
+            open_scene_schema(schema)
         instruction = (
             "第1章です。承認設定と当章の予定から直接場面を作ります。前章の実績整理は不要です。"
             if number == 1 else
@@ -1252,7 +1305,8 @@ class ScriptRun(DraftRun):
             "計画済みサブはcharacter_idsへ指定して登場できます。主筋に不可欠でなくても日常や交流を描けます。"
             "未登場人物の設定は過去の発言・出来事ではありません。初登場でも設定にある間柄を維持します。"
             "new_charactersは計画外で今回出演する新規人物だけ。不要なら空配列です。"
-            "各sceneのid（場面ID）はs1,s2など短くします。character_idsは登場人物を最大3人、"
+            "各sceneのid（場面ID）はs1,s2など短くします。"
+            + ("character_idsは登場人物を、" if self.options.open_scene_cast else "character_idsは登場人物を最大3人、") +
             "資料内の既存人物IDまたはnew_charactersで定義した人物IDをそのまま使い、短縮・改名しません。"
             "locationsには当章で使う全ての場所を、既存の場所も含めて定義します。"
             "各sceneのlocation_idに対応する定義を省略せず、未使用の場所は含めません。"
@@ -1313,7 +1367,7 @@ class ScriptRun(DraftRun):
         if not added and not heard:
             return plan
         before = {scene.id: scene.character_ids for scene in plan.scenes}
-        plan = voices.cast(plan, added, heard)
+        plan = voices.cast(plan, added, heard, SCENE_CAST_MAX if self.options.open_scene_cast else voices.MAX_CAST)
         narrative._validate_chapter_plan(plan, known | {row.id for row in plan.new_characters})
         self.llm.trace.append({"type": "heard_voices_cast", "chapter": number, "characters": [
             {"id": person.id, "name": person.name, "scenes": scene_ids,

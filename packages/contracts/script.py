@@ -103,13 +103,17 @@ class FaceBox(Contract):
         return self
 
 
-# A line whose speaker is not there in person: heard through something, or remembered.
-VoiceSource = Literal["remote", "recollection"]
+# A line whose speaker has no portrait on stage: heard through something, remembered, or there
+# in a crowded scene without being one of the people who stand on stage (offstage).
+VoiceSource = Literal["remote", "recollection", "offstage"]
 VoiceChannel = Literal["phone", "voicemail", "radio", "speaker", "telepathy", "message"]
 
 
 class RemoteVoice(Contract):
-    """Its speaker is shown in a frame beside the text, not on stage, and the voice is treated."""
+    """Its speaker is shown in a frame beside the text, not on stage.
+
+    A remote or remembered voice is also treated; an offstage speaker is in the room and sounds so.
+    """
 
     source: VoiceSource
     # What a remote voice comes through; a remembered one comes through nothing.

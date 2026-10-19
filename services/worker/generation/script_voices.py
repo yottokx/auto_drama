@@ -115,8 +115,9 @@ def define_context(context: dict, plan, scene_ids: list[str], name: str, identif
             + json.dumps(scenes, ensure_ascii=False) + f"\n定義する人物: {name}（id: {identifier}）"}
 
 
-def cast(plan, added: list[tuple[CharacterResult, list[str]]], heard: dict[str, list[str]] | None = None):
-    """The plan with everyone heard cast where heard, if the scene has room.
+def cast(plan, added: list[tuple[CharacterResult, list[str]]], heard: dict[str, list[str]] | None = None,
+         limit: int = MAX_CAST):
+    """The plan with everyone heard cast where heard, if the scene has room (``limit`` people).
 
     `heard` is the existing characters heard where they are not cast (see uncast), and `added`
     the people just defined; of those, only the ones cast somewhere become new characters.
@@ -126,7 +127,7 @@ def cast(plan, added: list[tuple[CharacterResult, list[str]]], heard: dict[str, 
     for scene in plan.scenes:
         ids = list(scene.character_ids)
         for identifier, heard_in in voices:
-            if scene.id in heard_in and identifier not in ids and len(ids) < MAX_CAST:
+            if scene.id in heard_in and identifier not in ids and len(ids) < limit:
                 ids.append(identifier)
                 used.add(identifier)
         scenes.append(scene.model_copy(update={"character_ids": ids}))

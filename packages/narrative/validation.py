@@ -148,10 +148,11 @@ def validate_narrative(value: dict | NarrativeResult, approval_snapshot: dict,
                 raise ValueError("Pause/blackout requires a positive duration.")
             if direction.kind == "enter":
                 visible.add(direction.character_id)
-        # Someone only heard through a phone or the like, or remembered, is never on stage.
+        # Someone only heard through a phone or the like, or remembered, is never on stage; nor is
+        # anyone silent who is not one of the scene's central people (maybe not there at all).
         heard_only = {character_id for character_id in scene.plan.character_ids
-                      if (spoken := [u for u in scene.utterances if u.speaker_id == character_id])
-                      and all(u.remote is not None for u in spoken)}
+                      if not (spoken := [u for u in scene.utterances if u.speaker_id == character_id])
+                      or all(u.remote is not None for u in spoken)}
         if not set(scene.plan.character_ids) - heard_only <= visible:
             raise ValueError("Each scene character requires an entrance direction.")
         all_utterances.extend(utterances)

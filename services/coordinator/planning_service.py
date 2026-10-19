@@ -326,7 +326,7 @@ class PlanningService:
             self.history.finish(connection, project_id)
             return self._view(connection, project_id)
 
-    def start_approved(self, connection, project_id, approval_id):
+    def start_approved(self, connection, project_id, approval_id, *, cast_limit=None):
         self.history.ensure(connection, project_id)
         existing = connection.execute(
             "SELECT * FROM planning_draft WHERE main_approval_id=?", (approval_id,)).fetchone()
@@ -340,13 +340,13 @@ class PlanningService:
         connection.execute("UPDATE project_history_state SET planning_id=?,version=version+1 WHERE project_id=?",
                            (identifier, project_id))
         row = required(connection, "planning_draft", identifier)
-        self._enqueue(connection, row)
+        self._enqueue(connection, row, cast_limit=cast_limit)
         return required(connection, "planning_draft", identifier)
 
-    def _enqueue(self, connection, row, *, body=None):
+    def _enqueue(self, connection, row, *, body=None, cast_limit=None):
         from services.worker.generation.workflow_version import generator_protocol
 
-        from .llm_settings import execution_settings
+        from .llm_settings import cast_limit_choice, execution_settings
         from .tts_settings import TTSService
 
         first = connection.execute(
@@ -365,8 +365,11 @@ class PlanningService:
                 "generator_protocol": generator_protocol("causal", "script_continuation_v1"),
                 "planning_protocol": planning_protocol(),
                 # A planned supporting character is drawn and voiced in this step, so the plot uses each
-                # one. Plans started earlier carry no such option and keep the wording they were made with.
-                "script_options": {"planned_cast_appears": True}}
+                # one. The user chose how many characters the work may have (the guideline if not), and a
+                # scene may hold more than three. Plans started earlier carry none of these options and
+                # keep the wording and limits they were made with.
+                "script_options": {"planned_cast_appears": True, "open_scene_cast": True,
+                                   "cast_limit": cast_limit or cast_limit_choice(self.coordinator, connection)["guide"]}}
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
             "planning_revision": row["revision"], "approval_snapshot": self._snapshot(connection, row),
             **generation}

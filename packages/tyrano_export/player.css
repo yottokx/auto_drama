@@ -71,6 +71,10 @@ html, body { margin: 0; background: #000; }
   background: radial-gradient(120% 90% at 50% 30%, rgba(220, 203, 162, .16), rgba(5, 7, 10, .72) 70%);
   box-shadow: 0 0 0 4px rgba(5, 7, 10, .45), 0 6px 18px rgba(0, 0, 0, .5); }
 #adn-remote img { position: absolute; max-width: none; }
+/* その場にいるが立ち絵の無い人: 明るい枠で、よそからの声と見分ける */
+#adn-remote.adn-offstage { border: 2px solid rgba(255, 244, 222, .85); border-radius: 6px;
+  background: linear-gradient(rgba(255, 244, 222, .14), rgba(20, 24, 30, .35));
+  box-shadow: 0 0 0 3px rgba(5, 7, 10, .35), 0 4px 12px rgba(0, 0, 0, .4); }
 /* 舞台の同じ人物は聞いているだけ: その声はよそから届いている */
 .tyrano_chara.adn-heard { filter: brightness(.6) !important; }
 

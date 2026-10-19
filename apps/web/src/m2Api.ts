@@ -31,7 +31,9 @@ export type M2Draft = {
   activeJobId?: string | null; remainingJobCount?: number
   relationshipInputs?: RelationshipInput[]; relationships?: Relationships
 }
-export type M2Detail = { project: Project; draft: M2Draft; jobs: Job[]; imageHistory?: Record<string, { artifactId: string; url: string; outfitId: string }[]> }
+export type M2Detail = { project: Project; draft: M2Draft; jobs: Job[]; imageHistory?: Record<string, { artifactId: string; url: string; outfitId: string }[]>
+  /** The work's character count chosen at approval: the guideline for the current settings, and the most allowed. */
+  castLimit?: { guide: number; max: number } }
 export const activeJob = (job: Job) => job.status === 'pending' || job.status === 'running'
 const selectedKey = 'auto-drama:m2-selected-project:v1'
 

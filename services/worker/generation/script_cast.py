@@ -10,6 +10,27 @@ from packages.contracts.script import Contract, Identifier
 
 from .script_budget import SceneTokenPolicy
 
+# The most characters a work may have, mains included: three mains and eight supporting.
+CAST_LIMIT_MAX = 11
+
+
+def cast_limit_guide(profile: dict) -> int:
+    """A guideline, not a limit: how many characters the script steps carry with room to spare.
+
+    Each character adds about 200-450 tokens to every chapter plan (settings, relationships,
+    everyday context) and its details to every scene it is in; older chapters can be shortened,
+    the cast cannot. At 32k, casts of seven and eight kept every input whole (chapter plans up to
+    about 16k tokens, docs/experiments/cast-size-20261017.md); 16k already shortens older
+    chapters by chapter 3. Reasoning spends the same context on thinking. The value leaves room
+    for the one or two people a chapter may add later. The installed models share a tokenizer,
+    so only the context and reasoning settings change it.
+    """
+    size = profile.get("context_size") or 16384
+    guide = 11 if size >= 65536 else 8 if size >= 32768 else 6 if size >= 24576 else 5
+    if (profile.get("reasoning_level") or "none") != "none":
+        guide -= 1
+    return max(1, min(CAST_LIMIT_MAX, guide))
+
 
 class ScriptOptions(Contract):
     target_episode_minutes: int = Field(default=10, ge=1, le=120, strict=True)
@@ -28,6 +49,14 @@ class ScriptOptions(Contract):
     # Experiment only: no staging or outfit-moment calls. Every line gets a neutral emotion and
     # the scene only its entrances, so a script can be read without the slowest step.
     skip_staging: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Set for plans made since the user chooses how many characters a work may have, mains
+    # included. The cast plan then has no size anchor, first lists who is around the mains, and
+    # keeps to this. Absent when unset, so earlier plans keep their wording and their limit.
+    cast_limit: int | None = Field(default=None, ge=1, le=CAST_LIMIT_MAX, strict=True,
+                                   exclude_if=lambda value: value is None)
+    # Set for plans made since a scene may hold more than three people. Staging then names the
+    # central people of a scene of four or more, and only they stand on stage. Absent when unset.
+    open_scene_cast: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def dialogue_fits_body(self):
@@ -75,6 +104,47 @@ class CastPlan(Contract):
     supporting_characters: list[CharacterResult] = Field(max_length=8)
     everyday_context: list[CastLife] = Field(max_length=8)
     connections: list[CastConnection] = Field(max_length=30)
+
+
+class SurroundedCastPlan(CastPlan):
+    """A cast plan that first names who is around the mains; only the plan itself is kept."""
+
+    surroundings: list[str] = Field(max_length=12, description=(
+        "メインの身近にいる人・出会う人・対立する人を、この世界と物語に照らして"
+        "立場と物語での関わりで短く挙げます。メイン自身は含めません。"))
+
+    def plan(self) -> CastPlan:
+        return CastPlan.model_validate(self.model_dump(mode="json", exclude={"surroundings"}))
+
+
+def cast_schema(model: type[CastPlan], room: int | None) -> dict:
+    """The answer schema: surroundings first when asked for, and no more supporting characters than room."""
+    schema = model.model_json_schema()
+    if room is not None:
+        for key in ("supporting_characters", "everyday_context"):
+            schema["properties"][key]["maxItems"] = room
+    if "surroundings" in schema["properties"]:
+        schema["properties"] = {"surroundings": schema["properties"].pop("surroundings"), **schema["properties"]}
+        schema["required"] = ["surroundings", *(key for key in schema["required"] if key != "surroundings")]
+    return schema
+
+
+def cast_instruction(chapters: int, room: int) -> str:
+    """The cast instruction of a plan with a chosen character count: no size anchor, people around first."""
+    size = (f"人数の目安はありません。全{chapters}章の物語でメインの身近にいる人、出会う人、対立する人を"
+            "この世界から考え、台詞と出番がある人を作ります。"
+            "少人数の密な関係が魅力の作品なら少なく、学校・職場・軍・町など人が集まる場や、"
+            "敵や競争相手がいる物語なら、それに見合う顔ぶれにします。"
+            "一場面だけの店員・兵士・級友のような脇の人物も、台詞があれば作れます。"
+            f"最大{room}人は容量です。"
+            "まずsurroundingsに挙げ、その中から台詞と出番がある人をsupporting_charactersにします。"
+            if room else
+            "この作品ではサブキャラを作りません。surroundingsには周りの人を挙げても構いませんが、"
+            "supporting_charactersとeveryday_contextは空配列にします。")
+    text = CAST_INSTRUCTION.replace(CAST_ANCHOR, size).replace(CAST_LIMIT_OLD, CAST_LIMIT_NEW)
+    if size not in text or CAST_LIMIT_NEW not in text:
+        raise ValueError("The cast instruction no longer has the expected wording.")
+    return text
 
 
 class CastConnectionError(ValueError):
@@ -218,3 +288,7 @@ CAST_INSTRUCTION = (
     "人物IDは英数字の短い未使用IDを使い、予約話者NARRATORは使いません。"
     "ここで決める接点は設定・将来の可能性であり、本文で実際に登場した記録ではありません。"
 )
+CAST_ANCHOR = "全3章では1〜2人を目安に世界・メイン人数へ合わせます。最大8は容量であり目標ではありません。"
+CAST_LIMIT_OLD = "登場人物を限定するユーザー設定は優先し、その場合は空配列も可能です。"
+CAST_LIMIT_NEW = ("登場人物の数や範囲についてのユーザー設定は、増やす場合も限定する場合も優先します。"
+                  "限定されていれば空配列も可能です。")

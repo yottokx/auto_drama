@@ -163,7 +163,9 @@
   // The frame sits from the name's top to the last text line; the text column starts after it.
   const REMOTE_LEFT = 44, REMOTE_GAP = 22, COLUMN_RIGHT = 900;
   // What a line's voice goes through; a remembered one is echoed, a message is not treated.
-  const voiceEffect = line => line?.remote ? (line.remote.source === "recollection" ? "recollection" : line.remote.channel) : null;
+  // Someone offstage is in the room without a portrait: framed, but the voice is untouched.
+  const voiceEffect = line => !line?.remote || line.remote.source === "offstage" ? null
+    : line.remote.source === "recollection" ? "recollection" : line.remote.channel;
   function showRemote(line) {
     const frame = line?.remote ? remoteFrames[line.id] : null, box = $("adn-remote"), column = $("adn-col");
     k?.layer.getLayer("0", "fore").get(0)?.querySelectorAll(".adn-heard").forEach(item => item.classList.remove("adn-heard"));
@@ -174,6 +176,7 @@
     }
     const picture = box.firstElementChild, src = "./data/fgimage/" + encodeURIComponent(frame.storage);
     if (picture.getAttribute("src") !== src) picture.src = src;
+    box.classList.toggle("adn-offstage", frame.source === "offstage");
     box.hidden = false;
     const [x, y, , height] = frame.crop, scale = box.offsetHeight / height;
     Object.assign(picture.style, {width: frame.width * scale + "px", left: -x * scale + "px", top: -y * scale + "px"});

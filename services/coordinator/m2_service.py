@@ -245,7 +245,10 @@ class M2Service:
                     "SELECT id,logical_id FROM artifact WHERE project_id=? AND media_type='image/png' "
                     "AND (logical_id=? OR logical_id LIKE ? ESCAPE '!') ORDER BY created_at DESC,rowid DESC LIMIT 24",
                     (project_id, f"image-{character['id']}", self._history_pattern(character["id"])))]
-        return {"project": project, "draft": draft, "jobs": jobs, "imageHistory": history}
+        from .llm_settings import cast_limit_choice
+
+        return {"project": project, "draft": draft, "jobs": jobs, "imageHistory": history,
+                "castLimit": cast_limit_choice(self.coordinator, connection)}
 
     @staticmethod
     def _history_pattern(character_id: str) -> str:
@@ -1287,7 +1290,8 @@ class M2Service:
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
             if name == "approve":
-                self._approve(connection, project_id, state, reconfirm=reconfirm)
+                self._approve(connection, project_id, state, reconfirm=reconfirm,
+                              cast_limit=getattr(body, "cast_limit", None))
                 self._save(connection, project_id, state)
                 return self._view(connection, project_id, state)
             # Failed previous work is superseded by an explicit edit/new generation.
@@ -1655,8 +1659,10 @@ class M2Service:
             pending.append(task("m2_voice", character["id"], "voice-retake"))
         return pending
 
-    def _approve(self, connection, project_id: str, state: dict, *, reconfirm=False) -> None:
+    def _approve(self, connection, project_id: str, state: dict, *, reconfirm=False, cast_limit=None) -> None:
         draft = state["draft"]
+        if cast_limit is not None and cast_limit < len(draft["characters"]):
+            raise ServiceError(400, "登場キャラの上限は、メインキャラの人数以上にしてください。")
         self._world_confirmed(draft)
         if state["activeJobId"] or state["queue"]:
             raise ServiceError(409, "失敗または未完了の生成処理を解決してから承認してください。")
@@ -1757,7 +1763,7 @@ class M2Service:
         draft["approved"] = True
         from .planning_service import PlanningService
 
-        PlanningService(self.coordinator).start_approved(connection, project_id, identifier)
+        PlanningService(self.coordinator).start_approved(connection, project_id, identifier, cast_limit=cast_limit)
 
     def validate_retry(self, connection, job: dict) -> None:
         state = self._load(connection, job["project_id"])

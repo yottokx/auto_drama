@@ -278,7 +278,7 @@ def test_unstarted_legacy_approval_can_explicitly_generate_step4_without_changin
         project, _ = ready(client)
         # Model a persisted approval saved before either planning or production.
         original_start = PlanningService.start_approved
-        monkeypatch.setattr(PlanningService, "start_approved", lambda *_: None)
+        monkeypatch.setattr(PlanningService, "start_approved", lambda *_, **__: None)
         project = action(client, project, "approve")
         monkeypatch.setattr(PlanningService, "start_approved", original_start)
         pid = project["project"]["id"]
