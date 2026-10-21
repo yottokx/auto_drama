@@ -5,6 +5,7 @@ from itertools import combinations
 
 from pydantic import Field, model_validator
 
+from packages.contracts.llm_settings import CONTEXT_TIERS, context_tier
 from packages.contracts.m2 import CharacterResult
 from packages.contracts.script import Contract, Identifier
 
@@ -14,22 +15,26 @@ from .script_budget import SceneTokenPolicy
 CAST_LIMIT_MAX = 11
 
 
-def cast_limit_guide(profile: dict) -> int:
-    """A guideline, not a limit: how many characters the script steps carry with room to spare.
+class WorkLimits(Contract):
+    chapters: int
+    characters: int
+    # Alternate looks of all the mains together; None leaves each main its four.
+    looks: int | None
 
-    Each character adds about 200-450 tokens to every chapter plan (settings, relationships,
-    everyday context) and its details to every scene it is in; older chapters can be shortened,
-    the cast cannot. At 32k, casts of seven and eight kept every input whole (chapter plans up to
-    about 16k tokens, docs/experiments/cast-size-20261017.md); 16k already shortens older
-    chapters by chapter 3. Reasoning spends the same context on thinking. The value leaves room
-    for the one or two people a chapter may add later. The installed models share a tokenizer,
-    so only the context and reasoning settings change it.
-    """
-    size = profile.get("context_size") or 16384
-    guide = 11 if size >= 65536 else 8 if size >= 32768 else 6 if size >= 24576 else 5
-    if (profile.get("reasoning_level") or "none") != "none":
-        guide -= 1
-    return max(1, min(CAST_LIMIT_MAX, guide))
+
+# What a work may hold at each context tier (docs/long-form-plan.md). Characters, alternate
+# looks and the plot of every chapter go whole into every request; only earlier chapters'
+# scripts, examples and later chapters' details can be shortened. At 16k, three chapters with
+# three mains, one supporting character and three alternate looks left about 600 tokens in the
+# last chapter's scene plan (docs/experiments/long-form-16k-20261021.md). At 32k eight chapters
+# with six characters fit. Reasoning spends the answer slot, not the input, so it changes none.
+TIER_LIMITS = {16384: WorkLimits(chapters=3, characters=4, looks=3),
+               32768: WorkLimits(chapters=8, characters=8, looks=None),
+               65536: WorkLimits(chapters=8, characters=CAST_LIMIT_MAX, looks=None)}
+
+
+def work_limits(profile: dict) -> WorkLimits:
+    return TIER_LIMITS[context_tier(profile.get("context_size") or CONTEXT_TIERS[0])]
 
 
 class ScriptOptions(Contract):

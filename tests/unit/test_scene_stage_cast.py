@@ -17,8 +17,8 @@ from services.worker.generation.script_cast import (
     ScriptOptions,
     SurroundedCastPlan,
     cast_instruction,
-    cast_limit_guide,
     cast_schema,
+    work_limits,
 )
 from services.worker.generation.script_chapter_plan import FirstChapterPlan, open_scene_schema
 from tests.unit.test_event_cg_lenient import cg
@@ -190,14 +190,18 @@ def test_the_options_are_absent_from_earlier_plans():
         ScriptOptions(cast_limit=CAST_LIMIT_MAX + 1)
 
 
-@pytest.mark.parametrize(("profile", "guide"), [
-    ({"context_size": 16384, "reasoning_level": "none"}, 5),
-    ({"context_size": 32768, "reasoning_level": "none"}, 8),
-    ({"context_size": 32768, "reasoning_level": "medium"}, 7),
-    ({}, 5),
+@pytest.mark.parametrize(("profile", "limits"), [
+    ({"context_size": 16384, "reasoning_level": "none"}, (3, 4, 3)),
+    ({"context_size": 32768, "reasoning_level": "none"}, (8, 8, None)),
+    ({"context_size": 32768, "reasoning_level": "medium"}, (8, 8, None)),
+    ({"context_size": 65536}, (8, CAST_LIMIT_MAX, None)),
+    # A context between the tiers is held to the tier below.
+    ({"context_size": 24576}, (3, 4, 3)),
+    ({}, (3, 4, 3)),
 ])
-def test_the_guideline_follows_the_context_and_reasoning(profile, guide):
-    assert cast_limit_guide(profile) == guide
+def test_the_limits_follow_the_context_tier_and_not_reasoning(profile, limits):
+    value = work_limits(profile)
+    assert (value.chapters, value.characters, value.looks) == limits
 
 
 def test_an_event_cg_keeps_three_people_and_those_on_stage_first():
