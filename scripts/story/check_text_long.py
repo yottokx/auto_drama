@@ -509,6 +509,9 @@ def main() -> int:
                         help="Only the scene plan half of --final-closure: no change to the plot")
     parser.add_argument("--closure-end", action="store_true",
                         help="The last chapter's scene plan ends on the chapter's last step's result, without the core")
+    parser.add_argument("--closing-step-last", action="store_true",
+                        help="Only the plot half of --final-closure: the last chapter's expansion adds nothing "
+                             "after its last skeleton step")
     parser.add_argument("--plot-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
@@ -519,7 +522,8 @@ def main() -> int:
     if args.chapters != 3:
         use_chapter_count(args.chapters, args.balanced)
     if args.expand:
-        use_expansion(args.expansion_steps, args.distinct_steps, args.fresh_roles, args.final_closure)
+        use_expansion(args.expansion_steps, args.distinct_steps, args.fresh_roles,
+                      args.final_closure or args.closing_step_last)
     if args.final_closure or args.closure_plan:
         use_final_closure()
     elif args.closure_end:
