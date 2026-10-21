@@ -8,7 +8,7 @@ import zipfile
 import zlib
 from uuid import uuid4
 
-from packages.contracts.planning import planning_protocol, validate_plan_content
+from packages.contracts.planning import plan_snapshot, planning_protocol, validate_plan_content
 
 from .m2_service import M2Service
 from .project_history import HistoryService
@@ -88,8 +88,17 @@ class PlanningService:
             "content": json.loads(row["content"]) if row["content"] else None,
             "approval_id": row["approved_plan_id"], "active_job_id": row["active_job_id"],
             "jobs": jobs, "error": active["error"] if active else row["error"],
-            "assets": self._asset_view(connection, row)}
+            "assets": self._asset_view(connection, row),
+            # How many chapters the current settings allow a long-form plan.
+            "chapter_limit": self._chapter_limit(connection)}
         return result
+
+    def _chapter_limit(self, connection):
+        from services.worker.generation.script_cast import work_limits
+
+        from .llm_settings import script_profile
+
+        return work_limits(script_profile(self.coordinator, connection)).chapters
 
     def _assets(self, connection, row, content=None):
         """The newest asset of each planned supporting character that matches its settings."""
@@ -343,7 +352,7 @@ class PlanningService:
         self._enqueue(connection, row, cast_limit=cast_limit)
         return required(connection, "planning_draft", identifier)
 
-    def _enqueue(self, connection, row, *, body=None, cast_limit=None):
+    def _enqueue(self, connection, row, *, body=None, cast_limit=None, judge=False):
         from services.worker.generation.workflow_version import generator_protocol
 
         from .llm_settings import cast_limit_choice, execution_settings
@@ -366,19 +375,27 @@ class PlanningService:
                 "planning_protocol": planning_protocol(),
                 # A planned supporting character is drawn and voiced in this step, so the plot uses each
                 # one. The user chose how many characters the work may have (the guideline if not), and a
-                # scene may hold more than three. Plans started earlier carry none of these options and
-                # keep the wording and limits they were made with.
+                # scene may hold more than three. The plan first holds its cast and how many chapters it
+                # needs; the plot follows at the chapter count the user chose (long_form). Plans started
+                # earlier carry none of these options and keep the wording and limits they were made with.
                 "script_options": {"planned_cast_appears": True, "open_scene_cast": True,
-                                   "cast_limit": cast_limit or cast_limit_choice(self.coordinator, connection)["guide"]}}
+                                   "cast_limit": cast_limit or cast_limit_choice(self.coordinator, connection)["guide"],
+                                   "long_form": True}}
+        content = json.loads(row["content"]) if row["content"] else None
+        chosen = {"chapter_count": body.chapter_count} if body and body.action == "plot" else content
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
-            "planning_revision": row["revision"], "approval_snapshot": self._snapshot(connection, row),
-            **generation}
+            "planning_revision": row["revision"],
+            "approval_snapshot": plan_snapshot(self._snapshot(connection, row), chosen), **generation}
         generation.update(execution_settings(self.coordinator, connection, payload,
                           kind="m3_plan", profile=M2Service(self.coordinator)._profile(connection)))
         if body and body.action == "revise":
-            payload.update(plan_content=json.loads(row["content"]), target=body.target,
+            payload.update(plan_content=content, target=body.target,
                            character_id=body.character_id, chapter_number=body.chapter_number,
                            instruction=body.instruction)
+        elif body and body.action == "plot":
+            payload.update(plan_content=content, chapter_count=body.chapter_count)
+        elif judge:
+            payload.update(plan_content=content, judge_only=True)
         identifier, run_id, now = uuid4().hex, uuid4().hex, self.clock()
         connection.execute(
             "INSERT INTO generation_run(id,project_id,settings_version,story_revision_id,policy,status,created_at) "
@@ -462,6 +479,7 @@ class PlanningService:
                 self.history.begin(connection, project_id, {
                     "generate": "全体構成を生成", "revise": "全体構成を修正",
                     "save": "全体構成を編集", "approve": "構成を承認して本編制作",
+                    "plot": "章数を決めて全体構成を作成",
                 }[body.action], "m3-plan-" + body.action)
                 if reconfirm:
                     self.history.clear_downstream(connection, project_id)
@@ -470,12 +488,24 @@ class PlanningService:
                         (self.clock(), row["id"]),
                     )
                     row = required(connection, "planning_draft", row["id"])
+                previous = json.loads(row["content"]) if row["content"] else None
                 if body.action == "save":
                     content = self._valid_content(body.content, self._snapshot(connection, row))
                 else:
-                    content = json.loads(row["content"]) if row["content"] else None
-                if body.action in {"revise", "approve"} and content is None:
+                    content = previous
+                if body.action in {"revise", "approve", "plot"} and content is None:
                     raise ServiceError(409, "全体構成の生成完了後に操作してください。")
+                if body.action == "plot":
+                    if "chapter_judgment" not in content:
+                        raise ServiceError(409, "この構成は章数を選んで作り直せません。")
+                    limit = self._chapter_limit(connection)
+                    if body.chapter_count is None or body.chapter_count > limit:
+                        raise ServiceError(400, f"章数は1〜{limit}話で選んでください。")
+                if body.action == "approve" and "plot" not in content:
+                    raise ServiceError(409, "章数を選んで全体構成を作ってから承認してください。")
+                if body.action == "revise" and "plot" not in content and body.target not in {
+                        "character", "relationships"}:
+                    raise ServiceError(422, "章数を選ぶ前は、サブキャラと関係だけを修正できます。")
                 if body.action == "revise":
                     if not body.instruction or not body.instruction.strip():
                         raise ServiceError(422, "修正指示を入力してください。")
@@ -523,6 +553,9 @@ class PlanningService:
                         self._enqueue(connection, required(connection, "planning_draft", row["id"]), body=body)
                     else:
                         self._sync_assets(connection, required(connection, "planning_draft", row["id"]), content)
+                        if "plot" not in content and content["cast_plan"] != (previous or {}).get("cast_plan"):
+                            # The cast changed before its count was chosen: judge the count again.
+                            self._enqueue(connection, required(connection, "planning_draft", row["id"]), judge=True)
                 state["draft"]["revision"] += 1
                 M2Service(self.coordinator)._save(connection, project_id, state)
             result = self._view(connection, project_id)

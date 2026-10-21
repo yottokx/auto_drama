@@ -103,7 +103,8 @@ def test_a_new_plan_asks_for_every_planned_character_and_an_earlier_one_keeps_it
         job = claim(client, worker)
         # Without a chosen character count, the guideline for the current settings is used.
         assert job["payload"]["script_options"] == {
-            "planned_cast_appears": True, "open_scene_cast": True, "cast_limit": project["castLimit"]["guide"]}
+            "planned_cast_appears": True, "open_scene_cast": True, "cast_limit": project["castLimit"]["guide"],
+            "long_form": True}
         complete_plan(client, job, worker)
         # A plan begun before this option existed has none; revising it must not introduce it.
         with client.app.state.coordinator.db.transaction() as connection:

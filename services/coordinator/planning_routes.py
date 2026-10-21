@@ -10,7 +10,8 @@ from .planning_service import PlanningService
 
 
 class PlanningAction(Contract):
-    action: Literal["generate", "revise", "save", "approve"]
+    # "plot": plan a long-form plan's plot from its cast at chapter_count chapters.
+    action: Literal["generate", "revise", "save", "approve", "plot"]
     expected_revision: int = Field(ge=0, strict=True)
     expected_event_cg_policy_revision: int | None = Field(default=None, ge=0, strict=True)
     reconfirm: bool = Field(default=False, strict=True)
@@ -19,6 +20,7 @@ class PlanningAction(Contract):
     character_id: str | None = Field(default=None, max_length=100)
     chapter_number: int | None = Field(default=None, ge=1, le=100, strict=True)
     instruction: str | None = Field(default=None, max_length=30000)
+    chapter_count: int | None = Field(default=None, ge=1, le=100, strict=True)
 
 
 class AssetRetake(Contract):
