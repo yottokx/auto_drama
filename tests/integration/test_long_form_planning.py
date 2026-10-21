@@ -55,6 +55,8 @@ def test_the_plot_is_planned_at_the_chosen_count_and_production_follows_it(tmp_p
         assert chapter["kind"] == "m3_narrative"
         assert chapter["payload"]["approval_snapshot"]["world"]["result"]["chapterCount"] == 2
         assert chapter["payload"]["approved_plan"]["content"]["chapter_count"] == 2
+        production = client.get(f"/api/m3/projects/{project['project']['id']}").json()["production"]
+        assert production["chapter_count"] == 2
 
 
 def test_a_cast_edited_by_hand_before_the_count_is_judged_again(tmp_path):

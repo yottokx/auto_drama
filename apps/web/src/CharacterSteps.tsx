@@ -116,10 +116,12 @@ export function CharacterInput({ characters, onChange, onAdd, onRemove, onNext, 
   </div>
 }
 
-export function CharacterReview({ materialsProjectId = null, characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus, outfitActions }: {
+export function CharacterReview({ materialsProjectId = null, characters, requests, onChange, onToggleLock, onRequest, onBack, onApprove, onPendingChange, previewAssets, live = false, canApprove = true, generating = false, busy = false, relationshipResults, onCloneVoice, characterStatus, outfitActions, canAddLook = true }: {
   characters: CharacterBrief[]; requests: RevisionRequest[]; onChange: CharacterChange; onToggleLock: (id: string, scope: DetailScope) => void;
   onRequest: (scope: RevisionScope, instruction: string, characterId?: string) => boolean | Promise<boolean>; onBack: () => void; onApprove: () => void; onPendingChange?: (pending: boolean) => void;
   previewAssets?: Record<string, { image?: string | null; imageArtifactId?: string | null; voice?: string | null; voiceArtifactId?: string | null; voiceReferenceText?: string | null; voiceTests?: VoiceTest[]; outfits?: M2Outfit[]; expressions?: ExpressionPicture[]; imagePending?: boolean; imageHistory?: PortraitVersion[] }>
+  /** False when the mains together have as many alternate looks as the settings allow. */
+  canAddLook?: boolean
   /** The work whose shared designs can be made and worn here. */
   materialsProjectId?: string | null
   outfitActions?: {
@@ -267,7 +269,7 @@ export function CharacterReview({ materialsProjectId = null, characters, request
     <div className="char-assets-grid">
       <section className="char-asset-card">
         <DetailHeader title="外見・立ち絵" icon="users" locked={character.locked.appearance} onToggle={() => toggleLock('appearance')} onEdit={() => lookKey ? setLookEdit(lookKey) : startEdit('appearance')} editing={lookKey ? lookEdit === lookKey : Boolean(appearanceEdit)} disabled={busy || resultUnavailable}/>
-        {outfitActions && <LookTabs idPrefix={`look-${character.id}`} outfits={assets?.outfits ?? []} selected={shownLook?.id ?? 'default'} onSelect={id => setLookTabs(current => ({ ...current, [character.id]: id }))} onAdd={() => setAddingLook(true)}/>}
+        {outfitActions && <LookTabs idPrefix={`look-${character.id}`} outfits={assets?.outfits ?? []} selected={shownLook?.id ?? 'default'} onSelect={id => setLookTabs(current => ({ ...current, [character.id]: id }))} onAdd={() => setAddingLook(true)} canAdd={canAddLook}/>}
         <div id={`look-${character.id}-panel`} role={outfitActions ? 'tabpanel' : undefined}>
         {outfitActions && shownLook ? <LookPanel characterId={character.id} characterName={characterName(character, characterIndex)} outfit={shownLook} baseImageArtifactId={assets?.imageArtifactId ?? null} baseReady={baseReady} busy={busy} editing={lookEdit === lookKey} onEditingChange={editing => setLookEdit(editing ? lookKey : null)} onSave={outfitActions.save} onDelete={outfitActions.remove} onGenerate={outfitActions.generate} onExpand={(name, image) => setPortrait({ name, image })} onDress={canDress ? () => setDressing({ outfitId: shownLook.id, name: `${characterName(character, characterIndex)}の${shownLook.name}` }) : undefined}
           onEdit={canEdit && shownLook.imageArtifactId ? () => setImageEdit({ outfitId: shownLook.id, name: `${characterName(character, characterIndex)}の${shownLook.name}`, currentId: shownLook.imageArtifactId ?? null }) : undefined}/> : <>

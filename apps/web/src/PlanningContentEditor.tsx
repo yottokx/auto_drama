@@ -19,6 +19,7 @@ export function PlanningContentEditor({ content, mainCharacters, disabled, onCha
   const cast = [...mainCharacters, ...content.cast_plan.supporting_characters]
   const name = (id: string) => cast.find(character => character.id === id)?.name || id
   const change = (path: FieldPath, value: unknown) => onChange(editPlanningField(content, path, value))
+  const plot = content.plot
   function field(label: string, path: FieldPath, value: string, rows = 3, maxLength = 30000) {
     return <label className="field-label" key={path.join('.')}>{label}<textarea rows={rows} maxLength={maxLength} value={value} onChange={event => change(path, event.target.value)}/></label>
   }
@@ -27,19 +28,19 @@ export function PlanningContentEditor({ content, mainCharacters, disabled, onCha
   }
   return <fieldset className="planning-content" disabled={disabled}>
     <legend className="planning-sr-only">{tab === 'plot' ? 'プロットを直接編集' : tab === 'cast' ? 'サブキャラを直接編集' : '全体計画を直接編集'}</legend>
-    {tab !== 'cast' && <>
+    {tab !== 'cast' && plot && <>
     <section className="planning-card" aria-label="物語全体のプロット"><h3>全体プロット</h3>
-      {field('物語の中心となる問い', ['plot', 'core', 'central_question'], content.plot.core.central_question)}
-      {field('出来事の決着', ['plot', 'core', 'external_resolution'], content.plot.core.external_resolution)}
-      {field('人物・関係の結末', ['plot', 'core', 'relationship_resolution'], content.plot.core.relationship_resolution)}
-      <details className="planning-detail"><summary>人物の変化</summary><div className="planning-detail-content">{content.plot.core.characters.map((character, index) => <section className="planning-subcard" key={character.character_id}><h4>{name(character.character_id)}</h4>{([
+      {field('物語の中心となる問い', ['plot', 'core', 'central_question'], plot.core.central_question)}
+      {field('出来事の決着', ['plot', 'core', 'external_resolution'], plot.core.external_resolution)}
+      {field('人物・関係の結末', ['plot', 'core', 'relationship_resolution'], plot.core.relationship_resolution)}
+      <details className="planning-detail"><summary>人物の変化</summary><div className="planning-detail-content">{plot.core.characters.map((character, index) => <section className="planning-subcard" key={character.character_id}><h4>{name(character.character_id)}</h4>{([
         ['initial_behavior', '開始時の行動'], ['enduring_value', '守りたい価値観'], ['turning_experience', '転機となる経験'], ['final_behavior', '最後に選ぶ行動'],
       ] as const).map(([key, label]) => field(label, ['plot', 'core', 'characters', index, key], character[key]))}</section>)}</div></details>
-      <details className="planning-detail"><summary>伏線（{content.plot.core.foreshadowing.length}件）</summary><div className="planning-detail-content">{content.plot.core.foreshadowing.map((item, index) => <section className="planning-subcard" key={index}><div className="planning-field-grid">{(['setup_chapter', 'payoff_chapter'] as const).map(key => <label className="field-label" key={key}>{key === 'setup_chapter' ? '提示する章' : '回収する章'}<select value={item[key]} onChange={event => change(['plot', 'core', 'foreshadowing', index, key], Number(event.target.value))}>{content.plot.chapters.map(chapter => <option value={chapter.number} key={chapter.number}>第{chapter.number}章</option>)}</select></label>)}</div>{field('伏線の内容', ['plot', 'core', 'foreshadowing', index, 'detail'], item.detail)}</section>)}{!content.plot.core.foreshadowing.length && <p>伏線は設定されていません。追加したい場合はAIへの修正指示で伝えられます。</p>}</div></details>
+      <details className="planning-detail"><summary>伏線（{plot.core.foreshadowing.length}件）</summary><div className="planning-detail-content">{plot.core.foreshadowing.map((item, index) => <section className="planning-subcard" key={index}><div className="planning-field-grid">{(['setup_chapter', 'payoff_chapter'] as const).map(key => <label className="field-label" key={key}>{key === 'setup_chapter' ? '提示する章' : '回収する章'}<select value={item[key]} onChange={event => change(['plot', 'core', 'foreshadowing', index, key], Number(event.target.value))}>{plot.chapters.map(chapter => <option value={chapter.number} key={chapter.number}>第{chapter.number}章</option>)}</select></label>)}</div>{field('伏線の内容', ['plot', 'core', 'foreshadowing', index, 'detail'], item.detail)}</section>)}{!plot.core.foreshadowing.length && <p>伏線は設定されていません。追加したい場合はAIへの修正指示で伝えられます。</p>}</div></details>
     </section>
-    <section className="planning-card" aria-label="章ごとのプロット"><h3>章ごとのプロット</h3><p className="planning-help">章ごとの展開と、人物の行動から生まれる結果を確認できます。</p>{content.plot.chapters.map((chapter, index) => {
+    <section className="planning-card" aria-label="章ごとのプロット"><h3>章ごとのプロット</h3><p className="planning-help">章ごとの展開と、人物の行動から生まれる結果を確認できます。</p>{plot.chapters.map((chapter, index) => {
       const path = ['plot', 'chapters', index]
-      return <details className="planning-detail" key={chapter.number} open={content.plot.chapters.length === 1 || undefined}><summary>第{chapter.number}章　{chapter.title}</summary><div className="planning-detail-content">
+      return <details className="planning-detail" key={chapter.number} open={plot.chapters.length === 1 || undefined}><summary>第{chapter.number}章　{chapter.title}</summary><div className="planning-detail-content">
         {field('章のタイトル', [...path, 'title'], chapter.title, 1, 200)}
         {field('この章の役割・到達点', [...path, 'role'], chapter.role, 3, 200)}
         {chapter.events?.length ? chapter.events.map((event, eventIndex) => <section className="planning-subcard" key={eventIndex}><h4>出来事 {eventIndex + 1}</h4>{field('開始時の状況', [...path, 'events', eventIndex, 'start_condition'], event.start_condition)}{event.steps.map((step, stepIndex) => <div className="planning-event-step" key={stepIndex}>

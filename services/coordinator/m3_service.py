@@ -733,7 +733,9 @@ class M3Service(ChapterProduction):
                 cg["plan_completed"] = cg["budget_completed"] and all(
                     chapter["event_cg"]["plan_completed"] for chapter in chapters)
                 production["event_cg"] = cg
-            production["chapter_count"] = len(chapters)
+            # Every planned chapter, as the approval (or a long-form plan's chosen count) holds it.
+            planned = self._snapshot(connection, row)["world"]["result"]["chapterCount"]
+            production["chapter_count"] = max(len(chapters), planned)
             self._settle_control(connection, row)
             production["control_state"] = required(connection, "m3_production", production_id)["control_state"]
             jobs = [job for chapter in chapters for job in chapter["jobs"]]

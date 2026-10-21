@@ -130,3 +130,7 @@
 .planning-read-asset audio { width: 100%; max-width: 420px; }
 .planning-read .planning-read-asset-note { font-size: 12px; color: #797464; }
 @media (max-width: 600px) { .planning-read-assets { grid-template-columns: 1fr; } }
+.planning-chapter-count .planning-actions { align-items: flex-end; flex-wrap: wrap; }
+.planning-chapter-suggestion { display: grid; gap: 6px; margin-bottom: 14px; font-size: 13px; line-height: 1.7; color: #5f5b4d; }
+.planning-chapter-suggestion strong { font-size: 15px; color: #283d30; }
+.planning-chapter-limit { color: #9c3f2b; font-size: 13px; margin-bottom: 14px; }

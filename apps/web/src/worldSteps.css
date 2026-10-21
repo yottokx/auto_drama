@@ -175,11 +175,6 @@
 .world-extra-fields {
   padding-top: 5px;
 }
-.world-title-and-length {
-  display: grid;
-  grid-template-columns: minmax(0,1fr) 82px;
-  gap: 20px;
-}
 .world-extra-fields .field-label:last-child {
   margin-bottom: 19px;
 }
@@ -808,9 +803,6 @@
   border-color: #9b8c73;
   box-shadow: 0 0 0 3px #a6947a10;
 }
-.world-result-chapters {
-  max-width: 85px;
-}
 .world-edit-actions {
   display: flex;
   justify-content: flex-end;
@@ -1080,10 +1072,6 @@
   .world-form-footer>span {
     font-size: 10px;
     justify-content: center;
-  }
-  .world-title-and-length {
-    grid-template-columns: minmax(0,1fr) 67px;
-    gap: 13px;
   }
   .world-setting-preview .world-section-intro {
     flex-wrap: wrap;

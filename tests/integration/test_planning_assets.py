@@ -125,7 +125,7 @@ def test_the_character_count_chosen_at_approval_reaches_the_plan(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         project, _ = ready(client)
         # The default settings run at 16k, whose tier holds four characters.
-        assert project["castLimit"] == {"guide": 4, "max": 4}
+        assert project["castLimit"] == {"guide": 4, "max": 4, "looks": 3}
         mains = len(project["draft"]["characters"])
         # Fewer than the mains is refused: by the contract at zero, by the service otherwise.
         action(client, project, "approve", cast_limit=mains - 1, status=400 if mains > 1 else 422)

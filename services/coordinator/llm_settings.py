@@ -62,11 +62,12 @@ def script_profile(coordinator, connection=None) -> dict:
 
 def cast_limit_choice(coordinator, connection=None) -> dict:
     """What STEP3 offers for a work's character count: up to the current context tier's limit,
-    which is also the default."""
+    which is also the default; and how many alternate looks the mains may have in all (None:
+    each main's four)."""
     from services.worker.generation.script_cast import work_limits
 
-    limit = work_limits(script_profile(coordinator, connection)).characters
-    return {"guide": limit, "max": limit}
+    limits = work_limits(script_profile(coordinator, connection))
+    return {"guide": limits.characters, "max": limits.characters, "looks": limits.looks}
 
 
 def execution_settings(coordinator, connection, payload, *, kind, revision=0, profile=None):

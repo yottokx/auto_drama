@@ -33,7 +33,7 @@ export type M2Draft = {
 }
 export type M2Detail = { project: Project; draft: M2Draft; jobs: Job[]; imageHistory?: Record<string, { artifactId: string; url: string; outfitId: string }[]>
   /** The work's character count chosen at approval: the guideline for the current settings, and the most allowed. */
-  castLimit?: { guide: number; max: number } }
+  castLimit?: { guide: number; max: number; looks?: number | null } }
 export const activeJob = (job: Job) => job.status === 'pending' || job.status === 'running'
 const selectedKey = 'auto-drama:m2-selected-project:v1'
 

@@ -5,7 +5,7 @@ import { transformWithOxc } from 'vite'
 
 const source = await readFile(new URL('../src/planningState.ts', import.meta.url), 'utf8')
 const { code } = await transformWithOxc(source, 'planningState.ts', { target: 'es2022' })
-const { initialPlanningEditor, planningDirty, receivePlanning, resetPlanning, editPlanningField, planningAction, planningActivity, planningDisplayStep, canApprovePlanning, planningTabDirty, cancelPlanningTab } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+const { initialPlanningEditor, planningDirty, receivePlanning, resetPlanning, editPlanningField, planningAction, planningActivity, planningDisplayStep, canApprovePlanning, planningTabDirty, cancelPlanningTab, castStage, revisionTargets, chapterChoice } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 
 const content = {
   cast_plan: { supporting_characters: [{ id: 'guide', name: '案内役', settings: '町に暮らす案内役' }], everyday_context: [], connections: [] },
@@ -161,4 +161,25 @@ test('an approved plan can be confirmed again while retaining revision and edit 
   assert.equal(canApprovePlanning({ ...approved, instruction: '修正したい' }), false)
   assert.equal(canApprovePlanning({ ...approved, conflict: true }), false)
   assert.equal(canApprovePlanning({ ...approved, content: editPlanningField(approved.content, ['plot', 'chapters', 0, 'title'], '未保存') }), false)
+})
+
+test('a long-form plan chooses its chapter count before its plot, then only its plot is revised', () => {
+  const judgment = { endurance: '長く持つ', structure: '群像', distinct_characters: ['案内役'], chapters: 6, reason: '人物が多い' }
+  const cast = { cast_plan: content.cast_plan, chapter_judgment: judgment }
+  const choosing = receivePlanning(initialPlanningEditor, plan(1, { content: structuredClone(cast) }))
+  assert.equal(castStage(choosing.content), true)
+  assert.deepEqual(revisionTargets(choosing.content), ['character', 'relationships'])
+  // Nothing is approved before the plot exists.
+  assert.equal(canApprovePlanning(choosing), false)
+  // At 16k the judged six chapters are held to three, and the next tier is named.
+  assert.deepEqual(chapterChoice(judgment, 3), { suggested: 6, limit: 3, initial: 3, beyondLimit: true })
+  assert.deepEqual(chapterChoice({ ...judgment, chapters: 2 }, 3), { suggested: 2, limit: 3, initial: 2, beyondLimit: false })
+  assert.deepEqual(planningAction(choosing, 'plot', { chapterCount: 3 }), { action: 'plot', expected_revision: 1, chapter_count: 3 })
+  assert.throws(() => planningAction({ ...choosing, instruction: '名前を変える' }, 'plot', { chapterCount: 3 }), /修正指示/)
+  const planned = receivePlanning(choosing, plan(2, { content: { ...structuredClone(content), chapter_judgment: judgment, chapter_count: 1 } }))
+  assert.equal(castStage(planned.content), false)
+  assert.deepEqual(revisionTargets(planned.content), ['plot'])
+  assert.equal(canApprovePlanning(planned), true)
+  // An earlier plan keeps every target.
+  assert.deepEqual(revisionTargets(loaded().content), ['all', 'plot', 'character', 'relationships'])
 })
