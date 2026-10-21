@@ -74,6 +74,13 @@ from .script_chapter_plan import (
 )
 from .script_context import fit_context
 from .script_examples import example_for
+from .script_expansion import (
+    FINAL_END_RULE,
+    ChapterExpansion,
+    expanded_events,
+    expansion_prompt,
+    expansion_schema,
+)
 from .script_export import export_debug_chapter
 from .script_inputs import scene_material
 from .script_overlap import trim_chapter_overlap
@@ -96,13 +103,18 @@ from .script_plot import (
     StoryChainDraft,
     add_outfit_appearances,
     allocate_chain,
+    allocate_chapters,
+    balanced_boundary_options,
     bind_core_cast,
     boundary_options,
+    chain_instruction,
+    chapter_models,
     check_chain,
     check_chapters,
     check_core,
     check_outfit_appearances,
     future_material,
+    sized_allocation_instruction,
 )
 
 POLICY = "script_continuation_v1"
@@ -422,7 +434,7 @@ class ScriptRun(DraftRun):
         return CastPlan if self.cast_room is None else SurroundedCastPlan
 
     def cast_plan(self):
-        if (self.manifest["approved_chapter_count"] != 3
+        if (self.manifest["approved_chapter_count"] != 3 and not self.options.long_form
                 and "planning_protocol" not in self.manifest
                 and "approved_plan" not in self.manifest):
             return CastPlan(supporting_characters=[], everyday_context=[], connections=[])
@@ -471,7 +483,9 @@ class ScriptRun(DraftRun):
             break
         if value is None:
             if room is not None:
-                instruction = cast_instruction(self.manifest["approved_chapter_count"], room)
+                # A long-form plan chooses its chapter count after the cast.
+                instruction = cast_instruction(None if self.options.long_form
+                                               else self.manifest["approved_chapter_count"], room)
             else:
                 instruction = CAST_INSTRUCTION
                 if "planning_protocol" in self.manifest:
@@ -773,16 +787,21 @@ class ScriptRun(DraftRun):
             offset += len(scene.raw_text) + 2
         return starts
 
-    def setting(self, supporting=(), *, planned=False):
+    def setting(self, supporting=(), *, planned=False, cast_plan=None):
         snapshot = self.payload["approval_snapshot"]
         main = [row["result"] for row in snapshot["characters"]]
         introduced = [row.model_dump(mode="json") for row in supporting]
-        cast_plan = self.state.get("cast_plan", {}).get("plan", {}) if planned else {}
+        if cast_plan is None:
+            cast_plan = self.state.get("cast_plan", {}).get("plan", {}) if planned else {}
         cast = {row["id"]: row for row in [*main, *cast_plan.get("supporting_characters", []), *introduced]}
         # A single-main approval legitimately omits relationships. Keep the
         # approval snapshot unchanged so its saved identity remains resumable.
         relationships = snapshot.get("relationships", {"result": {"pairs": []}})["result"]
-        result = {"world": snapshot["world"]["result"],
+        world = snapshot["world"]["result"]
+        if self.options.long_form and not self.manifest.get("chapter_count_chosen", True):
+            # The cast and the chapter count's judgment come before the count is chosen.
+            world = {key: value for key, value in world.items() if key != "chapterCount"}
+        result = {"world": world,
                   "characters": [story_character(row) for row in cast.values()],
                   "relationships": relationships,
                   "main_character_ids": [row["id"] for row in main],
@@ -1079,6 +1098,8 @@ class ScriptRun(DraftRun):
         self.partial(number, (self.script_text(saved_scenes) + "\n\n" if saved_scenes else "") + raw)
 
     def outline(self):
+        if self.options.long_form:
+            return self.long_outline()
         count = self.manifest["approved_chapter_count"]
         cast_plan = self.cast_plan()
         setting = self.setting(planned=True)
@@ -1214,6 +1235,161 @@ class ScriptRun(DraftRun):
         write_json(self.output / "outline.json", self.state["outline"])
         return result
 
+    def long_outline(self):
+        """outline() for a long-form plan: the chain of events, allocated to the approved count at
+        the most even cuts, is the skeleton; then each chapter gets its own steps around it."""
+        count = self.manifest["approved_chapter_count"]
+        cast_plan = self.cast_plan()
+        setting = self.setting(planned=True)
+        characters = set(setting["main_character_ids"])
+        available = characters | {row.id for row in cast_plan.supporting_characters}
+        chain_model, draft_model, allocation_model, fixed_model = chapter_models(count)
+        outfits = self.outfits
+        events_note = OUTFIT_EVENTS if outfits else ""
+        allocation_note = OUTFIT_ALLOCATION if outfits else ""
+
+        def check(value):
+            check_core(value.core, characters, count)
+            check_chapters(value.chapters, list(range(1, count + 1)))
+            if outfits:
+                check_outfit_appearances(value.chapters, outfits)
+            for chapter in value.chapters:
+                for topic in chapter.conversation_topics:
+                    if len(set(topic.character_ids)) != len(topic.character_ids) or not set(topic.character_ids) <= available:
+                        raise ValueError("Conversation topics need distinct registered participants.")
+
+        def check_skeleton(plot):
+            chain = chain_model.model_validate(self.state["story_chain"])
+            allocation = allocation_model.model_validate(self.state["chapter_allocation"])
+            check_chain(chain, characters, available)
+            if (digest(self.state["story_chain"]) != self.state["story_chain_sha256"]
+                    or allocate_chapters(chain, allocation, count) != plot):
+                raise ValueError("Saved plot differs from its story chain or chapter allocation.")
+
+        if "plot" in self.state:
+            plot = DetailedPlot.model_validate(self.state["plot"])
+            check(plot)
+            if digest(self.state["plot"]) != self.state["plot_sha256"]:
+                raise ValueError("Saved detailed plot was changed.")
+            if plot.as_outline().model_dump(mode="json") != self.state["outline"]:
+                raise ValueError("Saved outline differs from its detailed plot.")
+            if not self.state.get("accepted_plan"):
+                check_skeleton(self.saved_skeleton())
+            return plot.as_outline()
+        if "skeleton_plot" in self.state:
+            # Saved before every chapter was expanded; the expansions done are reused.
+            skeleton = self.saved_skeleton()
+            check_skeleton(skeleton)
+            return self.expand_plot(skeleton, setting, available, check)
+
+        context = {"setting": setting, "outline": "", "brief": self.options.for_stage("chain"),
+                   "chapters": [], "notes": []}
+        schema = draft_model.model_json_schema()
+        bind_core_cast(schema, characters, core="ChainCore", character="ChainCharacter")
+        schema["$defs"]["ChainStep"]["properties"]["character_id"]["enum"] = sorted(available)
+        chain = self.structured_core("story-chain", "script-outline", 1, chain_instruction(count) + events_note,
+            context, draft_model,
+            lambda value: check_chain(value.as_chain(), characters, available), schema).as_chain()
+        chain_data = chain.model_dump(mode="json")
+        self.state.update(story_chain=chain_data, story_chain_sha256=digest(chain_data))
+        self.persist()
+        write_json(self.output / "story-chain.json", chain_data)
+        events = len(chain.events)
+        material = {"core": chain.core.model_dump(mode="json"), "event_count": events, "events": [
+            {"event_number": n, **event.model_dump(mode="json")} for n, event in enumerate(chain.events, 1)]}
+        sized = events > count
+        if sized:
+            material.update(total_steps=sum(len(event.steps) for event in chain.events),
+                            boundary_options=balanced_boundary_options([len(event.steps) for event in chain.events], count))
+        allowed = [row["last_events"] for row in material.get("boundary_options", [])]
+        allocation_context = {**context, "brief": self.options.for_stage("allocation")
+                              + f"\n全{count}章へ配分する保存済みプロット（全て未実施）:\n"
+                              + json.dumps(material, ensure_ascii=False)}
+
+        def check_allocation(value):
+            check(allocate_chapters(chain, value, count))
+            if sized and [row.last_event for row in value.chapters] not in allowed:
+                raise ValueError("Chapter boundaries must be one of boundary_options' last_events: "
+                                 + json.dumps(allowed))
+
+        if not sized:
+            schema = fixed_model.model_json_schema()
+            schema["$defs"]["ConversationTopic"]["properties"]["character_ids"]["items"]["enum"] = sorted(available)
+            if outfits:
+                add_outfit_appearances(schema, outfits)
+            each = "、".join(f"chapter_{n}は出来事{n}だけ" for n in range(1, count + 1))
+            allocation = self.structured("chapter-allocation", "script-allocation", 1,
+                PRESENTATION_INSTRUCTION + allocation_note
+                + f"出来事は{count}個、章は{count}章なので配分はコードで確定しています。{each}を担当します。"
+                "境界番号は出力せず、担当する出来事を変えずに各章のtitle・role・conversation_topicsを設計します。",
+                allocation_context, fixed_model,
+                lambda value: check_allocation(value.as_allocation()), schema).as_allocation()
+        else:
+            schema = allocation_model.model_json_schema()
+            schema["$defs"]["LongChapterBoundary"]["properties"]["last_event"]["maximum"] = events
+            schema["$defs"]["ConversationTopic"]["properties"]["character_ids"]["items"]["enum"] = sorted(available)
+            if outfits:
+                add_outfit_appearances(schema, outfits)
+            allocation = self.structured("chapter-allocation", "script-allocation", 1,
+                sized_allocation_instruction(count)
+                + allocation_note + f"出来事は全{events}個です。last_eventはevent_numberを使い、"
+                f"{count}章の値を狭義昇順にし、第{count}章の値は必ず{events}にします。",
+                allocation_context, allocation_model, check_allocation, schema)
+        skeleton = allocate_chapters(chain, allocation, count)
+        self.state["chapter_allocation"] = allocation.model_dump(mode="json")
+        write_json(self.output / "chapter-allocation.json", self.state["chapter_allocation"])
+        check(skeleton)
+        self.state["skeleton_plot"] = skeleton.model_dump(mode="json")
+        self.state["skeleton_plot_sha256"] = digest(self.state["skeleton_plot"])
+        self.persist()
+        write_json(self.output / "skeleton-plot.json", self.state["skeleton_plot"])
+        return self.expand_plot(skeleton, setting, available, check)
+
+    def saved_skeleton(self):
+        if digest(self.state["skeleton_plot"]) != self.state["skeleton_plot_sha256"]:
+            raise ValueError("Saved skeleton plot was changed.")
+        return DetailedPlot.model_validate(self.state["skeleton_plot"])
+
+    def expand_plot(self, skeleton, setting, available, check):
+        """Add each chapter's own steps to the skeleton, in order (script_expansion)."""
+        count = len(skeleton.chapters)
+        sketch = [{"number": row.number, "title": row.title, "role": row.role,
+                   "steps": [step.model_dump(mode="json") for event in row.events for step in event.steps]}
+                  for row in skeleton.chapters]
+        chapters = []
+        for row in skeleton.chapters:
+            current = [{"step_number": n, **step.model_dump(mode="json")}
+                       for n, step in enumerate((step for event in row.events for step in event.steps), 1)]
+            brief = json.dumps({"total_chapters": count, "current_chapter": row.number,
+                                "skeleton": sketch,
+                                "expanded_chapters": [{"number": done.number, "title": done.title, "steps": [
+                                    step.model_dump(mode="json") for event in done.events for step in event.steps]}
+                                    for done in chapters],
+                                "current_chapter_steps": current}, ensure_ascii=False)
+            context = {"setting": setting, "outline": "", "brief": self.options.for_stage("chain") + "\n" + brief,
+                       "chapters": [], "notes": []}
+            schema, room = expansion_schema(available, len(current), row.number == count)
+
+            def check_expansion(value, events=row.events, room=room):
+                if len(value.added_steps) > room:
+                    raise ValueError(f"Add at most {room} steps to this chapter.")
+                expanded_events(events, value.added_steps)
+
+            expansion = self.structured(f"expand-{row.number:03d}", "script-outline", row.number,
+                                        expansion_prompt(count, row.number), context, ChapterExpansion,
+                                        check_expansion, schema)
+            chapters.append(row.model_copy(update={"events": expanded_events(row.events, expansion.added_steps)}))
+        plot = DetailedPlot(core=skeleton.core, chapters=chapters)
+        check(plot)
+        result = plot.as_outline()
+        # The skeleton stays a record of how the plot was made; everything after reads the plot.
+        self.state.update(plot=plot.model_dump(mode="json"), outline=result.model_dump(mode="json"))
+        self.state["plot_sha256"] = digest(self.state["plot"])
+        self.persist()
+        write_json(self.output / "plot.json", self.state["plot"])
+        write_json(self.output / "outline.json", self.state["outline"])
+        return result
+
     def chapter_plan(self, number, context, supporting):
         known = {row["id"] for row in context["setting"]["characters"]}
         registry = self.state.get("locations", {})
@@ -1285,8 +1461,10 @@ class ScriptRun(DraftRun):
             "それを受けた次の応答・行動から記し、start_stateは保存台本の到達点を継ぎます。"
             "未発生の前提が必要なら当章で実行する経緯を描きます。"
         )
+        last = number == self.manifest["approved_chapter_count"]
         draft = self.structured(f"plan-{number:03d}", "script-plan", number,
-            f"全{self.manifest['approved_chapter_count']}章の第{number}章を場面に分けます。"
+            (FINAL_END_RULE if self.options.long_form and last else "")
+            + f"全{self.manifest['approved_chapter_count']}章の第{number}章を場面に分けます。"
             + instruction +
             "各場面の開始状態、objectives、会話や動作で描くrequired_events、終了状態を直接具体化します。"
             "場面計画を執筆の直接指示とし、別の行動対応表や出来事の全件照合は作りません。"
@@ -1315,7 +1493,7 @@ class ScriptRun(DraftRun):
             "素材在庫を理由に同じ人物や舞台へ戻さないでください。"
             + PLOT_PRIORITY + (OUTFIT_PLAN if outfits else "") +
             ("最終章では、積み重ねた選択の結果として外的な課題と人物・関係の着地を描きます。"
-             if number == self.manifest["approved_chapter_count"] else ""),
+             if last else ""),
             planning_context, model, check, schema)
         plan = self.cast_heard_voices(number, project_plan(draft, self.options), planning_context, known)
         used_ids = {cid for scene in plan.scenes for cid in scene.character_ids}

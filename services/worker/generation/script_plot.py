@@ -1,6 +1,8 @@
 """Future-only plot material, projected into the existing export contract."""
 
-from pydantic import AliasChoices, Field, field_validator
+import itertools
+
+from pydantic import AliasChoices, Field, create_model, field_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from packages.contracts.m3 import CharacterArc, Foreshadowing, OutlineChapter, StoryOutline
@@ -378,7 +380,8 @@ def allocate_chain_by_steps(chain: StoryChain, allocation: StepChapterAllocation
     return _plot_from_chapters(chain, allocation.chapters, events, allocation.foreshadowing)
 
 
-def _plot_from_chapters(chain: StoryChain, presentations, chapter_events, foreshadowing) -> DetailedPlot:
+def _plot_from_chapters(chain: StoryChain, presentations, chapter_events, foreshadowing,
+                        count: int = 3) -> DetailedPlot:
     # Derive the legacy/export synopsis from events, never ask the model for a
     # second, independent promise of a turning point that may not be dramatized.
     core_data = chain.core.model_dump(exclude={"characters"})
@@ -388,7 +391,7 @@ def _plot_from_chapters(chain: StoryChain, presentations, chapter_events, foresh
         for step in event.steps if step.character_id == row.character_id
     ) or "本人の転機は予定していない。") for row in chain.core.characters]
     core = PlotCore(**core_data, characters=characters, foreshadowing=foreshadowing)
-    check_core(core, {row.character_id for row in chain.core.characters}, 3)
+    check_core(core, {row.character_id for row in chain.core.characters}, count)
     chapters = []
     for boundary, events in zip(presentations, chapter_events, strict=True):
         if not events:
@@ -559,3 +562,96 @@ OUTFIT_ALLOCATION = (
     "当章でその姿にならない人物は書きません。全員分の欄を埋める必要はなく、ここに書いた姿は当章で必ず登場します。"
     "割り当てのために出来事を変更・追加しません。"
 )
+
+
+# Long-form plans (ScriptOptions.long_form): any chapter count, from the experiments in
+# docs/long-form-plan.md. The wording is the three-chapter wording with the count put in, as
+# scripts/story/check_text_long.py ran it.
+EVENTS_PER_CHAPTER = 3  # three chapters hold 3-9 events
+MOST_BOUNDARY_OPTIONS = 30
+
+
+def counted(text: str, pairs: list[tuple[str, str]]) -> str:
+    for old, new in pairs:
+        if text.count(old) != 1:
+            raise ValueError(f"The three-chapter wording differs from the expected text: {old}")
+        text = text.replace(old, new)
+    return text
+
+
+def chapter_models(count: int):
+    """The chain, allocation and fixed-allocation models for ``count`` chapters."""
+    most = count * EVENTS_PER_CHAPTER
+
+    class LongStoryChain(StoryChain):
+        events: list[ChainEvent] = Field(min_length=count, max_length=most,
+            description=f"{count}章に収まる主要な出来事の連鎖。章境界はまだ決めない。各出来事は場面とは別。")
+
+    class LongStoryChainDraft(StoryChainDraft):
+        events: list[ChainEventDraft] = Field(min_length=count, max_length=most,
+            description=f"{count}章に収まる主要な出来事の連鎖。全て予定であり、章境界はまだ決めない。")
+
+        def as_chain(self) -> LongStoryChain:
+            events, condition = [], self.opening_condition
+            for event in self.events:
+                events.append(ChainEvent(start_condition=condition, steps=event.steps))
+                condition = event.steps[-1].result
+            return LongStoryChain(core=self.core, events=events)
+
+    class LongChapterBoundary(ChapterBoundary):
+        number: int = Field(ge=1, le=count, strict=True)
+        last_event: int = Field(ge=1, le=most, strict=True,
+                                description=ChapterBoundary.model_fields["last_event"].description)
+
+    class LongChapterAllocation(ChapterAllocation):
+        chapters: list[LongChapterBoundary] = Field(min_length=count, max_length=count)
+        foreshadowing: list[Foreshadowing] = Field(max_length=30)
+
+    class FixedAllocation(Contract):
+        def as_allocation(self) -> LongChapterAllocation:
+            # As many events as chapters: one event each, no boundary choice.
+            return LongChapterAllocation(chapters=[LongChapterBoundary(
+                number=n, last_event=n, **getattr(self, f"chapter_{n}").model_dump())
+                for n in range(1, count + 1)], foreshadowing=self.foreshadowing)
+
+    fixed = create_model("LongFixedChapterAllocation", __base__=FixedAllocation,
+                         **{f"chapter_{n}": (ChapterPresentation, ...) for n in range(1, count + 1)},
+                         foreshadowing=(list[Foreshadowing], Field(max_length=30)))
+    return LongStoryChain, LongStoryChainDraft, LongChapterAllocation, fixed
+
+
+def chain_instruction(count: int) -> str:
+    return counted(CHAIN_INSTRUCTION, [
+        ("全3章の分量", f"全{count}章の分量"),
+        ("3〜9個の出来事", f"{count}〜{count * EVENTS_PER_CHAPTER}個の出来事"),
+        ("3章の各区間で", f"{count}章の各区間で"),
+    ])
+
+
+def sized_allocation_instruction(count: int) -> str:
+    return counted(SIZED_ALLOCATION_INSTRUCTION, [("全3章へ配分", f"全{count}章へ配分")])
+
+
+def balanced_boundary_options(sizes: list[int], count: int) -> list[dict]:
+    """Ways to cut the chain into ``count`` chapters at event ends, the most even first."""
+    options = []
+    for cuts in itertools.combinations(range(1, len(sizes)), count - 1):
+        ends = [*cuts, len(sizes)]
+        steps = [sum(sizes[start:end]) for start, end in zip([0, *ends[:-1]], ends)]
+        options.append((max(steps) - min(steps), sum((s - sum(steps) / count) ** 2 for s in steps), ends, steps))
+    options.sort(key=lambda row: row[:2])
+    return [{"last_events": ends, "steps_per_chapter": steps}
+            for _, _, ends, steps in options[:MOST_BOUNDARY_OPTIONS]]
+
+
+def allocate_chapters(chain: StoryChain, allocation: ChapterAllocation, count: int) -> DetailedPlot:
+    """allocate_chain for ``count`` chapters."""
+    if [row.number for row in allocation.chapters] != list(range(1, count + 1)):
+        raise ValueError(f"Chapter allocation must preserve the {count} approved chapters.")
+    ends = [row.last_event for row in allocation.chapters]
+    if ends != sorted(set(ends)) or ends[-1] != len(chain.events):
+        raise ValueError("Chapter boundaries must partition every event exactly once in order.")
+    starts = [0, *ends[:-1]]
+    return _plot_from_chapters(chain, allocation.chapters,
+                               [chain.events[start:end] for start, end in zip(starts, ends, strict=True)],
+                               allocation.foreshadowing, count)

@@ -62,6 +62,11 @@ class ScriptOptions(Contract):
     # Set for plans made since a scene may hold more than three people. Staging then names the
     # central people of a scene of four or more, and only they stand on stage. Absent when unset.
     open_scene_cast: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Set for plans made since the chapter count is judged from the cast (docs/long-form-plan.md):
+    # the cast is planned without a chapter count, the count is judged and then chosen, and the
+    # plot is a chain allocated to any count with each chapter's steps added around it. Absent
+    # when unset, so earlier plans keep their three-chapter wording.
+    long_form: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def dialogue_fits_body(self):
@@ -134,9 +139,12 @@ def cast_schema(model: type[CastPlan], room: int | None) -> dict:
     return schema
 
 
-def cast_instruction(chapters: int, room: int) -> str:
-    """The cast instruction of a plan with a chosen character count: no size anchor, people around first."""
-    size = (f"人数の目安はありません。全{chapters}章の物語でメインの身近にいる人、出会う人、対立する人を"
+def cast_instruction(chapters: int | None, room: int) -> str:
+    """The cast instruction of a plan with a chosen character count: no size anchor, people around first.
+
+    A long-form plan chooses its chapter count after the cast, so it names none (``chapters`` None)."""
+    story = "物語で" if chapters is None else f"全{chapters}章の物語で"
+    size = (f"人数の目安はありません。{story}メインの身近にいる人、出会う人、対立する人を"
             "この世界から考え、台詞と出番がある人を作ります。"
             "少人数の密な関係が魅力の作品なら少なく、学校・職場・軍・町など人が集まる場や、"
             "敵や競争相手がいる物語なら、それに見合う顔ぶれにします。"
