@@ -129,3 +129,36 @@ STEP3のサブのタブは後で別に計画する。それまでは、STEP4を2
 - 32k・推論ありで、長尺化の上限いっぱいの組み合わせ。肉付けと章数の判定は、推論ありで動かしていない（章数の判定は Gemma の推論ありで試したが、製品の `RoutedLLM` を回避した条件だった）。
 - 衣装違いを1人2着以上、合計4着以上にした場合（32k以上）。
 - どれも1作品1〜2シード。
+
+## 7. 実装の状態（2026-10-21）
+
+4節の1〜5を実装した（`claude/long-form`）。新しい計画の `script_options` に `long_form` が入り、項目のない計画は今の流れのまま動く。
+
+| 段 | 主な箇所 |
+|---|---|
+| 設定 | `packages/contracts/llm_settings.py`（`CONTEXT_TIERS`、16kは推論なし）、`script_cast.TIER_LIMITS` / `work_limits`、`LLMSettings.tsx` |
+| 計画 | `script_plot.chapter_models` ほか、`script_expansion.py`、`script_chapter_count.py`、`ScriptRun.long_outline` / `expand_plot` |
+| STEP4の2段階 | `CommonPlanContent`（`plot` なしの1段目、`chapter_count`、`chapter_judgment`）、`CommonPlanRun`（`chapter_count`、`judge_only`）、`planning_service`（`plot` 操作）、`m3_service._snapshot`（承認した計画の章数を承認スナップショットの章数にする） |
+| 画面 | `PlanningReviewPanel.tsx`（1段目の章数の選択、2段目はサブキャラを表示だけにする）、`WorldSteps.tsx`（章数の欄を外した）、`CharacterOutfits.tsx`（16kの衣装違いの合計） |
+
+### 実験との違い
+
+- **3章も長尺化の流れになる。** 今日の3章・16kの実験（`long-form-16k-20261021.md`）は、`check_text_long.py` が3章のときに製品の3章の流れを使ったので、配分は区切り方の候補なし、キャスト計画は「全3章の物語で」だった。製品の `long_form` は、3章でも区切り方の候補を挙げる配分と、章数を書かないキャスト計画になる。4章以上の実験と同じ形。
+- **章数の判定の依頼の形。** 実験（`probe_chapter_count.py`）は、独自のシステム文と、承認設定とキャストをJSONにした資料を渡し、回答の形式を縛らなかった。製品は、同じシステム文と依頼文に、他の計画の段と同じ形の設定を渡し、回答の形式をJSONスキーマで縛る。判定の結果が実験と同じになるかは確かめていない。
+- **肉付け後のプロットの経路の表示。** 実験は肉付け後も各章の `route`（表示用の要約）を骨組みのまま残した。製品も同じだが、STEP4の計画の内容は、コーディネーターが受け取るときに出来事から `route` を作り直す。場面計画以降は `route` を読まず出来事を読むので、生成には影響しない。
+
+### 実験と同じ依頼になっているかの確かめ方
+
+`check_text_long.py --product` は、実験の差し替えを使わずに製品の `long_form` で台本まで書く。同じ入力・キャスト（`--cast-from`）・シードなら、依頼の通し番号も同じになり、依頼の文面が同じなら同じ回答が返る。コンビニ2章・16k（`--cast-from` で書いた実行）で確かめる:
+
+```powershell
+uv run python -X utf8 scripts/story/check_text_long.py `
+  --input outputs/long-form-20261020/inputs/konbini-16k.json `
+  --output-dir outputs/long-form-20261021/konbini-product `
+  --chapters 2 --skip-staging --cast-from outputs/variable-chapters-20261019/konbini-open --product
+uv run python -X utf8 scripts/story/compare_runs.py outputs/long-form-20261020/konbini-ud-2ch-16k-closure outputs/long-form-20261021/konbini-product
+uv run python -X utf8 scripts/story/compare_runs.py outputs/long-form-20261020/konbini-ud-2ch-16k-closureend outputs/long-form-20261021/konbini-product
+```
+
+- `-closure`（①＋案B）とは、連鎖・配分・肉付け・第1章の依頼が同じになり、`plot.json` も同じになるはず。違うのは第2章の場面計画（案Bと案1）から後。
+- `-closureend`（案1。肉付けは①なしの元の実行のもの）とは、第2章の肉付けの依頼（①の一文と回答の形式）が違い、それ以外の依頼は同じになるはず。コンビニでは①があっても肉付けの回答が同じだったので、`plot.json` と第2章の本文も同じになる見込み。

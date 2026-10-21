@@ -516,14 +516,24 @@ def main() -> int:
     parser.add_argument("--closing-step-last", action="store_true",
                         help="Only the plot half of --final-closure: the last chapter's expansion adds nothing "
                              "after its last skeleton step")
+    parser.add_argument("--product", action="store_true",
+                        help="The product's long-form plan (script_options.long_form) instead of this script's "
+                             "replacements: the same as --balanced --expand --expansion-steps 6 --distinct-steps "
+                             "--fresh-roles --closing-step-last --closure-end, but a cast it plans names no count")
     parser.add_argument("--plot-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if args.chapters < 1:
         parser.error("--chapters must be at least 1.")
+    replacements = ("balanced", "expand", "expansion_steps", "distinct_steps", "fresh_roles", "final_closure",
+                    "closure_plan", "closure_end", "closing_step_last", "plot_from")
+    if args.product and any(getattr(args, name) for name in replacements):
+        parser.error("--product runs the product's plan; it takes no plan replacement but --cast-from.")
     value = experiment_input(json.loads(args.input.read_text(encoding="utf-8-sig")),
                              args.chapters, args.model_id, args.skip_staging, args.cast_limit)
-    if args.chapters != 3:
+    if args.product:
+        value.setdefault("script_options", {})["long_form"] = True
+    elif args.chapters != 3:
         use_chapter_count(args.chapters, args.balanced)
     if args.expand:
         use_expansion(args.expansion_steps, args.distinct_steps, args.fresh_roles,
