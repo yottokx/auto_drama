@@ -471,13 +471,16 @@ def reuse_cast(source: Path) -> None:
     sc.ScriptRun.structured = saved
 
 
-def experiment_input(value: dict, chapters: int, model_id: str | None, skip_staging: bool) -> dict:
+def experiment_input(value: dict, chapters: int, model_id: str | None, skip_staging: bool,
+                     cast_limit: int | None = None) -> dict:
     value = copy.deepcopy(value)
     value["approval_snapshot"]["world"]["result"]["chapterCount"] = chapters
     if model_id:
         value.setdefault("profile", {})["model_id"] = model_id
     if skip_staging:
         value.setdefault("script_options", {})["skip_staging"] = True
+    if cast_limit is not None:
+        value.setdefault("script_options", {})["cast_limit"] = cast_limit
     return value
 
 
@@ -490,6 +493,7 @@ def main() -> int:
     parser.add_argument("--model-id", help="Override the profile's model")
     parser.add_argument("--skip-staging", action="store_true", help="No staging or outfit-moment calls")
     parser.add_argument("--context-size", type=int)
+    parser.add_argument("--cast-limit", type=int, help="Override the input's script_options cast_limit")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--chapter-limit", type=int)
     parser.add_argument("--expand", action="store_true", help="Add each chapter's own steps to the skeleton")
@@ -518,7 +522,7 @@ def main() -> int:
     if args.chapters < 1:
         parser.error("--chapters must be at least 1.")
     value = experiment_input(json.loads(args.input.read_text(encoding="utf-8-sig")),
-                             args.chapters, args.model_id, args.skip_staging)
+                             args.chapters, args.model_id, args.skip_staging, args.cast_limit)
     if args.chapters != 3:
         use_chapter_count(args.chapters, args.balanced)
     if args.expand:
