@@ -5,8 +5,8 @@
 ## 状態
 
 - ブランチ `claude/character-outfits`。このセッションの成果は全部コミットしていない。
-  - 実験記録: `docs/experiments/long-form-20261019.md`（5章と3章）、`docs/experiments/long-form-expand-20261020.md`（2段の計画、6章・8章・64k・ひだまり・コンビニ、締めの対策）、`docs/experiments/chapter-count-judgment-20261020.md`（章数の判定）。
-  - スクリプト: `scripts/story/check_text_long.py`、`scripts/story/drop_last_chapter.py`、`scripts/story/probe_chapter_count.py`、`scripts/story/probe_variable_chapters.py`。
+  - 実験記録: `docs/experiments/long-form-20261019.md`（5章と3章）、`docs/experiments/long-form-expand-20261020.md`（2段の計画、6章・8章・64k・ひだまり・コンビニ、締めの対策）、`docs/experiments/chapter-count-judgment-20261020.md`（章数の判定）、`docs/experiments/long-form-16k-20261021.md`（3章・16k、コンテキストの段と推論、2026-10-21 追記）。
+  - スクリプト: `scripts/story/check_text_long.py`、`scripts/story/drop_last_chapter.py`、`scripts/story/probe_chapter_count.py`、`scripts/story/probe_variable_chapters.py`、`scripts/story/input_budgets.py`（各依頼の入力トークン数と、容量の都合で削ったもの）。
 - 可変章数のSTEP4の実験（`probe_variable_chapters.py`、5作品、出力 `outputs/variable-chapters-20261019/`）は記録を書いていない。分かっているのは、連鎖の手順数から章数を割り出すと Gemma 推論なしで2〜4章だったことだけ（章数判定の記録の「前の実験との関係」に一行ある）。
 - `scripts/flux3_klein/` と `services/worker/runtimes/flux3_klein/` は前からの保留中のファイル。コミットしない。
 - 基準の条件: gemma-4-31B-it-UD-Q4_K_XL、推論なし、演出注釈・画像・音声なし。
