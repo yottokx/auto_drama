@@ -517,9 +517,10 @@ def main() -> int:
                         help="Only the plot half of --final-closure: the last chapter's expansion adds nothing "
                              "after its last skeleton step")
     parser.add_argument("--product", action="store_true",
-                        help="The product's long-form plan (script_options.long_form) instead of this script's "
-                             "replacements: the same as --balanced --expand --expansion-steps 6 --distinct-steps "
-                             "--fresh-roles --closing-step-last --closure-end, but a cast it plans names no count")
+                        help="The product's long-form plan (script_options.long_form and chapter_scope_guard) "
+                             "instead of this script's replacements: the same as --balanced --expand "
+                             "--expansion-steps 6 --distinct-steps --fresh-roles --closing-step-last --closure-end, "
+                             "but a cast it plans names no count, and a chapter plan sees later chapters in brief")
     parser.add_argument("--plot-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
@@ -532,7 +533,7 @@ def main() -> int:
     value = experiment_input(json.loads(args.input.read_text(encoding="utf-8-sig")),
                              args.chapters, args.model_id, args.skip_staging, args.cast_limit)
     if args.product:
-        value.setdefault("script_options", {})["long_form"] = True
+        value.setdefault("script_options", {}).update(long_form=True, chapter_scope_guard=True)
     elif args.chapters != 3:
         use_chapter_count(args.chapters, args.balanced)
     if args.expand:

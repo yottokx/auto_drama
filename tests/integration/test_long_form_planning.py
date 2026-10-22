@@ -21,6 +21,7 @@ def cast_stage(client):
     worker = plan_worker(client)
     job = claim(client, worker)
     assert job["payload"]["script_options"]["long_form"] is True
+    assert job["payload"]["script_options"]["chapter_scope_guard"] is True
     snapshot = job["payload"]["approval_snapshot"]
     content = {"cast_plan": plan_content(snapshot)["cast_plan"], "chapter_judgment": JUDGMENT}
     complete_plan(client, job, worker, content=content)

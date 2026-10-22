@@ -376,11 +376,13 @@ class PlanningService:
                 # A planned supporting character is drawn and voiced in this step, so the plot uses each
                 # one. The user chose how many characters the work may have (the guideline if not), and a
                 # scene may hold more than three. The plan first holds its cast and how many chapters it
-                # needs; the plot follows at the chapter count the user chose (long_form). Plans started
-                # earlier carry none of these options and keep the wording and limits they were made with.
+                # needs; the plot follows at the chapter count the user chose (long_form). A chapter plan sees
+                # later chapters in brief and is told what the latest chapter already showed, so it neither
+                # runs ahead nor plays a step twice (chapter_scope_guard). Plans started earlier carry none
+                # of these options and keep the wording and limits they were made with.
                 "script_options": {"planned_cast_appears": True, "open_scene_cast": True,
                                    "cast_limit": cast_limit or cast_limit_choice(self.coordinator, connection)["guide"],
-                                   "long_form": True}}
+                                   "long_form": True, "chapter_scope_guard": True}}
         content = json.loads(row["content"]) if row["content"] else None
         chosen = {"chapter_count": body.chapter_count} if body and body.action == "plot" else content
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
