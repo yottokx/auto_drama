@@ -528,6 +528,11 @@ class PlanningService:
                         "profile", "tts_profile", "seed", "profiles", "script_options", "workflow_limits",
                         "story_workflow_version", "workflow_policy", "generator_protocol", "planning_protocol",
                     ) if key in payload}
+                    options = generation.get("script_options", {})
+                    if options.get("long_form") and not options.get("chapter_scope_guard"):
+                        # A long-form plan begun before chapter_scope_guard gets it here: the plan never
+                        # used it, and the production this approval starts writes every chapter with it.
+                        generation["script_options"] = {**options, "chapter_scope_guard": True}
                     assets = self.approved_assets(connection, row, content)
                     approved = {"schema_version": 1, "approval_id": identifier,
                         "main_approval_id": row["main_approval_id"], "content": content,

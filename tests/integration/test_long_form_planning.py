@@ -1,6 +1,7 @@
 """A long-form plan in STEP4: first the cast and the judged chapter count, then the plot at the
 count the user chose, and production at that count."""
 import copy
+import json
 
 from fastapi.testclient import TestClient
 
@@ -58,6 +59,30 @@ def test_the_plot_is_planned_at_the_chosen_count_and_production_follows_it(tmp_p
         assert chapter["payload"]["approved_plan"]["content"]["chapter_count"] == 2
         production = client.get(f"/api/m3/projects/{project['project']['id']}").json()["production"]
         assert production["chapter_count"] == 2
+
+
+def test_a_plan_begun_before_the_guard_writes_its_chapters_with_it(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        # A long-form plan begun before chapter_scope_guard: its planning jobs carry none.
+        with client.app.state.coordinator.db.transaction() as connection:
+            for row in connection.execute("SELECT id,payload FROM job WHERE kind='m3_plan'").fetchall():
+                payload = json.loads(row["payload"])
+                payload["script_options"].pop("chapter_scope_guard")
+                connection.execute("UPDATE job SET payload=? WHERE id=?",
+                                   (json.dumps(payload, ensure_ascii=False), row["id"]))
+        plan_action(client, project, "plot", chapter_count=2)
+        job = claim(client, worker)
+        assert "chapter_scope_guard" not in job["payload"]["script_options"]
+        content = {**plan_content(job["payload"]["approval_snapshot"]), "chapter_count": 2,
+                   "chapter_judgment": JUDGMENT}
+        complete_plan(client, job, worker, content=content)
+        plan_action(client, project, "approve")
+        media = client.post("/api/workers", json={"name": "media", "capabilities": M3_KINDS}).json()["id"]
+        chapter = claim(client, media)
+        assert chapter["kind"] == "m3_narrative"
+        assert chapter["payload"]["script_options"]["chapter_scope_guard"] is True
+        assert chapter["payload"]["script_options"]["long_form"] is True
 
 
 def test_a_cast_edited_by_hand_before_the_count_is_judged_again(tmp_path):
