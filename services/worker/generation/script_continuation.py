@@ -21,6 +21,7 @@ from packages.narrative import parse_scene_text, validate_narrative
 from packages.narrative.continuity import narrative_hash
 
 from . import narrative, pipeline
+from . import script_opening_check as opening_check
 from . import script_route_progress as route_progress
 from . import script_voices as voices
 from .cancellation import GenerationCancelled, check_cancelled
@@ -65,6 +66,7 @@ from .script_chapter_plan import (
     ContinuedChapterPlan,
     FirstChapterPlan,
     OutfitMoments,
+    SplitChapterPlan,
     add_scene_outfits,
     open_scene_schema,
     outfit_moment_schema,
@@ -820,6 +822,8 @@ class ScriptRun(DraftRun):
         future = future_material(plot, self.state["plot_sha256"], number, [])
         if stage == "plan" and self.options.chapter_scope_guard:
             future = route_progress.later_in_brief(future, number)
+        if number > 1 and self.options.opening_from_script:
+            future = opening_check.without_planned_start(future, number)
         return {"setting": setting, "outline": "", "future": future,
                 "current_chapter": number,
                 "brief": self.options.for_stage(stage) + "\n" + brief,
@@ -1378,7 +1382,9 @@ class ScriptRun(DraftRun):
             expansion = self.structured(f"expand-{row.number:03d}", "script-outline", row.number,
                                         expansion_prompt(count, row.number), context, ChapterExpansion,
                                         check_expansion, schema)
-            chapters.append(row.model_copy(update={"events": expanded_events(row.events, expansion.added_steps)}))
+            start = chapters[-1].events[-1].steps[-1].result if chapters else None
+            chapters.append(row.model_copy(update={
+                "events": expanded_events(row.events, expansion.added_steps, start)}))
         plot = DetailedPlot(core=skeleton.core, chapters=chapters)
         check(plot)
         result = plot.as_outline()
@@ -1446,7 +1452,8 @@ class ScriptRun(DraftRun):
                     self.llm.trace.append({"type": "chapter_plan_normalization", "chapter": number, **record})
             return plan
 
-        model = FirstChapterPlan if number == 1 else ContinuedChapterPlan
+        split = number > 1 and self.options.opening_split
+        model = FirstChapterPlan if number == 1 else SplitChapterPlan if split else ContinuedChapterPlan
         schema = model.model_json_schema()
         if outfits:
             add_scene_outfits(schema, outfits)
@@ -1455,6 +1462,14 @@ class ScriptRun(DraftRun):
         instruction = (
             "第1章です。承認設定と当章の予定から直接場面を作ります。前章の実績整理は不要です。"
             if number == 1 else
+            "reachedとcontinuationを先に書きます。reachedは保存台本の最後で上演済みの到達点です。"
+            "誰がどこで何をし終え、どういう状態かを1文で書きます。これから演じる行動ではありません。"
+            "continuationは、その後で誰が最初に何を新しく行うかを1〜2文で具体化します。"
+            "reachedの動作や前章で済んだ行動・発言は含めず、今から演じる一つの新しい行動だけを書きます。"
+            "二つの文は第1場面の最初の出来事へ自動で渡します。第1場面のrequired_eventsは"
+            "continuationを受けた次の応答・行動から記し、start_stateは保存台本の到達点を継ぎます。"
+            "未発生の前提が必要なら当章で実行する経緯を描きます。"
+            if split else
             "continuationを先に書きます。前章の最後の反応を受け、誰が最初に何を新しく行うかを"
             "1〜2文で具体化します。状態の再確認や章全体の結末ではなく、今から演じる一つの行動です。"
             "その文は第1場面の最初の出来事へ自動で渡します。第1場面のrequired_eventsは"
@@ -1462,7 +1477,7 @@ class ScriptRun(DraftRun):
             "未発生の前提が必要なら当章で実行する経緯を描きます。"
         )
         last = number == self.manifest["approved_chapter_count"]
-        draft = self.structured(f"plan-{number:03d}", "script-plan", number,
+        prompt = (
             (FINAL_END_RULE if self.options.long_form and last else "")
             + f"全{self.manifest['approved_chapter_count']}章の第{number}章を場面に分けます。"
             + instruction +
@@ -1493,8 +1508,15 @@ class ScriptRun(DraftRun):
             "素材在庫を理由に同じ人物や舞台へ戻さないでください。"
             + PLOT_PRIORITY + (OUTFIT_PLAN if outfits else "") +
             ("最終章では、積み重ねた選択の結果として外的な課題と人物・関係の着地を描きます。"
-             if last else ""),
-            planning_context, model, check, schema)
+             if last else ""))
+        draft = self.structured(f"plan-{number:03d}", "script-plan", number, prompt,
+                                planning_context, model, check, schema)
+        if number > 1 and self.options.opening_replay_check:
+            note = self.replayed_opening(number, draft)
+            if note:
+                draft = self.structured(f"plan-{number:03d}-again", "script-plan", number, prompt,
+                    {**planning_context, "brief": planning_context["brief"] + "\n" + note},
+                    model, check, schema)
         plan = self.cast_heard_voices(number, project_plan(draft, self.options), planning_context, known)
         used_ids = {cid for scene in plan.scenes for cid in scene.character_ids}
         main_ids = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
@@ -1502,6 +1524,19 @@ class ScriptRun(DraftRun):
             "chapter_number": number, "scene_count": len(plan.scenes),
             "supporting_character_count": len(used_ids - main_ids - {"NARRATOR"})})
         return plan
+
+    def replayed_opening(self, number, draft):
+        """A note for planning again when the opening plays what the previous chapter showed."""
+        items = opening_check.opening_items(draft)
+        check_context = {"setting": {}, "outline": "", "brief": opening_check.items_brief(items),
+                         "chapters": [], "notes": [], "continuation": self.state["chapters"][number - 2]["text"]}
+        answer = self.structured(f"opening-check-{number:03d}", opening_check.PURPOSE, number,
+                                 opening_check.INSTRUCTION, check_context, route_progress.RouteProgress,
+                                 None, route_progress.progress_schema(items))
+        if self.llm is not None:
+            self.llm.trace.append({"type": "opening_check", "chapter": number,
+                                   "replayed": [row.step for row in answer.done]})
+        return opening_check.replan_note(items, answer) if answer.done else ""
 
     def mark_route_progress(self, number, context, previous_text):
         """Name the planned steps of this chapter that the latest chapter already showed."""

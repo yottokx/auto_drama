@@ -378,11 +378,12 @@ class PlanningService:
                 # scene may hold more than three. The plan first holds its cast and how many chapters it
                 # needs; the plot follows at the chapter count the user chose (long_form). A chapter plan sees
                 # later chapters in brief and is told what the latest chapter already showed, so it neither
-                # runs ahead nor plays a step twice (chapter_scope_guard). Plans started earlier carry none
-                # of these options and keep the wording and limits they were made with.
+                # runs ahead nor plays a step twice (chapter_scope_guard). A later chapter's plan writes where
+                # the saved script ended apart from its first new action (opening_split). Plans started
+                # earlier carry none of these options and keep the wording and limits they were made with.
                 "script_options": {"planned_cast_appears": True, "open_scene_cast": True,
                                    "cast_limit": cast_limit or cast_limit_choice(self.coordinator, connection)["guide"],
-                                   "long_form": True, "chapter_scope_guard": True}}
+                                   "long_form": True, "chapter_scope_guard": True, "opening_split": True}}
         content = json.loads(row["content"]) if row["content"] else None
         chosen = {"chapter_count": body.chapter_count} if body and body.action == "plot" else content
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
@@ -532,7 +533,23 @@ class PlanningService:
                     if options.get("long_form") and not options.get("chapter_scope_guard"):
                         # A long-form plan begun before chapter_scope_guard gets it here: the plan never
                         # used it, and the production this approval starts writes every chapter with it.
-                        generation["script_options"] = {**options, "chapter_scope_guard": True}
+                        generation["script_options"] = {**generation.get("script_options", {}),
+                                                        "chapter_scope_guard": True}
+                    if not options.get("opening_split"):
+                        # Likewise for opening_split, for any plan: it only shapes how chapter 2 on open.
+                        generation["script_options"] = {**generation.get("script_options", {}),
+                                                        "opening_split": True}
+                    if options.get("long_form"):
+                        from services.worker.generation.script_expansion import chained_starts
+
+                        # A long-form plot expanded before the fix starts each chapter partway through the
+                        # previous one; the approved plan, and the plan shown, start it at its end.
+                        chained = self._valid_content({**content, "plot": chained_starts(content["plot"])},
+                                                      self._snapshot(connection, row))
+                        if chained != content:
+                            content = chained
+                            connection.execute("UPDATE planning_draft SET content=?,updated_at=? WHERE id=?",
+                                               (json.dumps(content, ensure_ascii=False), now, row["id"]))
                     assets = self.approved_assets(connection, row, content)
                     approved = {"schema_version": 1, "approval_id": identifier,
                         "main_approval_id": row["main_approval_id"], "content": content,

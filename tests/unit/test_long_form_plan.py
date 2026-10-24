@@ -7,7 +7,7 @@ import pytest
 
 from services.worker.generation import script_continuation as runner
 from services.worker.generation.cancellation import GenerationCancelled
-from services.worker.generation.script_expansion import FINAL_END_RULE, FINAL_EXPANSION_RULE
+from services.worker.generation.script_expansion import FINAL_END_RULE, FINAL_EXPANSION_RULE, chained_starts
 from services.worker.generation.script_plot import balanced_boundary_options
 from tests.unit.test_script_continuation_run import (
     FIRST,
@@ -85,6 +85,37 @@ def test_four_chapters_are_cut_evenly_and_each_chapter_is_expanded(runtime, tmp_
     count = len(calls)
     runner.run_script_debug(long_input(4), tmp_path, plot_only=True, resume=True)
     assert len(calls) == count
+
+
+def test_a_chapter_starts_after_the_steps_added_to_the_previous_one(runtime, tmp_path):
+    calls, control = runtime
+    chain = chain_of(2)
+    fixed = {f"chapter_{n}": {key: value for key, value in presentation(n).items() if key != "number"}
+             for n in (1, 2)}
+    fixed["foreshadowing"] = []
+    control["responses"] = [empty_cast(), story_chain_draft(chain), fixed,
+                            {"added_steps": [added(2, "1_LAST")]}, {"added_steps": []}]
+    runner.run_script_debug(long_input(2), tmp_path, plot_only=True)
+    skeleton = read_json(tmp_path / "skeleton-plot.json")
+    plot = read_json(tmp_path / "plot.json")
+    # The skeleton starts chapter 2 before the step added at the end of chapter 1.
+    assert skeleton["chapters"][1]["events"][0]["start_condition"] == "EVENT_1_RESULT_2"
+    assert [row["events"][0]["start_condition"] for row in plot["chapters"]] == ["作業中。", "ADDED_1_LAST_RESULT"]
+
+
+def test_an_earlier_plot_is_chained_where_it_starts_partway_through():
+    def chapter(start, *results):
+        return {"events": [{"start_condition": start, "steps": [
+            {"character_id": "ren", "action": "行動。", "result": result} for result in results]}]}
+
+    plot = {"chapters": [chapter("冒頭。", "A", "B"), chapter("A", "C", "D"), chapter("書き直した開始。", "E"),
+                         chapter("E", "F")]}
+    chained = chained_starts(plot)
+    # Partway through the previous chapter: moved to its end. A start written by hand, or one
+    # already at the end, stays.
+    assert [row["events"][0]["start_condition"] for row in chained["chapters"]] == [
+        "冒頭。", "B", "書き直した開始。", "E"]
+    assert plot["chapters"][1]["events"][0]["start_condition"] == "A"
 
 
 def test_an_expansion_resumes_from_the_saved_skeleton(runtime, tmp_path):

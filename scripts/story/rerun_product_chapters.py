@@ -11,6 +11,11 @@ hashes recomputed, its history unchanged). The request counter carries on from t
 calls (e.g. the note on the previous chapter) are asked with the product's seeds; chapter_scope_guard's
 check comes after that note, so the scene plan's seed is one later. --shift moves the counter, every call's
 seed with it. Run it while the product's worker is stopped; it loads the same model on the same GPU.
+
+--chain-starts gives a long-form plan made before the fix of docs/experiments/chapter-starts-20261024.md
+its chained starts: each chapter after the first starts from the previous chapter's last planned step, where
+those plans start it from the skeleton's chain, before the steps added after it. The approved plan's content
+and hash change with it, and the inherited checkpoint carries the same plan.
 """
 
 from __future__ import annotations
@@ -24,11 +29,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from packages.contracts.planning import validate_plan_content
 from services.worker.generation import m3_pipeline
 from services.worker.generation.causal_runtime import digest
 from services.worker.generation.execution_settings import execution_revision
 from services.worker.generation.script_cast import ScriptOptions
+from services.worker.generation.script_expansion import chained_starts
 from services.worker.generation.script_production import ProductionScriptRun
+
+
+def chain_starts(payload: dict) -> None:
+    """Give the request's approved plan, and the checkpoint it inherits, the chained starts."""
+    seed = payload["approved_plan"]
+    content = validate_plan_content({**seed["content"], "plot": chained_starts(seed["content"]["plot"])},
+                                    payload["approval_snapshot"]).model_dump(mode="json")
+    seed.update(content=content, sha256=digest(content))
+    checkpoint = payload.get("script_checkpoint")
+    if isinstance(checkpoint, dict):
+        state = checkpoint["state"]
+        state.update(plot=copy.deepcopy(content["plot"]), plot_sha256=digest(content["plot"]))
+        state["accepted_plan"]["sha256"] = seed["sha256"]
+        checkpoint["plan_sha256"] = seed["sha256"]
 
 
 def rebound(checkpoint: dict, identity: str, shift: int) -> dict:
@@ -81,7 +102,9 @@ def summary(work: Path, number: int) -> dict:
     text = (script / "chapters" / f"chapter-{number:03d}.md").read_text(encoding="utf-8")
     trace = json.loads((work / "generation-trace.json").read_text(encoding="utf-8"))
     done = [row for row in trace if row.get("type") == "route_progress" and row.get("chapter") == number]
-    return {"chapter": number, "characters": len(text), "route_progress": done,
+    checked = [row for row in trace if row.get("type") == "opening_check" and row.get("chapter") == number]
+    return {"chapter": number, "characters": len(text), "route_progress": done, "opening_check": checked,
+            "continuation": plan.get("continuation", ""),
             "scenes": [{"id": scene["id"], "location_id": scene["location_id"],
                         "objective": scene["objectives"].split("\n")[0], "end_state": scene["end_state"],
                         "events": len(scene["required_events"])} for scene in plan["scenes"]]}
@@ -96,6 +119,8 @@ def main() -> int:
                         help="A script option to turn on (repeatable), e.g. chapter_scope_guard")
     parser.add_argument("--shift", type=int, default=0,
                         help="Move the first chapter's inherited request counter, so every call gets another seed")
+    parser.add_argument("--chain-starts", action="store_true",
+                        help="Start each chapter from the previous chapter's last planned step (the fix tried)")
     args = parser.parse_args()
     for name in args.option:
         field = ScriptOptions.model_fields.get(name)
@@ -105,6 +130,9 @@ def main() -> int:
     numbers = [row["payload"].get("chapter_number") for row in requests]
     if numbers != list(range(numbers[0], numbers[0] + len(numbers))) or numbers[0] < 2:
         parser.error(f"The jobs must be consecutive chapters from chapter 2 on, in order (got {numbers}).")
+    if args.chain_starts:
+        for request in requests:
+            chain_starts(request["payload"])
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rebind_first_checkpoint(numbers[0], args.shift)
     previous = None

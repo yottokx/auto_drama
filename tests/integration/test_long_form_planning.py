@@ -23,6 +23,7 @@ def cast_stage(client):
     job = claim(client, worker)
     assert job["payload"]["script_options"]["long_form"] is True
     assert job["payload"]["script_options"]["chapter_scope_guard"] is True
+    assert job["payload"]["script_options"]["opening_split"] is True
     snapshot = job["payload"]["approval_snapshot"]
     content = {"cast_plan": plan_content(snapshot)["cast_plan"], "chapter_judgment": JUDGMENT}
     complete_plan(client, job, worker, content=content)
@@ -64,16 +65,17 @@ def test_the_plot_is_planned_at_the_chosen_count_and_production_follows_it(tmp_p
 def test_a_plan_begun_before_the_guard_writes_its_chapters_with_it(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         project, worker, _, _ = cast_stage(client)
-        # A long-form plan begun before chapter_scope_guard: its planning jobs carry none.
+        # A long-form plan begun before chapter_scope_guard and opening_split: its planning jobs carry neither.
         with client.app.state.coordinator.db.transaction() as connection:
             for row in connection.execute("SELECT id,payload FROM job WHERE kind='m3_plan'").fetchall():
                 payload = json.loads(row["payload"])
                 payload["script_options"].pop("chapter_scope_guard")
+                payload["script_options"].pop("opening_split")
                 connection.execute("UPDATE job SET payload=? WHERE id=?",
                                    (json.dumps(payload, ensure_ascii=False), row["id"]))
         plan_action(client, project, "plot", chapter_count=2)
         job = claim(client, worker)
-        assert "chapter_scope_guard" not in job["payload"]["script_options"]
+        assert not {"chapter_scope_guard", "opening_split"} & set(job["payload"]["script_options"])
         content = {**plan_content(job["payload"]["approval_snapshot"]), "chapter_count": 2,
                    "chapter_judgment": JUDGMENT}
         complete_plan(client, job, worker, content=content)
@@ -82,7 +84,34 @@ def test_a_plan_begun_before_the_guard_writes_its_chapters_with_it(tmp_path):
         chapter = claim(client, media)
         assert chapter["kind"] == "m3_narrative"
         assert chapter["payload"]["script_options"]["chapter_scope_guard"] is True
+        assert chapter["payload"]["script_options"]["opening_split"] is True
         assert chapter["payload"]["script_options"]["long_form"] is True
+
+
+def test_an_earlier_plot_starts_each_chapter_at_the_previous_end_when_approved(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        plan_action(client, project, "plot", chapter_count=2)
+        job = claim(client, worker)
+        content = {**plan_content(job["payload"]["approval_snapshot"]), "chapter_count": 2,
+                   "chapter_judgment": JUDGMENT}
+        cid = content["plot"]["core"]["characters"][0]["character_id"]
+        steps = [{"character_id": cid, "action": f"行動{n}。", "result": f"結果{n}。"} for n in (1, 2)]
+        # As a long-form plot expanded before the fix: chapter 2 starts after the skeleton's step 1,
+        # before step 2 added after it.
+        content["plot"]["chapters"][0]["events"] = [{"start_condition": "冒頭。", "steps": steps}]
+        content["plot"]["chapters"][1]["events"] = [{"start_condition": "結果1。", "steps": [
+            {"character_id": cid, "action": "行動3。", "result": "結果3。"}]}]
+        complete_plan(client, job, worker, content=content)
+        assert planning(client, project)["content"]["plot"]["chapters"][1]["events"][0]["start_condition"] == "結果1。"
+        plan_action(client, project, "approve")
+        media = client.post("/api/workers", json={"name": "media", "capabilities": M3_KINDS}).json()["id"]
+        chapter = claim(client, media)
+        plot = chapter["payload"]["approved_plan"]["content"]["plot"]
+        assert [row["events"][0]["start_condition"] for row in plot["chapters"]] == ["冒頭。", "結果2。"]
+        assert plot["chapters"][1]["route"]["start_condition"] == "結果2。"
+        # The plan shown in STEP4 is the one approved.
+        assert planning(client, project)["content"]["plot"] == plot
 
 
 def test_a_cast_edited_by_hand_before_the_count_is_judged_again(tmp_path):

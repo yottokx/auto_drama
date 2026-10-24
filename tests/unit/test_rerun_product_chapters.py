@@ -5,9 +5,12 @@ import sys
 
 import pytest
 
+from packages.contracts.planning import validate_plan_content
 from scripts.story import rerun_product_chapters as rerun
 from services.worker.generation import m3_pipeline
+from services.worker.generation.causal_runtime import digest
 from services.worker.generation.script_production import ProductionScriptRun
+from tests.unit.test_common_plan_worker import semantic_plan
 from tests.unit.test_live_script_settings import configured as _configured
 from tests.unit.test_script_continuation_run import (
     FIRST,
@@ -17,6 +20,7 @@ from tests.unit.test_script_continuation_run import (
     chapter_plan,
     empty_cast,
     staging,
+    story_chain,
     story_chain_draft,
     three_chapter_snapshot,
 )
@@ -98,6 +102,31 @@ def test_the_product_job_is_written_again_with_the_guard(configured, tmp_path, h
     requests = [row["request"] for row in trace if row.get("type") == "llm_generation"]
     # The previous chapter's note is asked with the product's number; the guard's check comes after it.
     assert requests[:3] == [before + 1, before + 2, before + 3]
+
+
+def test_chained_starts_begin_each_chapter_after_the_previous_one(app_runtime, tmp_path, history):
+    calls, control = app_runtime
+    first = job()
+    content = semantic_plan()
+    chain = story_chain()["events"]
+    # As a long-form plot is saved: chapter 2 starts from the skeleton, before chapter 1's added last step.
+    content["plot"]["chapters"][0]["events"] = [{"start_condition": "作業中。", "steps": [
+        *chain[0]["steps"], {"character_id": "ren", "action": "ADDED_ACTION", "result": "ADDED_RESULT"}]}]
+    content["plot"]["chapters"][1]["events"] = [{**chain[1], "start_condition": chain[0]["steps"][-1]["result"]}]
+    content = validate_plan_content(content, first["payload"]["approval_snapshot"]).model_dump(mode="json")
+    first["payload"]["approved_plan"] = {"content": content, "approval_id": "accepted-1", "sha256": digest(content)}
+    control["responses"] = [chapter_plan("s1"), FIRST, staging(FIRST)]
+    second_chapter = following(first, generate(first, tmp_path / "first"))
+
+    rerun.chain_starts(second_chapter["payload"])
+    plot = second_chapter["payload"]["approved_plan"]["content"]["plot"]
+    assert plot["chapters"][1]["events"][0]["start_condition"] == "ADDED_RESULT"
+    assert plot["chapters"][0] == content["plot"]["chapters"][0]
+    payload = rerun.chapter_payload(second_chapter, ["skip_staging"], None)
+    rerun.rebind_first_checkpoint(2, 0)
+    run = ProductionScriptRun(tmp_path / "chained", m3_pipeline.pipeline.load_config(), payload)
+    run._verify_narratives()
+    assert run.state["plot"] == plot and run.state["accepted_plan"]["approval_id"] == "accepted-1"
 
 
 def test_a_later_chapter_continues_from_this_run(second_chapter):

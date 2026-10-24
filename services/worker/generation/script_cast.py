@@ -54,6 +54,16 @@ class ScriptOptions(Contract):
     # Experiment only: no staging or outfit-moment calls. Every line gets a neutral emotion and
     # the scene only its entrances, so a script can be read without the slowest step.
     skip_staging: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experiment only (docs/experiments/chapter-opening-20261024.md): a later chapter's plan and
+    # text are not given the chapter's planned start, only the saved script's end. Absent when unset.
+    opening_from_script: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experiment only (same record): a later chapter's opening is checked against the saved script
+    # (script_opening_check), and planned once more if it plays what already happened. Absent when unset.
+    opening_replay_check: bool = Field(default=False, exclude_if=lambda value: not value)
+    # A later chapter's plan writes where the saved script ended apart from its first new action, and
+    # the text gets the end as already played (same record). Set for plans made or approved since
+    # 2026-10-24; absent when unset.
+    opening_split: bool = Field(default=False, exclude_if=lambda value: not value)
     # Set for plans made since the user chooses how many characters a work may have, mains
     # included. The cast plan then has no size anchor, first lists who is around the mains, and
     # keeps to this. Absent when unset, so earlier plans keep their wording and their limit.

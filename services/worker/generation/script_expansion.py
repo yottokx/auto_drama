@@ -10,6 +10,8 @@ The wording and the answer format are the ones tried in docs/experiments/long-fo
 
 from __future__ import annotations
 
+import copy
+
 from pydantic import Field
 
 from packages.contracts.script import Contract
@@ -81,8 +83,15 @@ def expansion_schema(available: set[str], steps: int, last: bool) -> tuple[dict,
     return schema, room
 
 
-def expanded_events(events: list[ChainEvent], added: list[AddedStep]) -> list[ChainEvent]:
-    """The chapter's skeleton steps with the added ones in place, as events of up to six steps."""
+def expanded_events(events: list[ChainEvent], added: list[AddedStep],
+                    start_condition: str | None = None) -> list[ChainEvent]:
+    """The chapter's skeleton steps with the added ones in place, as events of up to six steps.
+
+    ``start_condition`` is the previous chapter's last expanded result. The skeleton's start
+    comes from the skeleton's previous step, before the steps added after it, and a scene plan
+    given that start began the chapter by playing those steps again
+    (docs/experiments/chapter-starts-20261024.md).
+    """
     skeleton = [step for event in events for step in event.steps]
     if any(row.after_step > len(skeleton) for row in added):
         raise ValueError(f"after_step must be between 0 and {len(skeleton)}.")
@@ -91,9 +100,24 @@ def expanded_events(events: list[ChainEvent], added: list[AddedStep]) -> list[Ch
         steps.append(step)
         steps.extend(ChainStep(**row.model_dump(exclude={"after_step"}))
                      for row in added if row.after_step == number)
-    result, condition = [], events[0].start_condition
+    result, condition = [], start_condition or events[0].start_condition
     for start in range(0, len(steps), 6):
         chunk = steps[start:start + 6]
         result.append(ChainEvent(start_condition=condition, steps=chunk))
         condition = chunk[-1].result
+    return result
+
+
+def chained_starts(plot: dict) -> dict:
+    """A plot expanded before expanded_events took the previous chapter's end, with its chapters
+    starting there. Only a start that is the result of an earlier step of the previous chapter
+    (the skeleton's start) is replaced; a start the user wrote stays as it is."""
+    result = copy.deepcopy(plot)
+    for previous, row in zip(result["chapters"], result["chapters"][1:]):
+        steps = [step for event in previous["events"] for step in event["steps"]]
+        if not steps or not row["events"]:
+            continue
+        start = row["events"][0]["start_condition"]
+        if start != steps[-1]["result"] and start in {step["result"] for step in steps[:-1]}:
+            row["events"][0]["start_condition"] = steps[-1]["result"]
     return result
