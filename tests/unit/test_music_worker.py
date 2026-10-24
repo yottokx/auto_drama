@@ -163,8 +163,8 @@ def jobs(tmp_path, monkeypatch):
     return SimpleNamespace(root=tmp_path, requests=requests, events=events)
 
 
-def job(seed=2**40 + 7, retry=0):
-    return {"kind": "m3_music", "retry_generation": retry, "payload": {"schema_version": 1,
+def job(seed=2**40 + 7, retry=0, attempt=1):
+    return {"kind": "m3_music", "retry_generation": retry, "attempt": attempt, "payload": {"schema_version": 1,
         "seed": seed, "backend": "stable_audio3", "model": "medium", "scene_id": "comic",
         "prompt": PROMPT, "context": context()}}
 
@@ -183,21 +183,24 @@ def test_music_job_seed_mapping_complete_bundle_and_transport_replay(jobs):
     assert jobs.requests[0]["seed"] == report["provenance"]["effective_seed"] == 7
     assert report["provenance"]["job_seed"] == 2**40 + 7
     assert report["provenance"]["retry_generation"] == 0
-    assert music.generate_job(job(), jobs.root / "first") == content
+    assert report["provenance"]["attempt"] == 1
+    # A later attempt reuses the finished track instead of drawing a new seed.
+    assert music.generate_job(job(attempt=2), jobs.root / "first") == content
     assert len(jobs.requests) == 1
     assert jobs.events == ["acquire", "release", "close"]
 
 
-def test_manual_retry_changes_seed_but_lease_retry_repeats_it(jobs):
+def test_every_attempt_draws_a_new_seed(jobs):
     base = unpack(music.generate_job(job(), jobs.root / "attempt-a"))
-    lease_retry = unpack(music.generate_job(job(), jobs.root / "attempt-b"))
-    manual = unpack(music.generate_job(job(retry=1), jobs.root / "manual"))
-    assert base["provenance"]["effective_seed"] == lease_retry["provenance"]["effective_seed"] == 7
-    assert manual["provenance"]["effective_seed"] == 8
+    lease_retry = unpack(music.generate_job(job(attempt=2), jobs.root / "attempt-b"))
+    manual = unpack(music.generate_job(job(retry=1, attempt=4), jobs.root / "manual"))
+    assert base["provenance"]["effective_seed"] == 7
+    assert lease_retry["provenance"]["effective_seed"] == 8
+    assert manual["provenance"]["effective_seed"] == 10
     assert manual["provenance"]["retry_generation"] == 1
 
 
-def test_failed_manual_retry_uses_same_frozen_directory_and_new_seed(jobs, monkeypatch):
+def test_automatic_retry_after_quality_failure_uses_new_seed(jobs, monkeypatch):
     original = music.music_session.MusicSession.run
 
     def fail_first(self, request, **kwargs):
@@ -210,7 +213,7 @@ def test_failed_manual_retry_uses_same_frozen_directory_and_new_seed(jobs, monke
     with pytest.raises(ValueError, match="quality check failed"):
         music.generate_job(job(), jobs.root / "failed")
     assert not (jobs.root / "failed/result.zip").exists()
-    report = unpack(music.generate_job(job(retry=1), jobs.root / "failed"))
+    report = unpack(music.generate_job(job(attempt=2), jobs.root / "failed"))
     assert [request["seed"] for request in jobs.requests] == [7, 8]
     assert report["provenance"]["effective_seed"] == 8
 

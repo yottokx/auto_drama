@@ -288,7 +288,12 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
     retry_generation = job.get("retry_generation", 0)
     if type(retry_generation) is not int or retry_generation < 0:
         raise ValueError("Invalid music retry counter.")
-    effective_seed = (seed + retry_generation) & 0xffffffff
+    attempt = job.get("attempt", 1)
+    if type(attempt) is not int or attempt < 1:
+        raise ValueError("Invalid music attempt number.")
+    # A fixed seed regenerates the same track, so a quality failure would recur
+    # on every retry. A finished track is still reused from result.zip.
+    effective_seed = (seed + attempt - 1) & 0xffffffff
     for session in (voice_session, image_session, llm_session, music_session):
         session.prepare_job(kind)
     config = pipeline.load_config()
@@ -374,8 +379,8 @@ def generate_job(job: dict, work_dir: Path) -> bytes:
                 if result["scene_id"] != scene_id or result["prompt"] != prompt or abs(result["source_duration_seconds"] - duration) > 0.002:
                     raise ValueError("Music child did not honor the frozen request.")
                 provenance.update(report["provenance"], effective_seed=effective_seed,
-                    retry_generation=retry_generation,
-                    seed_mapping="(job_seed + retry_generation) & 0xffffffff", model_configuration_identity=identity)
+                    retry_generation=retry_generation, attempt=attempt,
+                    seed_mapping="(job_seed + attempt - 1) & 0xffffffff", model_configuration_identity=identity)
                 assets = {name: (output / name).read_bytes() for name in ("source.mp3", "music.mp3")}
         finally:
             if session is None:
