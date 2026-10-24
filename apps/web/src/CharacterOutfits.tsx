@@ -76,8 +76,10 @@ export function BriefLooks({ looks: all, onChange: emit, disabled = false, mater
 }
 
 /** STEP3: the base portrait and each alternate look as tabs, with "+" to add one. */
-export function LookTabs({ outfits, selected, onSelect, onAdd, idPrefix }: {
+export function LookTabs({ outfits, selected, onSelect, onAdd, idPrefix, canAdd = true }: {
   outfits: M2Outfit[]; selected: string; onSelect: (id: string) => void; onAdd: () => void; idPrefix: string
+  /** False when the mains together already have as many alternate looks as the settings allow. */
+  canAdd?: boolean
 }) {
   const looks = alternateLooks(outfits)
   const base = outfits.find(outfit => outfit.id === 'default')
@@ -87,7 +89,7 @@ export function LookTabs({ outfits, selected, onSelect, onAdd, idPrefix }: {
       const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length] : event.key === 'ArrowLeft' ? tabs[(index + tabs.length - 1) % tabs.length] : null
       if (next) { event.preventDefault(); onSelect(next.id); document.getElementById(`${idPrefix}-tab-${next.id}`)?.focus() }
     }}>{tab.label}</button>)}
-    {looks.length < MAX_LOOKS && <button type="button" className="char-look-add" aria-label="別バージョンを追加" title="別バージョンを追加" onClick={onAdd}><Icon name="plus" size={14}/></button>}
+    {looks.length < MAX_LOOKS && canAdd && <button type="button" className="char-look-add" aria-label="別バージョンを追加" title="別バージョンを追加" onClick={onAdd}><Icon name="plus" size={14}/></button>}
   </div>
 }
 

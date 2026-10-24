@@ -44,7 +44,8 @@ def test_settings_persist_snapshot_and_filter_workers(tmp_path):
 
 
 @pytest.mark.parametrize("patch", [
-    {"ctx_size": 8192}, {"ctx_size": 16384.5},
+    {"ctx_size": 8192}, {"ctx_size": 16384.5}, {"ctx_size": 24576}, {"ctx_size": 131072},
+    {"ctx_size": 16384, "reasoning_effort": "low"},
     {"temperature": -0.1}, {"temperature": 2.1}, {"top_p": 0}, {"top_p": 1.1},
     {"reasoning_effort": 123}, {"model": "missing"}, {"max_tokens": 100},
 ])
@@ -103,7 +104,7 @@ def test_worker_rescans_models_without_reregistering(tmp_path):
         assert client.get("/api/settings/llm").json()["models"] == []
 
 
-@pytest.mark.parametrize("context", [32768, 65536, 131072])
+@pytest.mark.parametrize("context", [32768, 65536])
 def test_expanded_context_saves_and_dispatches_with_legacy_worker_advertisement(tmp_path, context):
     with TestClient(create_app(tmp_path)) as client:
         identifier = worker(client, maximum=16384)
@@ -130,3 +131,13 @@ def test_free_text_effort_persists_and_dispatches(tmp_path, effort):
         assert job["payload"]["profile"]["reasoning_level"] == effort
     with TestClient(create_app(tmp_path)) as client:
         assert client.get("/api/settings/llm").json()["settings"] == settings
+
+
+def test_a_context_saved_before_the_tiers_is_read_at_the_tier_below(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        with client.app.state.coordinator.db.transaction() as connection:
+            connection.execute("INSERT INTO llm_settings(id,value) VALUES(1,?)",
+                               (json.dumps({**SETTINGS, "reasoning_effort": "low", "ctx_size": 24576}),))
+        settings = client.get("/api/settings/llm").json()["settings"]
+        # 16k has no room for reasoning, so it is read without it.
+        assert settings == {**SETTINGS, "reasoning_effort": "none", "ctx_size": 16384}

@@ -30,6 +30,19 @@ class ContinuedChapterPlan(FirstChapterPlan, Continuation):
     pass
 
 
+class SplitContinuation(Contract):
+    """Experiment (ScriptOptions.opening_split): where the saved script ended, apart from the first new action."""
+
+    reached: str = Field(min_length=1, max_length=240,
+        description="保存台本の最後で上演済みの到達点。誰がどこで何をし終え、どういう状態か。1文。これから演じる行動ではない。")
+    continuation: str = Field(min_length=1, max_length=240,
+        description="reachedの後で、誰が最初に何を新しく行うかを1〜2文。reachedの動作や前章で済んだ行動・発言は含めない。")
+
+
+class SplitChapterPlan(FirstChapterPlan, SplitContinuation):
+    pass
+
+
 class ChapterScriptPlan(Contract):
     continuation: str = ""
     new_characters: list[CharacterResult] = Field(max_length=3)
@@ -49,6 +62,7 @@ def project_plan(draft: FirstChapterPlan, options: ScriptOptions) -> ChapterScri
     total = sum(scene.length_weight for scene in draft.scenes)
     scenes, sizes = [], {}
     opening = getattr(draft, "continuation", "")
+    reached = getattr(draft, "reached", "")
     for index, scene in enumerate(draft.scenes):
         body = round(options.target_body_characters * scene.length_weight / total)
         dialogue = round(options.target_dialogue_characters * scene.length_weight / total)
@@ -59,7 +73,8 @@ def project_plan(draft: FirstChapterPlan, options: ScriptOptions) -> ChapterScri
             # The generated opening has a single execution site. Preserve the
             # rest of the first event and the public eight-event limit.
             first = data["required_events"][0]
-            first["description"] = ("【最初の新行動】" + opening
+            first["description"] = (("【直前の到達点（前章で上演済み）】" + reached + "\n" if reached else "")
+                                    + "【最初の新行動】" + opening
                                     + "\n【続く行動・応答】" + first["description"])
         data["objectives"] += (f"\n【分量の補助目安】この場面の本文約{body}文字、うち台詞約{dialogue}文字。"
                                "会話と応答を十分に描く。字数検査や機械的な水増しはしない。")

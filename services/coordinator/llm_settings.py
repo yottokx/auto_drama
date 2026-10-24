@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from packages.contracts.llm_settings import LLMCapability, LLMSettings
+from packages.contracts.llm_settings import CONTEXT_TIERS, LLMCapability, LLMSettings, context_tier
 
 from .service import ServiceError
 
@@ -14,7 +14,15 @@ def saved_settings(coordinator, connection=None) -> LLMSettings | None:
     connection = connection or coordinator.db.connect()
     try:
         row = connection.execute("SELECT value FROM llm_settings WHERE id=1").fetchone()
-        return LLMSettings.model_validate_json(row["value"]) if row else None
+        if not row:
+            return None
+        value = json.loads(row["value"])
+        # Saved before the context tiers: read at the tier below, without reasoning at 16k.
+        if value.get("ctx_size") not in CONTEXT_TIERS:
+            value["ctx_size"] = context_tier(value["ctx_size"])
+        if value["ctx_size"] == CONTEXT_TIERS[0]:
+            value["reasoning_effort"] = "none"
+        return LLMSettings.model_validate(value)
     finally:
         if owned:
             connection.close()
@@ -53,10 +61,13 @@ def script_profile(coordinator, connection=None) -> dict:
 
 
 def cast_limit_choice(coordinator, connection=None) -> dict:
-    """What STEP3 offers for a work's character count: the guideline for the current settings."""
-    from services.worker.generation.script_cast import CAST_LIMIT_MAX, cast_limit_guide
+    """What STEP3 offers for a work's character count: up to the current context tier's limit,
+    which is also the default; and how many alternate looks the mains may have in all (None:
+    each main's four)."""
+    from services.worker.generation.script_cast import work_limits
 
-    return {"guide": cast_limit_guide(script_profile(coordinator, connection)), "max": CAST_LIMIT_MAX}
+    limits = work_limits(script_profile(coordinator, connection))
+    return {"guide": limits.characters, "max": limits.characters, "looks": limits.looks}
 
 
 def execution_settings(coordinator, connection, payload, *, kind, revision=0, profile=None):

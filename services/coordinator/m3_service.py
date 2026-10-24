@@ -191,7 +191,12 @@ class M3Service(ChapterProduction):
         record = required(connection, "artifact", production["approval_artifact_id"])
         if record["project_id"] != production["project_id"] or record["kind"] != "m2_approval":
             raise ServiceError(422, "承認版が作品と一致しません。")
-        return json.loads(self.store.read(record))
+        from packages.contracts.planning import plan_snapshot
+
+        snapshot = json.loads(self.store.read(record))
+        # A long-form plan chose its chapter count after the approval; its chapters follow the plan.
+        plan = self._approved_plan(connection, production)
+        return plan_snapshot(snapshot, plan["content"]) if plan else snapshot
 
     def _approved_plan(self, connection, production):
         identifier = production["plan_approval_id"]
@@ -728,7 +733,9 @@ class M3Service(ChapterProduction):
                 cg["plan_completed"] = cg["budget_completed"] and all(
                     chapter["event_cg"]["plan_completed"] for chapter in chapters)
                 production["event_cg"] = cg
-            production["chapter_count"] = len(chapters)
+            # Every planned chapter, as the approval (or a long-form plan's chosen count) holds it.
+            planned = self._snapshot(connection, row)["world"]["result"]["chapterCount"]
+            production["chapter_count"] = max(len(chapters), planned)
             self._settle_control(connection, row)
             production["control_state"] = required(connection, "m3_production", production_id)["control_state"]
             jobs = [job for chapter in chapters for job in chapter["jobs"]]

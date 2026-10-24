@@ -29,6 +29,12 @@ def install_plan(state: dict, output, manifest: dict, content: dict, identity: d
     cast = copy.deepcopy(content["cast_plan"])
     record = {"plan": cast, "sha256": digest(cast), "input_sha256": manifest["input_sha256"],
               "protocol": manifest["generator_protocol"]}
+    if content.get("plot") is None:
+        # A long-form plan before its plot: only the cast it will be planned with.
+        validate_plan_content(content, manifest["approval_snapshot"])
+        state["cast_plan"] = record
+        write_json(output / "cast-plan.json", record)
+        return
     plot = copy.deepcopy(content["plot"])
     value = validate_plan_content(content, manifest["approval_snapshot"])
     state.update(cast_plan=record, plot=plot, plot_sha256=digest(plot),

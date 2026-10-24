@@ -5,8 +5,8 @@
 ## 状態
 
 - ブランチ `claude/character-outfits`。このセッションの成果は全部コミットしていない。
-  - 実験記録: `docs/experiments/long-form-20261019.md`（5章と3章）、`docs/experiments/long-form-expand-20261020.md`（2段の計画、6章・8章・64k・ひだまり・コンビニ、締めの対策）、`docs/experiments/chapter-count-judgment-20261020.md`（章数の判定）。
-  - スクリプト: `scripts/story/check_text_long.py`、`scripts/story/drop_last_chapter.py`、`scripts/story/probe_chapter_count.py`、`scripts/story/probe_variable_chapters.py`。
+  - 実験記録: `docs/experiments/long-form-20261019.md`（5章と3章）、`docs/experiments/long-form-expand-20261020.md`（2段の計画、6章・8章・64k・ひだまり・コンビニ、締めの対策）、`docs/experiments/chapter-count-judgment-20261020.md`（章数の判定）、`docs/experiments/long-form-16k-20261021.md`（3章・16k、コンテキストの段と推論、2026-10-21 追記）。
+  - スクリプト: `scripts/story/check_text_long.py`、`scripts/story/drop_last_chapter.py`、`scripts/story/probe_chapter_count.py`、`scripts/story/probe_variable_chapters.py`、`scripts/story/input_budgets.py`（各依頼の入力トークン数と、容量の都合で削ったもの）。
 - 可変章数のSTEP4の実験（`probe_variable_chapters.py`、5作品、出力 `outputs/variable-chapters-20261019/`）は記録を書いていない。分かっているのは、連鎖の手順数から章数を割り出すと Gemma 推論なしで2〜4章だったことだけ（章数判定の記録の「前の実験との関係」に一行ある）。
 - `scripts/flux3_klein/` と `services/worker/runtimes/flux3_klein/` は前からの保留中のファイル。コミットしない。
 - 基準の条件: gemma-4-31B-it-UD-Q4_K_XL、推論なし、演出注釈・画像・音声なし。
@@ -47,6 +47,7 @@
   - 鉄と血5章は、ゼノスとの言い合いが案Bの半分ほどの量で残った。第4章が最終章の手順を先取りしていて、残った最後の手順がゼノスのものだった。古い作り方（バランス化・肉付けなし）の実行でだけ出ている。
   - 鉄と血6章は、エレナの着地が2回のまま。指示なしでシードを変えると1回だったので、指示の側から来ている（締めの場面に着地が集まり、冒頭でも一度着地させる）。
 - 肉付けで締めの後ろに手順を足させない制限（`--final-closure` の①）は、コンビニでは結果に影響しなかった（足した手順は元から締めより前に置かれていた）。
+  - 訂正（2026-10-21）: コンビニだけの話だった。言い換え禁止ありの5本のうち4本（ひだまり4章、鉄と血6章・8章）は、最終章の肉付けが締めの後ろに手順を足していた。案1のひだまりと鉄と血6章は、その足した手順で章を終えていた。①＋案1（`--closing-step-last --closure-end`）をひだまり4章で試すと、最後の場面が骨組みの締めで終わり、着地の重複も出なかった（実験記録の「締めの手順を最後に固定した案1」）。
 - 前のセッションの最後に私が勧めたのは、案1で締めの対策を決め、ゼノスの件は先取り（章の境目）の問題として保留、エレナの重複は軽い副作用として扱うこと。ユーザーはまだ決めていない。
 
 ## 未着手・未決のこと
@@ -61,7 +62,7 @@
 - `scripts/story/check_text_long.py`: 製品の流れを N 章にして台本まで書く。主なオプション:
   - `--chapters N`、`--context-size`、`--skip-staging`、`--model-id`、`--seed`、`--chapter-limit`、`--plot-only`、`--resume`。
   - 計画: `--expand`、`--balanced`、`--expansion-steps`、`--distinct-steps`、`--fresh-roles`。
-  - 締め: `--final-closure`（①＋案B）、`--closure-plan`（案Bだけ）、`--closure-end`（案1）。
+  - 締め: `--final-closure`（①＋案B）、`--closure-plan`（案Bだけ）、`--closure-end`（案1）、`--closing-step-last`（①だけ。`--closure-end` と一緒に使う）。
   - 再利用: `--plot-from DIR`（キャスト計画・連鎖・配分・肉付けの採用済みの回答を読み込み、プロットを完全に一致させる）、`--cast-from DIR`（その `cast-plan.json` をキャストにする）。
 - `scripts/story/drop_last_chapter.py SRC TARGET [--shift N]`: 書き終えた実行から最終章の分だけを消した複製を作る。依頼の通し番号を最終章の最初の依頼の手前に戻すので、同じオプションで `--resume` すると最終章が同じシードで書き直される（シードは入力のシード＋依頼の通し番号）。`--shift` でずらすと最終章だけ別のシード。`--seed` を変えた再開は、製品の来歴の確認で拒まれる。
 - `scripts/story/probe_chapter_count.py`: 章数の判定。`--prompt plain|fewshot|capacity|criteria`、`--cap`、条件 gemma / gemma-thinking / qwen / qwen-medium、`--works DIR`（`inputs/<作品>.json` と `<作品>-open/cast-plan.json`）。Gemma の推論ありは製品の `RoutedLLM` が止めるので、その条件だけ `LocalLLM._chat_request` で回避している。

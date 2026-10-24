@@ -1663,6 +1663,16 @@ class M2Service:
         draft = state["draft"]
         if cast_limit is not None and cast_limit < len(draft["characters"]):
             raise ServiceError(400, "登場キャラの上限は、メインキャラの人数以上にしてください。")
+        from services.worker.generation.script_cast import work_limits
+
+        from .llm_settings import script_profile
+
+        limits = work_limits(script_profile(self.coordinator, connection))
+        if cast_limit is not None and cast_limit > limits.characters:
+            raise ServiceError(400, f"登場キャラの上限は{limits.characters}人までです。")
+        if limits.looks is not None and sum(
+                len(self._alternates(value)) for value in draft["characters"]) > limits.looks:
+            raise ServiceError(409, f"別バージョンの立ち絵は、全員で{limits.looks}着までです。")
         self._world_confirmed(draft)
         if state["activeJobId"] or state["queue"]:
             raise ServiceError(409, "失敗または未完了の生成処理を解決してから承認してください。")

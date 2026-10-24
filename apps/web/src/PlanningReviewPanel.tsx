@@ -3,7 +3,8 @@ import { ApiError, errorMessage, request } from './api'
 import { Icon } from './Icons'
 import { Dialog } from './PreviewComponents'
 import {
-  canApprovePlanning, cancelPlanningTab, initialPlanningEditor, planningAction, planningActivity, planningAssetsPending, planningDirty, planningTabDirty, receivePlanning,
+  canApprovePlanning, cancelPlanningTab, castStage, chapterChoice, initialPlanningEditor, planningAction, planningActivity, planningAssetsPending, planningDirty, planningTabDirty, receivePlanning,
+  revisionTargets,
   type PlanningContent, type PlanningEditorState, type PlanningResponse, type PlanningTab, type RevisionTarget,
   type OutfitNames,
 } from './planningState'
@@ -15,6 +16,10 @@ import type { EventCgEditorStatus } from './eventCgState'
 import { llmProgressItems } from './productionState'
 import type { CharacterBrief, WizardStep } from './wizardState'
 import './planning.css'
+
+const targetNames: Record<RevisionTarget, string> = {
+  all: '全体プロットとサブキャラ', plot: 'プロット', character: 'サブキャラ1人', relationships: '人物の関係性',
+}
 
 export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharacters, outfitNames, mainApprovalId, setupApproved, serverStep, onRefresh, onReloadSetup, onPendingChange, onApproved, onBack, onProduction }: {
   /** False when the work forgoes the image editing model, and so has no event CGs to set up. */
@@ -36,6 +41,8 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
   const [target, setTarget] = useState<RevisionTarget>('all')
   const [characterId, setCharacterId] = useState('')
   const [chapter, setChapter] = useState('')
+  // What is being typed as a long-form plan's chapter count; held to the limit when used.
+  const [chapterCount, setChapterCount] = useState('')
   const [approveOpen, setApproveOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const [discardSetup, setDiscardSetup] = useState(false)
@@ -110,6 +117,17 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
   const selectedCharacter = state.content?.cast_plan.supporting_characters.find(character => character.id === characterId)?.id
     ?? state.content?.cast_plan.supporting_characters[0]?.id
   const editing = Boolean(editBaselines[tab])
+  // A long-form plan first holds its cast and the judged chapter count; its plot comes at the
+  // count chosen here, and from then on the cast is settled: shown, not edited.
+  const choosingCount = castStage(state.content)
+  const castSettled = Boolean(state.content?.chapter_judgment) && !choosingCount
+  const targets = revisionTargets(state.content)
+  const shownTarget = targets.includes(target) ? target : targets[0]
+  const tabs: PlanningTab[] = choosingCount ? ['cast'] : ['plot', 'cast']
+  const choice = state.content?.chapter_judgment ? chapterChoice(state.content.chapter_judgment, planning?.chapter_limit ?? 3) : null
+  const chosenChapters = choice && Math.max(1, Math.min(choice.limit, Math.round(Number(chapterCount)) || choice.initial))
+
+  useEffect(() => { setTab(choosingCount ? 'cast' : 'plot') }, [choosingCount])
 
   useEffect(() => {
     if (!tabScrollRequested.current) return
@@ -136,7 +154,7 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
     setNotice(`${tab === 'plot' ? 'プロット' : 'サブキャラ'}の直接編集を取り消しました。`)
   }
 
-  async function mutate(action: 'generate' | 'save' | 'revise' | 'approve', retryId?: string) {
+  async function mutate(action: 'generate' | 'save' | 'revise' | 'approve' | 'plot', retryId?: string) {
     if (mutation.current || generating || state.conflict || setupInvalidated) return
     if (action === 'approve' && !canApprove) return
     const controller = new AbortController()
@@ -148,15 +166,15 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
         await request(`/api/jobs/${encodeURIComponent(retryId)}/retry`, controller.signal, {})
         result = await request<PlanningResponse>(endpoint, controller.signal)
       } else {
-        const body = planningAction(current.current, action, { target, characterId: selectedCharacter, ...(chapter ? { chapterNumber: Number(chapter) } : {}) })
+        const body = planningAction(current.current, action, { target: shownTarget, characterId: selectedCharacter, ...(chapter ? { chapterNumber: Number(chapter) } : {}), ...(chosenChapters ? { chapterCount: chosenChapters } : {}) })
         result = await request<PlanningResponse>(`${endpoint}/actions`, controller.signal, action === 'approve'
           ? { ...body, reconfirm: planning?.status === 'approved', ...(imageEditing ? { expected_event_cg_policy_revision: cgStatus.policy!.revision } : {}) } : body)
       }
       if (!mounted.current || controller.signal.aborted) return
       accept(result, true, action === 'revise')
       if (action === 'revise' && !retryId) setRevisionOpen(false)
-      setNotice(retryId ? '全体計画の生成を再試行します。' : action === 'save' ? '全体計画の変更を保存しました。内容を確認して承認してください。'
-        : action === 'approve' ? '全体計画を承認しました。第1章から本編を制作します。' : '全体計画の生成を受け付けました。')
+      setNotice(retryId ? '全体計画の生成を再試行します。' : action === 'save' ? (choosingCount ? 'サブキャラの変更を保存しました。章数の目安を見直しています。' : '全体計画の変更を保存しました。内容を確認して承認してください。')
+        : action === 'approve' ? '全体計画を承認しました。第1章から本編を制作します。' : action === 'plot' ? `全${chosenChapters}話の全体プロットの生成を受け付けました。` : '全体計画の生成を受け付けました。')
       if (action === 'approve' && !retryId) { setApproveOpen(false); await onApproved() }
       else await onRefresh()
     } catch (reason) {
@@ -228,7 +246,7 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
     {loaded && !planning && !legacy && <button className="button button-primary" disabled={busy} onClick={() => void mutate('generate')}><Icon name="spark" size={16}/>全体計画を生成する</button>}
     {planning && <>
       {planning.status === 'draft' && !state.content && <button className="button button-primary" disabled={busy || pending || state.conflict || setupInvalidated} onClick={() => void mutate('generate')}>全体計画を生成する</button>}
-      <div className="planning-status" role="status"><strong>{generating ? '全体プロットとサブキャラを生成・修正中…' : planning.status === 'failed' ? '全体計画の生成に失敗しました。' : planning.status === 'approved' ? 'この全体計画は承認済みです。' : !state.content ? '全体計画を生成してください。' : '全体計画の準備ができました。'}</strong><span>第{planning.revision}版</span>{generating && <p>サーバーとワーカーが起動していれば、画面を閉じても生成は続きます。</p>}</div>
+      <div className="planning-status" role="status"><strong>{generating ? '全体プロットとサブキャラを生成・修正中…' : planning.status === 'failed' ? '全体計画の生成に失敗しました。' : planning.status === 'approved' ? 'この全体計画は承認済みです。' : !state.content ? '全体計画を生成してください。' : choosingCount ? 'サブキャラと章数の目安ができました。サブキャラを確認し、章数を選んで全体プロットを作ってください。' : '全体計画の準備ができました。'}</strong><span>第{planning.revision}版</span>{generating && <p>サーバーとワーカーが起動していれば、画面を閉じても生成は続きます。</p>}</div>
       {activePlanningJob && (generating || planning.status === 'failed') && <GenerationProgress items={llmProgressItems(activePlanningJob)} label="全体計画の生成工程"/>}
       {planning.error && <p className="m2-job-error" role="alert">{planning.error}</p>}
       {planning.status === 'failed' && state.content && <p className="planning-notice" role="status">修正前の保存済み計画を表示しています。内容を確認してこの計画を承認するか、生成を再試行できます。</p>}
@@ -236,36 +254,43 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
       {state.conflict && !setupInvalidated && <div className="planning-conflict" role="alert"><p>保存済みの全体計画が更新されています。編集中の内容と指示を保持しています。最新の計画を読み直してから、変更を反映してください。</p><button className="button button-light" disabled={busy} onClick={() => { setDiscardSetup(false); setDiscardOpen(true) }}>最新の計画を読み込む</button></div>}
       {state.content && <>
         <div className="planning-tabs-anchor" ref={tabsAnchor} aria-hidden="true"/>
-        <div className="planning-tabs" role="tablist" aria-label="全体計画の表示内容">{(['plot', 'cast'] as const).map(item => <button key={item} ref={element => { tabButtons.current[item] = element }} type="button" className="planning-tab" role="tab" id={`${panelId}-tab-${item}`} aria-selected={tab === item} aria-controls={`${panelId}-panel-${item}`} tabIndex={tab === item ? 0 : -1} onClick={() => selectTab(item)} onKeyDown={event => {
+        <div className="planning-tabs" role="tablist" aria-label="全体計画の表示内容">{tabs.map(item => <button key={item} ref={element => { tabButtons.current[item] = element }} type="button" className="planning-tab" role="tab" id={`${panelId}-tab-${item}`} aria-selected={tab === item} aria-controls={`${panelId}-panel-${item}`} tabIndex={tab === item ? 0 : -1} onClick={() => selectTab(item)} onKeyDown={event => {
           let next: PlanningTab | undefined
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = item === 'plot' ? 'cast' : 'plot'
-          if (event.key === 'Home') next = 'plot'
-          if (event.key === 'End') next = 'cast'
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = tabs.find(other => other !== item)
+          if (event.key === 'Home') next = tabs[0]
+          if (event.key === 'End') next = tabs[tabs.length - 1]
           if (next) { event.preventDefault(); selectTab(next); tabButtons.current[next]?.focus({ preventScroll: true }) }
         }}>{item === 'plot' ? 'プロット' : 'サブキャラ'}{planningTabDirty(state, item) && <span className="planning-tab-unsaved">（未保存）</span>}</button>)}</div>
-        {(['plot', 'cast'] as const).map(item => <section key={item} className="planning-tabpanel" role="tabpanel" id={`${panelId}-panel-${item}`} aria-labelledby={`${panelId}-tab-${item}`} hidden={tab !== item} tabIndex={0}>{tab === item && <>
-          <div className="planning-toolbar"><p>{editing ? `${item === 'plot' ? 'プロット' : 'サブキャラ'}を直接編集中です。タブを切り替えても入力は保持されます。` : '内容を確認し、変更したいときは直接編集できます。'}</p>{!editing && <button className="button button-light" disabled={busy || state.conflict || setupInvalidated} onClick={beginEditing}>直接編集</button>}</div>
+        {tabs.map(item => <section key={item} className="planning-tabpanel" role="tabpanel" id={`${panelId}-panel-${item}`} aria-labelledby={`${panelId}-tab-${item}`} hidden={tab !== item} tabIndex={0}>{tab === item && <>
+          <div className="planning-toolbar"><p>{editing ? `${item === 'plot' ? 'プロット' : 'サブキャラ'}を直接編集中です。タブを切り替えても入力は保持されます。` : '内容を確認し、変更したいときは直接編集できます。'}</p>{!editing && !(castSettled && item === 'cast') && <button className="button button-light" disabled={busy || state.conflict || setupInvalidated} onClick={beginEditing}>直接編集</button>}</div>
           {editing ? <PlanningContentEditor content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item} disabled={busy || state.conflict || setupInvalidated} onChange={content => { commit(previous => ({ ...previous, content })); setNotice('') }}/>
             : <PlanningContentView content={state.content!} mainCharacters={setupSource.current.characters} outfitNames={outfitNames} tab={item}
-                assets={dirty ? undefined : planning.assets} assetsDisabled={busy || state.conflict || setupInvalidated} onRetakeAsset={planning.status === 'approved' ? undefined : retakeAsset}
-                materialsProjectId={planning.status === 'approved' ? null : projectId} onDressAsset={dressAsset} expressionsProjectId={projectId}/>}
+                assets={dirty ? undefined : planning.assets} assetsDisabled={busy || state.conflict || setupInvalidated} onRetakeAsset={planning.status === 'approved' || castSettled ? undefined : retakeAsset}
+                materialsProjectId={planning.status === 'approved' || castSettled ? null : projectId} onDressAsset={dressAsset} expressionsProjectId={projectId}/>}
           {editing && <div className="planning-save"><p>{dirty ? '未保存の変更があります。保存すると、両方のタブで編集した内容をまとめて記録します。' : '保存したあとは、内容を読みやすい表示に戻します。'}</p><div><button className="button button-light" disabled={busy} onClick={cancelEditing}>編集を取り消す</button><button className="button button-primary" disabled={!dirty || busy || state.conflict || setupInvalidated} onClick={() => void mutate('save')}><Icon name="check" size={15}/>変更を保存する</button></div></div>}
         </>}</section>)}
         <section className="planning-revision" aria-label="AIへの修正指示"><div className="planning-revision-toggle"><button className="button button-light" aria-expanded={revisionOpen} aria-controls={`${panelId}-revision`} onClick={() => setRevisionOpen(previous => !previous)}><Icon name="spark" size={15}/>{revisionOpen ? '修正指示を閉じる' : 'AIに修正を指示'}</button>{!revisionOpen && state.instruction.trim() && <span>送信前の指示を保持しています。</span>}</div><div id={`${panelId}-revision`} hidden={!revisionOpen}>{revisionOpen && <><h3>AIに修正を指示する</h3><fieldset disabled={busy || state.conflict || setupInvalidated}>
-          <div className="planning-targets"><label>修正する範囲<select value={target} onChange={event => setTarget(event.target.value as RevisionTarget)}><option value="all">全体プロットとサブキャラ</option><option value="plot">プロット</option><option value="character">サブキャラ1人</option><option value="relationships">人物の関係性</option></select></label>
-            {target === 'character' && <label>サブキャラ<select value={selectedCharacter ?? ''} onChange={event => setCharacterId(event.target.value)}>{!state.content.cast_plan.supporting_characters.length && <option value="">サブキャラがいません</option>}{state.content.cast_plan.supporting_characters.map(character => <option key={character.id} value={character.id}>{character.name}</option>)}</select></label>}
-            {target === 'plot' && <label>対象の章<select value={chapter} onChange={event => setChapter(event.target.value)}><option value="">全章</option>{state.content.plot.chapters.map(item => <option key={item.number} value={item.number}>第{item.number}章</option>)}</select></label>}
+          <div className="planning-targets"><label>修正する範囲<select value={shownTarget} onChange={event => setTarget(event.target.value as RevisionTarget)}>{targets.map(item => <option key={item} value={item}>{targetNames[item]}</option>)}</select></label>
+            {shownTarget === 'character' && <label>サブキャラ<select value={selectedCharacter ?? ''} onChange={event => setCharacterId(event.target.value)}>{!state.content.cast_plan.supporting_characters.length && <option value="">サブキャラがいません</option>}{state.content.cast_plan.supporting_characters.map(character => <option key={character.id} value={character.id}>{character.name}</option>)}</select></label>}
+            {shownTarget === 'plot' && <label>対象の章<select value={chapter} onChange={event => setChapter(event.target.value)}><option value="">全章</option>{state.content.plot?.chapters.map(item => <option key={item.number} value={item.number}>第{item.number}章</option>)}</select></label>}
           </div>
           <label className="field-label">修正指示<textarea rows={4} maxLength={30000} value={state.instruction} onChange={event => commit(previous => ({ ...previous, instruction: event.target.value }))} placeholder="例：第2章で二人が協力するきっかけを、もう少し自然な出来事にしてください。"/></label>
-          <div className="planning-actions"><button className="button button-light" disabled={!state.instruction} onClick={() => commit(previous => ({ ...previous, instruction: '' }))}>指示を取り消す</button><button className="button button-primary" disabled={!state.instruction.trim() || dirty || (target === 'character' && !selectedCharacter)} onClick={() => void mutate('revise')}><Icon name="spark" size={15}/>指示して修正する</button></div>
+          <div className="planning-actions"><button className="button button-light" disabled={!state.instruction} onClick={() => commit(previous => ({ ...previous, instruction: '' }))}>指示を取り消す</button><button className="button button-primary" disabled={!state.instruction.trim() || dirty || (shownTarget === 'character' && !selectedCharacter)} onClick={() => void mutate('revise')}><Icon name="spark" size={15}/>指示して修正する</button></div>
         </fieldset></>}</div></section>
+        {choosingCount && choice && <section className="planning-card planning-chapter-count" aria-label="章数">
+          <h3>章数</h3>
+          <p className="planning-chapter-suggestion"><strong>目安: {choice.suggested}話</strong>{state.content.chapter_judgment?.reason}</p>
+          {choice.beyondLimit && <p className="planning-chapter-limit">{choice.limit + 1}話以上を設定するにはコンテキスト長を32k以上にしてください</p>}
+          <div className="planning-actions"><label className="field-label">章数<input type="number" min={1} max={choice.limit} step={1} value={chapterCount || choice.initial} disabled={busy || dirty || state.conflict || setupInvalidated} onChange={event => setChapterCount(event.target.value)} onBlur={() => setChapterCount(String(chosenChapters))}/><small>既定値: {choice.initial}話（1〜{choice.limit}話）</small></label>
+            <button className="button button-primary" disabled={busy || dirty || Boolean(state.instruction.trim()) || state.conflict || setupInvalidated} onClick={() => void mutate('plot')}><Icon name="spark" size={15}/>この章数で全体プロットを作る</button></div>
+        </section>}
       </>}
       {notice && <p className="planning-notice" role="status">{notice}</p>}
       {state.content && planningAssetsPending(planning) && <p className="planning-notice" role="status">サブキャラの立ち絵と声を生成中です。完了すると、修正と承認ができます。</p>}
       {imageEditing ? <EventCgPolicyEditor key={`${projectId}:${cgEpoch}`} projectId={projectId} disabled={busy || state.conflict || setupInvalidated} readonly={false} onStatusChange={setCgStatus}/>
         : <p className="planning-notice">この作品は画像編集を使わない設定のため、イベントCGは作りません。</p>}
       {planning.status === 'approved' && <p className="planning-notice">もう一度承認すると、現在の本編制作を無効にして第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}
-      <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' && <button className="button button-light" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button>}<button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button></div>
+      <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' && <button className="button button-light" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button>}{!choosingCount && <button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button>}</div>
     </>}
     {approveOpen && <Dialog title="全体計画を承認して、本編の制作へ。" onClose={() => { if (!mutating) setApproveOpen(false) }}><p className="dialog-intro">表示中の全体プロットとサブキャラの設定・関係性を、物語全体の計画として保存します。第1章から順番に本文・背景・立ち絵・音声を制作し、完成した章から鑑賞できます。</p><p className="dialog-info">本編制作では、計画と前章の内容を踏まえて場面を具体化します。追加の章ごとの承認はありません。</p>{planning?.status === 'approved' && <p className="dialog-info">現在の本編制作を無効にして、保存済みの全体計画とCG設定で第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}{cgStatus.policy && <p className="dialog-info">{cgStatus.policy.max_cgs === 0 ? 'イベントCGの自動生成は無効です。' : `イベントCGは作品全体で最大${cgStatus.policy.max_cgs}件、1件あたり追加差分は最大${cgStatus.policy.max_variants_per_cg}枚です。生成には追加の時間がかかります。`}</p>}<div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setApproveOpen(false)}>確認に戻る</button><button className="button button-primary" disabled={!canApprove} onClick={() => void mutate('approve')}>{mutating ? '制作を開始中…' : '承認して第1章から制作する'}</button></div></Dialog>}
     {discardOpen && <Dialog title="編集中の内容を取り消しますか。" onClose={() => { if (!mutating) setDiscardOpen(false) }}><p className="dialog-intro">未保存の直接編集とAIへの修正指示を取り消し、{discardSetup ? '最新の世界観・メインキャラの承認状態に対応した画面を開きます。' : '最新の保存済み計画を表示します。'}</p><div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setDiscardOpen(false)}>入力を残す</button><button className="button button-primary" disabled={mutating} onClick={() => void reload()}>{mutating ? '読み込み中…' : '取り消して読み込む'}</button></div></Dialog>}

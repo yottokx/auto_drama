@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from packages.contracts.m3 import Foreshadowing
 from packages.contracts.script import Contract, Identifier
 from services.worker.generation import pipeline, script_continuation, script_plot
-from services.worker.generation.script_cast import CastPlan, cast_limit_guide
+from services.worker.generation.script_cast import CastPlan, work_limits
 from services.worker.generation.script_plot import (
     ChainEvent,
     ChainEventDraft,
@@ -367,7 +367,7 @@ def experiment_input(value: dict, profile: dict) -> dict:
     snapshot["world"]["result"]["chapterCount"] = MOST_CHAPTERS
     return {"approval_snapshot": snapshot, "profile": profile,
             "script_options": {"planned_cast_appears": True, "open_scene_cast": True,
-                               "cast_limit": cast_limit_guide(profile)},
+                               "cast_limit": work_limits(profile).characters},
             # Many chapters' titles, roles and topics need more than the 2,048-token allocation answer.
             "profiles": {"script-allocation": {"max_tokens": OUTPUT_TOKENS}}}
 

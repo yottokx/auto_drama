@@ -471,13 +471,16 @@ def reuse_cast(source: Path) -> None:
     sc.ScriptRun.structured = saved
 
 
-def experiment_input(value: dict, chapters: int, model_id: str | None, skip_staging: bool) -> dict:
+def experiment_input(value: dict, chapters: int, model_id: str | None, skip_staging: bool,
+                     cast_limit: int | None = None) -> dict:
     value = copy.deepcopy(value)
     value["approval_snapshot"]["world"]["result"]["chapterCount"] = chapters
     if model_id:
         value.setdefault("profile", {})["model_id"] = model_id
     if skip_staging:
         value.setdefault("script_options", {})["skip_staging"] = True
+    if cast_limit is not None:
+        value.setdefault("script_options", {})["cast_limit"] = cast_limit
     return value
 
 
@@ -490,6 +493,7 @@ def main() -> int:
     parser.add_argument("--model-id", help="Override the profile's model")
     parser.add_argument("--skip-staging", action="store_true", help="No staging or outfit-moment calls")
     parser.add_argument("--context-size", type=int)
+    parser.add_argument("--cast-limit", type=int, help="Override the input's script_options cast_limit")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--chapter-limit", type=int)
     parser.add_argument("--expand", action="store_true", help="Add each chapter's own steps to the skeleton")
@@ -509,17 +513,33 @@ def main() -> int:
                         help="Only the scene plan half of --final-closure: no change to the plot")
     parser.add_argument("--closure-end", action="store_true",
                         help="The last chapter's scene plan ends on the chapter's last step's result, without the core")
+    parser.add_argument("--closing-step-last", action="store_true",
+                        help="Only the plot half of --final-closure: the last chapter's expansion adds nothing "
+                             "after its last skeleton step")
+    parser.add_argument("--product", action="store_true",
+                        help="The product's long-form plan (script_options.long_form, chapter_scope_guard and "
+                             "opening_split) "
+                             "instead of this script's replacements: the same as --balanced --expand "
+                             "--expansion-steps 6 --distinct-steps --fresh-roles --closing-step-last --closure-end, "
+                             "but a cast it plans names no count, and a chapter plan sees later chapters in brief")
     parser.add_argument("--plot-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     if args.chapters < 1:
         parser.error("--chapters must be at least 1.")
+    replacements = ("balanced", "expand", "expansion_steps", "distinct_steps", "fresh_roles", "final_closure",
+                    "closure_plan", "closure_end", "closing_step_last", "plot_from")
+    if args.product and any(getattr(args, name) for name in replacements):
+        parser.error("--product runs the product's plan; it takes no plan replacement but --cast-from.")
     value = experiment_input(json.loads(args.input.read_text(encoding="utf-8-sig")),
-                             args.chapters, args.model_id, args.skip_staging)
-    if args.chapters != 3:
+                             args.chapters, args.model_id, args.skip_staging, args.cast_limit)
+    if args.product:
+        value.setdefault("script_options", {}).update(long_form=True, chapter_scope_guard=True, opening_split=True)
+    elif args.chapters != 3:
         use_chapter_count(args.chapters, args.balanced)
     if args.expand:
-        use_expansion(args.expansion_steps, args.distinct_steps, args.fresh_roles, args.final_closure)
+        use_expansion(args.expansion_steps, args.distinct_steps, args.fresh_roles,
+                      args.final_closure or args.closing_step_last)
     if args.final_closure or args.closure_plan:
         use_final_closure()
     elif args.closure_end:

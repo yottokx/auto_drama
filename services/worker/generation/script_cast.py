@@ -5,6 +5,7 @@ from itertools import combinations
 
 from pydantic import Field, model_validator
 
+from packages.contracts.llm_settings import CONTEXT_TIERS, context_tier
 from packages.contracts.m2 import CharacterResult
 from packages.contracts.script import Contract, Identifier
 
@@ -14,22 +15,26 @@ from .script_budget import SceneTokenPolicy
 CAST_LIMIT_MAX = 11
 
 
-def cast_limit_guide(profile: dict) -> int:
-    """A guideline, not a limit: how many characters the script steps carry with room to spare.
+class WorkLimits(Contract):
+    chapters: int
+    characters: int
+    # Alternate looks of all the mains together; None leaves each main its four.
+    looks: int | None
 
-    Each character adds about 200-450 tokens to every chapter plan (settings, relationships,
-    everyday context) and its details to every scene it is in; older chapters can be shortened,
-    the cast cannot. At 32k, casts of seven and eight kept every input whole (chapter plans up to
-    about 16k tokens, docs/experiments/cast-size-20261017.md); 16k already shortens older
-    chapters by chapter 3. Reasoning spends the same context on thinking. The value leaves room
-    for the one or two people a chapter may add later. The installed models share a tokenizer,
-    so only the context and reasoning settings change it.
-    """
-    size = profile.get("context_size") or 16384
-    guide = 11 if size >= 65536 else 8 if size >= 32768 else 6 if size >= 24576 else 5
-    if (profile.get("reasoning_level") or "none") != "none":
-        guide -= 1
-    return max(1, min(CAST_LIMIT_MAX, guide))
+
+# What a work may hold at each context tier (docs/long-form-plan.md). Characters, alternate
+# looks and the plot of every chapter go whole into every request; only earlier chapters'
+# scripts, examples and later chapters' details can be shortened. At 16k, three chapters with
+# three mains, one supporting character and three alternate looks left about 600 tokens in the
+# last chapter's scene plan (docs/experiments/long-form-16k-20261021.md). At 32k eight chapters
+# with six characters fit. Reasoning spends the answer slot, not the input, so it changes none.
+TIER_LIMITS = {16384: WorkLimits(chapters=3, characters=4, looks=3),
+               32768: WorkLimits(chapters=8, characters=8, looks=None),
+               65536: WorkLimits(chapters=8, characters=CAST_LIMIT_MAX, looks=None)}
+
+
+def work_limits(profile: dict) -> WorkLimits:
+    return TIER_LIMITS[context_tier(profile.get("context_size") or CONTEXT_TIERS[0])]
 
 
 class ScriptOptions(Contract):
@@ -40,8 +45,8 @@ class ScriptOptions(Contract):
     # Set for plans made since supporting characters are drawn and voiced during the plan review.
     # Absent from a saved plan when unset, so earlier plans keep their identity and their wording.
     planned_cast_appears: bool = Field(default=False, exclude_if=lambda value: not value)
-    # Experimental: a chapter plan sees later chapters in brief and is told which of its own
-    # planned steps the latest chapter already showed (script_route_progress). Absent when unset.
+    # A chapter plan sees later chapters in brief and is told which of its own planned steps the
+    # latest chapter already showed (script_route_progress). Set for long-form plans; absent when unset.
     chapter_scope_guard: bool = Field(default=False, exclude_if=lambda value: not value)
     # Experimental: the chapter allocation sees each way to cut the chain with every chapter's
     # steps, and is asked for chapters of similar size. Absent when unset.
@@ -49,6 +54,16 @@ class ScriptOptions(Contract):
     # Experiment only: no staging or outfit-moment calls. Every line gets a neutral emotion and
     # the scene only its entrances, so a script can be read without the slowest step.
     skip_staging: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experiment only (docs/experiments/chapter-opening-20261024.md): a later chapter's plan and
+    # text are not given the chapter's planned start, only the saved script's end. Absent when unset.
+    opening_from_script: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Experiment only (same record): a later chapter's opening is checked against the saved script
+    # (script_opening_check), and planned once more if it plays what already happened. Absent when unset.
+    opening_replay_check: bool = Field(default=False, exclude_if=lambda value: not value)
+    # A later chapter's plan writes where the saved script ended apart from its first new action, and
+    # the text gets the end as already played (same record). Set for plans made or approved since
+    # 2026-10-24; absent when unset.
+    opening_split: bool = Field(default=False, exclude_if=lambda value: not value)
     # Set for plans made since the user chooses how many characters a work may have, mains
     # included. The cast plan then has no size anchor, first lists who is around the mains, and
     # keeps to this. Absent when unset, so earlier plans keep their wording and their limit.
@@ -57,6 +72,11 @@ class ScriptOptions(Contract):
     # Set for plans made since a scene may hold more than three people. Staging then names the
     # central people of a scene of four or more, and only they stand on stage. Absent when unset.
     open_scene_cast: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Set for plans made since the chapter count is judged from the cast (docs/long-form-plan.md):
+    # the cast is planned without a chapter count, the count is judged and then chosen, and the
+    # plot is a chain allocated to any count with each chapter's steps added around it. Absent
+    # when unset, so earlier plans keep their three-chapter wording.
+    long_form: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def dialogue_fits_body(self):
@@ -129,9 +149,12 @@ def cast_schema(model: type[CastPlan], room: int | None) -> dict:
     return schema
 
 
-def cast_instruction(chapters: int, room: int) -> str:
-    """The cast instruction of a plan with a chosen character count: no size anchor, people around first."""
-    size = (f"人数の目安はありません。全{chapters}章の物語でメインの身近にいる人、出会う人、対立する人を"
+def cast_instruction(chapters: int | None, room: int) -> str:
+    """The cast instruction of a plan with a chosen character count: no size anchor, people around first.
+
+    A long-form plan chooses its chapter count after the cast, so it names none (``chapters`` None)."""
+    story = "物語で" if chapters is None else f"全{chapters}章の物語で"
+    size = (f"人数の目安はありません。{story}メインの身近にいる人、出会う人、対立する人を"
             "この世界から考え、台詞と出番がある人を作ります。"
             "少人数の密な関係が魅力の作品なら少なく、学校・職場・軍・町など人が集まる場や、"
             "敵や競争相手がいる物語なら、それに見合う顔ぶれにします。"

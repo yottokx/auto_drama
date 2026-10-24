@@ -17,6 +17,12 @@ from .execution_settings import enabled, rebind_manifest, semantic_identity
 from .llm import write_json
 from .planning_state import install_plan
 from .script_cast import CastConnection, ScriptOptions
+from .script_chapter_count import (
+    CHAPTER_COUNT_EXAMPLES,
+    CHAPTER_COUNT_SYSTEM,
+    CHAPTER_COUNT_TASK,
+    ChapterCountJudgment,
+)
 from .script_continuation import POLICY, ScriptRun
 from .script_examples import example_catalog_identity
 from .script_plot import (
@@ -39,6 +45,10 @@ class CommonPlanRun(ScriptRun):
 
     def __init__(self, output, config, payload):
         count = payload["approval_snapshot"]["world"]["result"]["chapterCount"]
+        # A long-form plan's chosen count; the coordinator sends it as the snapshot's count too.
+        self.chosen = payload.get("chapter_count")
+        if self.chosen is not None and (self.chosen != count or payload.get("plan_content") is None):
+            raise ValueError("A chosen chapter count plans the plot of a cast, as its snapshot's count.")
         identity = {"schema_version": 1, "execution_mode": "planning", "workflow_policy": POLICY,
                     "generator_protocol": generator_protocol("causal", POLICY),
                     "planning_protocol": planning_protocol(),
@@ -52,9 +62,24 @@ class CommonPlanRun(ScriptRun):
         self.source = None
         if payload.get("plan_content") is not None:
             self.source = validate_plan_content(payload["plan_content"], payload["approval_snapshot"]).model_dump(mode="json")
-            self._validate_revision_request(payload, self.source)
-            identity.update(source_plan_sha256=digest(self.source), revision={key: payload.get(key)
-                            for key in ("target", "character_id", "chapter_number", "instruction")})
+            if payload.get("judge_only"):
+                # The cast was edited by hand before its count was chosen: judge the count again.
+                if "plot" in self.source or self.chosen is not None:
+                    raise ValueError("Only a long-form plan's cast is judged again.")
+                identity["judge_only"] = True
+            elif self.chosen is None:
+                self._validate_revision_request(payload, self.source)
+                identity.update(revision={key: payload.get(key)
+                                for key in ("target", "character_id", "chapter_number", "instruction")})
+            else:
+                if "chapter_judgment" not in self.source:
+                    raise ValueError("Only a long-form plan's cast is planned at a chosen chapter count.")
+                identity["chapter_count"] = self.chosen
+            identity["source_plan_sha256"] = digest(self.source)
+        if (ScriptOptions.model_validate(payload.get("script_options", {})).long_form and self.chosen is None
+                and (self.source is None or "plot" not in self.source)):
+            # The cast and the judgment of how many chapters it needs see no chapter count.
+            identity["chapter_count_chosen"] = False
         if enabled(payload):
             identity.update(execution_settings_version=1,
                             execution_settings_revision=payload.get("execution_settings_revision", 0))
@@ -73,7 +98,10 @@ class CommonPlanRun(ScriptRun):
                 raise ValueError("Planning journal is missing beside generated material.")
             state = {"input_sha256": manifest["input_sha256"], "steps": {}, "chapters": [],
                      "notes": [], "fallbacks": [], "sessions": [], "request_ordinal": 0, "partial": None}
-            install_plan(state, output, manifest, self.source,
+            # At a chosen count only the cast is kept; its plot is planned anew.
+            installed = self.source if self.chosen is None else {
+                "cast_plan": self.source["cast_plan"], "chapter_judgment": self.source["chapter_judgment"]}
+            install_plan(state, output, manifest, installed,
                          {"sha256": digest(self.source), "planning_protocol": planning_protocol()})
             write_json(journal, state)
         super().__init__(output, manifest, config, payload, 1)
@@ -90,6 +118,9 @@ class CommonPlanRun(ScriptRun):
                 raise ValueError("Character revision must identify a planned supporting character.")
         elif payload.get("character_id") is not None:
             raise ValueError("character_id applies only to character revision.")
+        if "plot" not in source and (target not in {"character", "relationships"}
+                                     or payload.get("chapter_number") is not None):
+            raise ValueError("A plan without its plot revises only its supporting characters.")
         if payload.get("chapter_number") is not None:
             number = payload["chapter_number"]
             if (target != "plot" or type(number) is not int
@@ -101,7 +132,7 @@ class CommonPlanRun(ScriptRun):
             raise ValueError("Common planning cannot contain chapter bodies.")
         if (self.source is not None
                 and (self.state.get("cast_plan", {}).get("plan") != self.source["cast_plan"]
-                     or self.state.get("plot") != self.source["plot"])):
+                     or (self.chosen is None and self.state.get("plot") != self.source.get("plot")))):
             raise ValueError("Common plan revision source was changed.")
         saved = self.state.get("common_plan_result")
         if saved:
@@ -117,6 +148,12 @@ class CommonPlanRun(ScriptRun):
         model = {"all": CommonPlanContent, "plot": PlotChapter if number else DetailedPlot,
                  "character": CharacterResult, "relationships": ConnectionsRevision}[target]
         schema = model.model_json_schema()
+        if target == "all":
+            # The whole plan is its cast and its plot; a long-form plan's count stays as chosen.
+            schema["properties"] = {"cast_plan": schema["properties"]["cast_plan"],
+                                    "plot": {"$ref": "#/$defs/DetailedPlot"}}
+            schema["required"] = ["cast_plan", "plot"]
+            schema["$defs"].pop("ChapterCountJudgment")
         main = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
         if target in {"all", "plot"} and not number:
             bind_core_cast(schema, main, core="PlotCore", character="PlotCharacter")
@@ -137,7 +174,8 @@ class CommonPlanRun(ScriptRun):
             content = copy.deepcopy(source)
             data = value.model_dump(mode="json")
             if target == "all":
-                content = data
+                content = {**data, **{key: source[key] for key in ("chapter_count", "chapter_judgment")
+                                      if key in source}}
             elif target == "plot":
                 if number:
                     if value.number != number:
@@ -168,6 +206,18 @@ class CommonPlanRun(ScriptRun):
                                 context, model, check_revision, schema)
         return combine(value)
 
+    def judge_chapter_count(self, cast_plan: dict) -> dict:
+        """How many chapters of about ten minutes the cast and setting need (script_chapter_count)."""
+        context = {"setting": self.setting(planned=True, cast_plan=cast_plan), "outline": "",
+                   "brief": CHAPTER_COUNT_EXAMPLES + CHAPTER_COUNT_TASK, "chapters": [], "notes": [],
+                   "optional_example": None}
+        extra = {"response_format": {"type": "json_schema", "json_schema": {
+            "name": "chapter-count", "strict": True, "schema": ChapterCountJudgment.model_json_schema()}}}
+        reply = self.call("chapter-count", "script-cast", 1, CHAPTER_COUNT_SYSTEM, context, extra=extra)
+        value = ChapterCountJudgment.model_validate_json(reply["content"])
+        self.progress_step("chapter-count", "script-cast", 1, "completed")
+        return value.model_dump(mode="json")
+
     def execute(self, llm):
         self.llm, self.started = llm, time.monotonic()
         llm.requests = self.state["request_ordinal"]
@@ -185,8 +235,22 @@ class CommonPlanRun(ScriptRun):
             saved = self.state.get("common_plan_result")
             if saved is not None:
                 content = saved["content"]
+            elif self.chosen is not None:
+                # A long-form plan's cast at the chosen count: its plot is planned now.
+                self.outline()
+                content = {"cast_plan": self.state["cast_plan"]["plan"], "plot": self.state["plot"],
+                           "chapter_count": self.chosen, "chapter_judgment": self.source["chapter_judgment"]}
+            elif self.payload.get("judge_only"):
+                content = {**self.source, "chapter_judgment": self.judge_chapter_count(self.source["cast_plan"])}
             elif self.source is not None:
                 content = self.revise()
+                if "plot" not in content:
+                    # The cast changed before its count was chosen: judge the count again.
+                    content["chapter_judgment"] = self.judge_chapter_count(content["cast_plan"])
+            elif self.options.long_form:
+                self.cast_plan()
+                cast = self.state["cast_plan"]["plan"]
+                content = {"cast_plan": cast, "chapter_judgment": self.judge_chapter_count(cast)}
             else:
                 self.outline()
                 content = {"cast_plan": self.state["cast_plan"]["plan"], "plot": self.state["plot"]}

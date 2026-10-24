@@ -103,6 +103,8 @@ export function PlanningContentView({ content, mainCharacters, tab, outfitNames 
     </Dialog>}
   </div>
 
+  // A long-form plan has no plot until its chapter count is chosen.
+  if (!plot) return null
   return <div className="planning-read planning-read-plot">
     <section className="planning-card planning-read-core"><span className="planning-read-kicker">物語全体のプロット</span><h3>{plot.core.central_question}</h3>
       <div className="planning-read-columns"><ReadingBlock title="出来事の決着" text={plot.core.external_resolution}/><ReadingBlock title="人物・関係の結末" text={plot.core.relationship_resolution}/></div>

@@ -6,6 +6,8 @@ import './llm-settings.css'
 type Settings = { model: string; temperature: number; top_p: number; reasoning_effort: string; ctx_size: number }
 type Model = { model: string; reasoning_efforts: string[]; worker_name: string }
 type Response = { settings: Settings; models: Model[] }
+// The contexts a work can be made with; the coordinator accepts only these.
+const CONTEXT_TIERS = [16384, 32768, 65536]
 
 export function LLMSettings({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
@@ -30,7 +32,7 @@ export function LLMSettingsContent({ onBusyChange }: { onBusyChange?: (busy: boo
     return () => controller.abort()
   }, [attempt])
   const available = models.filter(model => model.model === value?.model)
-  const supported = value && available.length > 0 && value.ctx_size >= 16384
+  const supported = value && available.length > 0 && CONTEXT_TIERS.includes(value.ctx_size)
   function change(patch: Partial<Settings>) { setValue(current => current && { ...current, ...patch }); setSaved(false) }
   async function save() {
     if (!value) return
@@ -52,8 +54,10 @@ export function LLMSettingsContent({ onBusyChange }: { onBusyChange?: (busy: boo
         </select></label>
         <label>Temperature<input type="number" min="0" max="2" step="any" required value={value.temperature} onChange={event => change({ temperature: event.target.valueAsNumber })}/></label>
         <label>Top P<input type="number" min="0.000001" max="1" step="any" required value={value.top_p} onChange={event => change({ top_p: event.target.valueAsNumber })}/></label>
-        <label>Reasoning effort<input type="text" value={value.reasoning_effort} onChange={event => change({ reasoning_effort: event.target.value })}/></label>
-        <label>コンテキスト長<input type="number" min="16384" step="1" required value={value.ctx_size} onChange={event => change({ ctx_size: event.target.valueAsNumber })}/><small>最低16,384。指定した値でモデルを起動します。</small></label>
+        <label>Reasoning effort<input type="text" value={value.reasoning_effort} disabled={value.ctx_size === CONTEXT_TIERS[0]} onChange={event => change({ reasoning_effort: event.target.value })}/>{value.ctx_size === CONTEXT_TIERS[0] && <small>推論は32,768以上で使えます。</small>}</label>
+        <label>コンテキスト長<select value={value.ctx_size} onChange={event => { const ctx_size = Number(event.target.value); change(ctx_size === CONTEXT_TIERS[0] ? { ctx_size, reasoning_effort: 'none' } : { ctx_size }) }}>
+          {CONTEXT_TIERS.map(size => <option key={size} value={size}>{size.toLocaleString()}</option>)}
+        </select><small>指定した値でモデルを起動します。章数・登場キャラ・別バージョンの立ち絵の上限は、この値で決まります。</small></label>
       </fieldset>
       <p>出力トークン上限は、各処理に必要な値をアプリが設定します。</p>
       {!supported && <p role="status">この設定に対応するWorkerが接続されていません。Workerのモデル設定と起動状態を確認してください。</p>}

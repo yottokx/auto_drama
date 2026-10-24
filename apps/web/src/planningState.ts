@@ -11,9 +11,14 @@ export type PlotChapter = {
   outfit_appearances?: { character_id: string; outfit_id: string; occasion: string }[]
 }
 export type OutfitNames = Record<string, Record<string, string>>
+/** How many chapters the cast and setting were judged to need. */
+export type ChapterJudgment = { endurance: string; structure: string; distinct_characters: string[]; chapters: number; reason: string }
 export type PlanningContent = {
   cast_plan: { supporting_characters: CharacterBrief[]; everyday_context: CastLife[]; connections: CastConnection[] }
-  plot: {
+  /** A long-form plan first holds its cast and the judged chapter count; its plot comes at the count chosen. */
+  chapter_judgment?: ChapterJudgment
+  chapter_count?: number
+  plot?: {
     core: {
       central_question: string; external_resolution: string; relationship_resolution: string
       characters: { character_id: string; initial_behavior: string; enduring_value: string; turning_experience: string; final_behavior: string }[]
@@ -28,6 +33,8 @@ export type Planning = {
   id: string; revision: number; status: 'draft' | 'generating' | 'ready' | 'planned' | 'approved' | 'failed'
   content: PlanningContent | null; approval_id: string | null; active_job_id: string | null
   jobs: Job[]; error: string | null; assets?: PlanningAssets
+  /** How many chapters the current settings allow a long-form plan. */
+  chapter_limit?: number
 }
 /** Supporting portraits and voices are made during the review; approval waits for them. */
 export const planningAssetsPending = (planning: Planning | null) => Object.values(planning?.assets ?? {})
@@ -65,8 +72,22 @@ export function planningActivity(planning: Planning | null) {
   }
 }
 
+/** A long-form plan before its chapter count is chosen: only its cast and the judged count. */
+export const castStage = (content: PlanningContent | null | undefined) => Boolean(content?.chapter_judgment && !content.plot)
+
+/** What a revision may change: the cast before a long-form plan's count is chosen, then only its plot. */
+export function revisionTargets(content: PlanningContent | null | undefined): RevisionTarget[] {
+  if (!content?.chapter_judgment) return ['all', 'plot', 'character', 'relationships']
+  return content.plot ? ['plot'] : ['character', 'relationships']
+}
+
+/** The judged count, held to what the settings allow; the default is the smaller of the two. */
+export function chapterChoice(judgment: ChapterJudgment, limit: number) {
+  return { suggested: judgment.chapters, limit, initial: Math.min(judgment.chapters, limit), beyondLimit: judgment.chapters > limit }
+}
+
 export function canApprovePlanning(state: PlanningEditorState, blocked = false): boolean {
-  return Boolean(state.content && !blocked && !state.conflict && !planningDirty(state)
+  return Boolean(state.content?.plot && !blocked && !state.conflict && !planningDirty(state)
     && !state.instruction.trim() && !planningActivity(state.latest).generating && !planningAssetsPending(state.latest)
     && state.latest && ['ready', 'planned', 'failed', 'approved'].includes(state.latest.status))
 }
@@ -93,14 +114,19 @@ export function editPlanningField(content: PlanningContent, path: (string | numb
   return next
 }
 
-export function planningAction(state: PlanningEditorState, action: 'generate' | 'save' | 'revise' | 'approve', options: {
-  target?: RevisionTarget; characterId?: string; chapterNumber?: number
+export function planningAction(state: PlanningEditorState, action: 'generate' | 'save' | 'revise' | 'approve' | 'plot', options: {
+  target?: RevisionTarget; characterId?: string; chapterNumber?: number; chapterCount?: number
 } = {}) {
   if (state.conflict) throw new Error('最新の全体計画を確認してから操作してください。')
   if (action !== 'generate' && !state.content) throw new Error('全体計画の生成が完了してから操作してください。')
   if (action === 'approve' && (planningDirty(state) || state.instruction.trim())) throw new Error('未保存の変更や修正指示があります。保存するか取り消してから承認してください。')
   const request: Record<string, unknown> = { action, expected_revision: state.base?.revision ?? 0 }
   if (action === 'save') request.content = state.content
+  if (action === 'plot') {
+    if (planningDirty(state) || state.instruction.trim()) throw new Error('未保存の変更や修正指示があります。保存するか取り消してから全体プロットを作ってください。')
+    if (!Number.isInteger(options.chapterCount) || options.chapterCount! < 1) throw new Error('章数を選んでください。')
+    request.chapter_count = options.chapterCount
+  }
   if (action === 'revise') {
     if (planningDirty(state)) throw new Error('直接編集した内容を保存してからAIに修正を指示してください。')
     if (!state.instruction.trim()) throw new Error('修正指示を入力してください。')
@@ -111,7 +137,7 @@ export function planningAction(state: PlanningEditorState, action: 'generate' | 
       request.character_id = options.characterId
     }
     if (request.target === 'plot' && options.chapterNumber !== undefined) {
-      if (!state.content?.plot.chapters.some(chapter => chapter.number === options.chapterNumber)) throw new Error('修正する章を選択してください。')
+      if (!state.content?.plot?.chapters.some(chapter => chapter.number === options.chapterNumber)) throw new Error('修正する章を選択してください。')
       request.chapter_number = options.chapterNumber
     }
   }

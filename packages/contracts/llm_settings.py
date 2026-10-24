@@ -1,5 +1,16 @@
 """Public LLM settings and worker capabilities; never contain filesystem paths."""
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# The contexts a work can be made with. Every limit on a work's size (chapters, characters,
+# alternate looks) is set per tier (docs/long-form-plan.md). Reasoning spends the answer slot,
+# which 16k has no room for.
+CONTEXT_TIERS = (16384, 32768, 65536)
+
+
+def context_tier(size: int) -> int:
+    """The largest tier a context size reaches; values in between use the tier below."""
+    return max([tier for tier in CONTEXT_TIERS if tier <= size] or [CONTEXT_TIERS[0]])
+
 
 class LLMSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -7,7 +18,15 @@ class LLMSettings(BaseModel):
     temperature: float = Field(ge=0, le=2)
     top_p: float = Field(gt=0, le=1)
     reasoning_effort: str
-    ctx_size: int = Field(ge=16384, strict=True)
+    ctx_size: int = Field(strict=True)
+
+    @model_validator(mode="after")
+    def one_of_the_tiers(self):
+        if self.ctx_size not in CONTEXT_TIERS:
+            raise ValueError("ctx_size must be one of " + ", ".join(map(str, CONTEXT_TIERS)))
+        if self.ctx_size == CONTEXT_TIERS[0] and self.reasoning_effort != "none":
+            raise ValueError("reasoning needs a context of 32768 or more")
+        return self
 
     def profile(self) -> dict:
         return {"provider": "local", "model_id": self.model,

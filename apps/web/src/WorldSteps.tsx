@@ -51,12 +51,9 @@ export function WorldInput({ world, onChange, onNext, onSave, live = false, embe
       </div>
       <p className="world-suggestion-note">候補は入力のヒントです。クリックすると追記でき、複数を組み合わせられます。</p>
       <details className="world-extra-options">
-        <summary><span><Icon name="settings" size={16} />作品名・章数・こだわり</span><span>必要に応じて設定<Icon name="chevron" size={14} /></span></summary>
+        <summary><span><Icon name="settings" size={16} />作品名・こだわり</span><span>必要に応じて設定<Icon name="chevron" size={14} /></span></summary>
         <div className="world-extra-fields">
-          <div className="world-title-and-length">
-            <label className="field-label" htmlFor="world-title">作品名<span className="world-optional">任意</span><input id="world-title" value={world.title} onChange={event => onChange({ title: event.target.value })} placeholder="あとから決めても大丈夫" /></label>
-            <label className="field-label" htmlFor="world-chapters">章数<input id="world-chapters" type="number" min={1} max={99} value={world.chapterCount} onChange={event => onChange({ chapterCount: Math.max(1, Math.min(99, Number(event.target.value) || 1)) })} /></label>
-          </div>
+          <label className="field-label" htmlFor="world-title">作品名<span className="world-optional">任意</span><input id="world-title" value={world.title} onChange={event => onChange({ title: event.target.value })} placeholder="あとから決めても大丈夫" /></label>
           <label className="field-label" htmlFor="world-notes">こだわり・避けたい要素<span className="world-optional">任意</span><textarea id="world-notes" rows={3} value={world.notes} onChange={event => onChange({ notes: event.target.value })} placeholder="必ず入れたい設定、表現の好み、描かないでほしい内容など" /></label>
         </div>
       </details>
@@ -136,11 +133,10 @@ export function WorldReview({ world, requests, onChange, onRequest, onBack, onCo
             <label className="field-label" htmlFor="world-result-genre">ジャンル<input id="world-result-genre" value={editDraft.genre} onChange={event => setEditDraft({ ...editDraft, genre: event.target.value })} /></label>
             <label className="field-label" htmlFor="world-result-mood">雰囲気・トーン<input id="world-result-mood" value={editDraft.mood} onChange={event => setEditDraft({ ...editDraft, mood: event.target.value })} /></label>
           </div>
-          <label className="field-label world-result-chapters" htmlFor="world-result-chapters">章数<input id="world-result-chapters" type="number" min={1} max={99} value={editDraft.chapterCount} onChange={event => setEditDraft({ ...editDraft, chapterCount: Math.max(1, Math.min(99, Number(event.target.value) || 1)) })} /></label>
           <label className="field-label world-setting-editor" htmlFor="world-setting">世界観の本文<textarea id="world-setting" rows={12} value={editDraft.setting} onChange={event => setEditDraft({ ...editDraft, setting: event.target.value })} /></label>
           <div className="world-edit-actions"><button type="button" className="button button-light" onClick={() => setEditing(false)}>キャンセル</button><button className="button button-primary"><Icon name="check" size={14} />変更を保存</button></div>
         </form> : <>
-          <dl className="world-brief-facts"><div><dt>ジャンル</dt><dd>{world.genre.trim() || '未定'}</dd></div><div><dt>雰囲気</dt><dd>{world.mood.trim() || '未定'}</dd></div><div><dt>構成</dt><dd>{world.chapterCount} 章</dd></div></dl>
+          <dl className="world-brief-facts"><div><dt>ジャンル</dt><dd>{world.genre.trim() || '未定'}</dd></div><div><dt>雰囲気</dt><dd>{world.mood.trim() || '未定'}</dd></div></dl>
           {world.setting.trim() ? <WorldResultBody text={world.setting} /> : <div className="world-result-empty"><Icon name="book" size={28} /><h3>{generating ? '世界観を生成しています' : '生成結果がここに表示されます'}</h3><p>舞台、世界のルール、物語の方向性を<br />ひとつの世界観として確認できます。</p><span>{generating ? '完了すると、ここに世界観が表示されます。' : live ? '入力画面から生成を開始してください。' : '現在はUIプレビューです。AI生成はまだ接続されていません。'}</span></div>}
           <div className="world-result-actions"><span>気になるところがあれば、修正できます。</span><button className="button button-light" disabled={live && !world.setting.trim()} onClick={startEditing}><Icon name="edit" size={14} />世界観を修正</button></div>
         </>}
