@@ -5,6 +5,7 @@ import hashlib
 
 from packages.contracts.script import Script
 from packages.tyrano_export.compiler import entry_states, line_stages
+from services.coordinator.script_adjustments import apply_script_edits, pauses_overrun
 from tests.unit.test_expressions import face, with_faces
 
 
@@ -67,6 +68,49 @@ def test_a_blackout_that_the_scene_transition_replaces_is_unseen():
         {"kind": "blackout", "utterance_id": "line_003", "timing": "start", "duration_ms": 300},
         {"kind": "blackout", "utterance_id": "line_004", "timing": "after", "duration_ms": 300}])
     assert line_stages(script, assets)["unseen"] == ["extra_1"]
+
+
+def direction_edit(direction_id, **fields):
+    return {"production_id": "chapter", "direction_id": direction_id, "disabled": False,
+            "expression": None, "duration_ms": None, "original": None, **fields}
+
+
+def test_edits_change_words_faces_and_waits_and_leave_disabled_directions_out():
+    script, assets = with_faces([face("line_002", "smile")])
+    pause = next(row for row in script.directions if row.id == "pause_ren")
+    edits = {"lines": [{"production_id": "chapter", "utterance_id": "line_003", "display_text": "やっぱり行こう。",
+                        "spoken_text": "やっぱりいこう。", "voice_emotion": "happy", "delivery": ""}],
+             "directions": [direction_edit("face_1", expression="angry"),
+                            direction_edit("pause_ren", disabled=True, original=pause.model_dump(mode="json"))]}
+    edited = apply_script_edits(script, edits, "chapter")
+    line = next(row for row in edited.utterances if row.id == "line_003")
+    assert (line.display_text, line.spoken_text, line.voice_emotion) == ("やっぱり行こう。", "やっぱりいこう。", "happy")
+    assert next(row for row in edited.directions if row.id == "face_1").expression == "angry"
+    assert "pause_ren" not in {row.id for row in edited.directions}
+    # Another chapter's edits leave this one as it is.
+    assert apply_script_edits(script, edits, "elsewhere") is script
+    # The edited script stages the edited face.
+    assert storage(line_stages(edited, assets), "line_002") == "aki_sprite.png"
+
+
+def test_a_direction_left_out_by_an_earlier_edition_comes_back_when_turned_on():
+    script, _assets = with_faces([])
+    pause = next(row for row in script.directions if row.id == "pause_ren").model_dump(mode="json")
+    published = apply_script_edits(script, {"directions": [direction_edit("pause_ren", disabled=True, original=pause)]}, "chapter")
+    assert "pause_ren" not in {row.id for row in published.directions}
+    restored = apply_script_edits(published, {"directions": [direction_edit("pause_ren", duration_ms=900, original=pause)]}, "chapter")
+    assert next(row for row in restored.directions if row.id == "pause_ren").duration_ms == 900
+
+
+def test_a_line_may_not_wait_longer_than_the_staging_step_would():
+    script, _assets = with_faces([])
+    script, _assets = with_rows(script, _assets, directions=[
+        {"kind": "pause", "utterance_id": "line_004", "timing": "after", "duration_ms": 500}])
+    assert not pauses_overrun(script, {"directions": [direction_edit("pause_ren", duration_ms=1000)]}, "chapter")
+    assert pauses_overrun(script, {"directions": [direction_edit("pause_ren", duration_ms=1100)]}, "chapter")
+    # A pause turned off no longer counts.
+    assert not pauses_overrun(script, {"directions": [direction_edit("pause_ren", disabled=True),
+                                                      direction_edit("extra_1", duration_ms=1500)]}, "chapter")
 
 
 def test_a_focus_at_the_start_of_a_line_lights_someone_else():

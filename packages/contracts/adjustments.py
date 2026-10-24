@@ -3,9 +3,11 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
+from .expressions import Expression
 from .m2 import CharacterId
+from .m3 import Emotion
 from .music import SceneMusicSetting
-from .script import Contract, PortraitBounds
+from .script import Contract, Identifier, PortraitBounds
 
 Id = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 Revision = Annotated[int, Field(strict=True, ge=1)]
@@ -23,10 +25,59 @@ class AdjustmentCharacter(Contract):
     scale: float = Field(default=1, ge=0.1, le=3, allow_inf_nan=False)
 
 
+class ScriptLineEdit(Contract):
+    """What a published line should say. Its speaker and its place in the script stay as they are.
+
+    ``audio`` and ``voice_job_id`` settle the voice of a line whose reading, emotion or delivery
+    changed: keep the old recording, or use the candidate that job made for exactly these words.
+    """
+
+    production_id: Id
+    utterance_id: Identifier
+    display_text: Annotated[str, StringConstraints(min_length=1, max_length=100_000)]
+    spoken_text: Annotated[str, StringConstraints(min_length=1, max_length=100_000)]
+    voice_emotion: Emotion
+    delivery: str = Field(default="", max_length=200)
+    audio: Literal["old"] | None = None
+    voice_job_id: Id | None = None
+
+    @model_validator(mode="after")
+    def words_present(self):
+        if not self.display_text.strip() or not self.spoken_text.strip():
+            raise ValueError("台詞・地の文を空にすることはできません。")
+        if self.audio is not None and self.voice_job_id is not None:
+            raise ValueError("旧音声と新しい候補の一方を選んでください。")
+        return self
+
+
+class ScriptDirectionEdit(Contract):
+    """A changed or disabled direction; a disabled one is left out of the published script."""
+
+    production_id: Id
+    direction_id: Identifier
+    disabled: bool = Field(default=False, strict=True)
+    expression: Expression | None = None
+    duration_ms: int | None = Field(default=None, strict=True, ge=1, le=10_000)
+
+
+class ScriptEdits(Contract):
+    lines: list[ScriptLineEdit] = Field(default_factory=list, max_length=20_000)
+    directions: list[ScriptDirectionEdit] = Field(default_factory=list, max_length=50_000)
+
+    @model_validator(mode="after")
+    def one_edit_each(self):
+        lines = [(row.production_id, row.utterance_id) for row in self.lines]
+        directions = [(row.production_id, row.direction_id) for row in self.directions]
+        if len(set(lines)) != len(lines) or len(set(directions)) != len(directions):
+            raise ValueError("Each line and direction needs one edit.")
+        return self
+
+
 class AdjustmentSave(Contract):
     expected_revision: Revision
     characters: list[AdjustmentCharacter] = Field(min_length=1, max_length=100)
     scene_music: list[SceneMusicSetting] | None = Field(default=None, max_length=800)
+    script: ScriptEdits | None = None
 
     @model_validator(mode="after")
     def unique_people(self):
@@ -79,3 +130,18 @@ class AdjustmentMusicGenerate(AdjustmentRevision):
         if self.source_prompt is not None and not self.source_prompt.strip():
             raise ValueError("音楽プロンプトを空にすることはできません。")
         return self
+
+
+class ScriptVoiceRequest(AdjustmentRevision):
+    """Record one line again in the speaker's chosen voice, with these words and this feeling."""
+
+    production_id: Id
+    utterance_id: Identifier
+    spoken_text: Annotated[str, StringConstraints(min_length=1, max_length=100_000)]
+    voice_emotion: Emotion
+    delivery: str = Field(default="", max_length=200)
+
+
+class ScriptPreview(Contract):
+    lines: list[ScriptLineEdit] = Field(default_factory=list, max_length=20_000)
+    directions: list[ScriptDirectionEdit] = Field(default_factory=list, max_length=50_000)

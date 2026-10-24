@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { transformWithOxc } from 'vite'
+import { scriptStateUrl } from './scriptStateModule.mjs'
 import { adjustmentFixture, adjustmentMusicFixture, adjustmentContinuityFixture } from './adjustmentFixture.mjs'
 
 const dataUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
@@ -24,10 +25,10 @@ async function moduleUrl(file, replacements = {}) {
   const { code } = await transformWithOxc(source, file, { target: 'es2022', jsx: { runtime: 'automatic' } })
   return dataUrl(code.replace('"react/jsx-runtime"', JSON.stringify(import.meta.resolve('react/jsx-runtime'))))
 }
-const stateUrl = await moduleUrl('adjustmentState.ts')
+const stateUrl = await moduleUrl('adjustmentState.ts', { './scriptTimelineState': scriptStateUrl })
 const state = await import(stateUrl)
 const hooks = await import(hooksUrl)
-const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './CharacterExpressions': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './ScriptTimeline': childrenUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
+const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './CharacterExpressions': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './ScriptTimeline': childrenUrl, './scriptTimelineState': scriptStateUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
 const { AdjustmentPreview } = await import(await moduleUrl('AdjustmentPreview.tsx'))
 function walkAll(node, predicate) {
   if (!node || typeof node !== 'object') return []

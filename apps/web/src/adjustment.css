@@ -250,10 +250,6 @@
 .script-details-tabs { display: flex; gap: 20px; padding: 0 16px; border-bottom: 1px solid #eceee3; }
 .script-details-tabs button { background: none; border: 0; padding: 10px 1px 9px; font-size: 13px; color: #686e64; cursor: pointer; }
 .script-details-tabs button[aria-selected=true] { color: var(--accent); font-weight: 700; border-bottom: 2px solid var(--accent); margin-bottom: -1px; }
-.script-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 16px; margin: 0; padding: 16px; font-size: 14px; }
-.script-fields dt { font-size: 12px; font-weight: 700; color: #4f5847; }
-.script-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
-.script-fields audio { width: 100%; max-width: 320px; }
 .script-direction-list { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .script-direction-list > p { margin: 0; }
 .script-direction { border: 1px solid #e5e5dc; border-radius: 6px; padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -262,9 +258,40 @@
 .script-direction strong { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 .script-direction strong.is-unseen { color: #8b8f84; font-weight: 500; }
 .script-direction p { flex-basis: 100%; display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: #5f665b; }
+.script-only-changed { display: flex !important; align-items: center; gap: 6px; min-height: 40px; }
+.script-counts { margin-left: auto; align-self: center; font-size: 12px; color: #686e64; display: inline-flex; align-items: center; gap: 10px; }
+.script-counts b { color: #363b36; }
+.script-waiting { color: #8a5300; background: #fbf1dc; border: 1px solid #efd9ad; border-radius: 4px; padding: 2px 8px; }
+.script-badge-changed { color: #8f4d38; background: #f3e6dc; }
+.script-badge-stale { color: #6e4500; background: #fbf1dc; }
+.script-chip.is-edited { border-color: var(--accent); }
+.script-chip.is-disabled { background: transparent; color: #767b71; border: 1px dashed #c9ccbf; text-decoration: line-through; }
+.script-details-heading .script-revert { margin-left: auto; padding: 5px 10px; }
+.script-fields { display: flex; flex-direction: column; gap: 14px; border: 0; margin: 0; padding: 16px; min-width: 0; }
+.script-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: #4f5847; }
+.script-fields textarea, .script-fields input[type=text] { resize: vertical; font-weight: 400; line-height: 1.7; background: #fffefa; border: 1px solid #d5d9cc; border-radius: 6px; color: #384b31; padding: 8px 10px; }
+.script-fields .script-check, .script-direction-controls .script-check { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; }
+.script-pages { margin: -8px 0 0 !important; color: #8a5300 !important; font-size: 12px !important; }
+.script-field-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.script-field-row label:first-child { flex: 1 1 140px; }
+.script-field-row label:last-child { flex: 2 1 220px; }
+.script-voice { border-top: 1px dashed #dadfce; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.script-voice-title { font-size: 12px; font-weight: 700; color: #4f5847; }
+.script-voice-stale { display: flex; align-items: center; gap: 6px; margin: 0 !important; color: #6e4500 !important; }
+.script-voice-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 8px 12px; font-size: 12px; color: #686e64; }
+.script-voice-grid audio { width: 100%; max-width: 320px; }
+.script-voice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.script-voice-note { font-size: 12px; color: #4f6655; }
+.script-edited { font-size: 11px; color: var(--accent); }
+.script-direction strong.is-disabled { color: #767b71; text-decoration: line-through; font-weight: 500; }
+.script-direction-controls { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.script-direction-controls label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #4f5847; }
+.script-direction-controls select { min-height: 36px; padding: 4px 8px; }
+.script-duration { flex: 1 1 220px; }
+.script-duration input { flex: 1; accent-color: var(--accent); }
+.script-duration output { font-variant-numeric: tabular-nums; min-width: 48px; }
 @media (max-width: 620px) {
   .script-chips { padding-left: 0; }
   .script-line { grid-template-columns: 26px minmax(0, 1fr); }
   .script-line .script-text { grid-column: 2; }
-  .script-fields { grid-template-columns: 1fr; }
 }

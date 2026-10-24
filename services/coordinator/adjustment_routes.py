@@ -12,6 +12,8 @@ from packages.contracts.adjustments import (
     AdjustmentSample,
     AdjustmentSave,
     AdjustmentStart,
+    ScriptPreview,
+    ScriptVoiceRequest,
 )
 from packages.contracts.music import MusicReplanRequest
 
@@ -98,6 +100,18 @@ def router(coordinator: Callable[[], Coordinator]):
         from .script_adjustments import ScriptAdjustmentService
 
         return ScriptAdjustmentService(coordinator()).chapter(project_id, production_id)
+
+    @routes.post("/script/{production_id}/preview")
+    def script_preview(project_id: str, production_id: str, body: ScriptPreview):
+        from .script_adjustments import ScriptAdjustmentService
+
+        return ScriptAdjustmentService(coordinator()).preview(project_id, production_id, body)
+
+    @routes.post("/script-voice")
+    def script_voice(project_id: str, body: ScriptVoiceRequest):
+        from .script_adjustments import ScriptAdjustmentService
+
+        return ScriptAdjustmentService(coordinator()).voice(project_id, body)
 
     @routes.post("/sample")
     def sample(project_id: str, body: AdjustmentSample):

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 import { transformWithOxc } from 'vite'
+import { scriptStateUrl } from './scriptStateModule.mjs'
 import { adjustmentContinuityFixture } from './adjustmentFixture.mjs'
 
 const dataUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
@@ -21,7 +22,7 @@ export function useRef(initial){const i=cursor++;if(!(i in slots))slots[i]={curr
 export function useEffect(callback,dependencies){effects.push({callback,dependencies})}
 `)
 const hooks = await import(hooksUrl)
-const stateUrl = await moduleUrl('adjustmentState.ts'), state = await import(stateUrl)
+const stateUrl = await moduleUrl('adjustmentState.ts', { './scriptTimelineState': scriptStateUrl }), state = await import(stateUrl)
 const runtimeUrl = dataUrl('export const chapterMusicRuntime=()=>globalThis;')
 const { AdjustmentMusicSeamPreview, musicSeamScript } = await import(await moduleUrl('AdjustmentMusicSeamPreview.tsx', { react: hooksUrl, './adjustmentState': stateUrl, './musicRuntime': runtimeUrl }))
 const runtimeCode = await readFile(new URL('../../../packages/tyrano_export/music.js', import.meta.url), 'utf8')

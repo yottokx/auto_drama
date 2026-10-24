@@ -107,3 +107,54 @@ test('the preview stands portraits where the compiler put them and dims all but 
   assert.match(cg, /src="\/cg"/)
   assert.doesNotMatch(cg, /src="\/x"|src="\/bg"/)
 })
+
+const spoken = (fields = {}) => line('u1', 's1', { speaker_id: 'x', speaker_name: 'ナギ', display_text: 'また光が見えた。', spoken_text: 'また光が見えた。',
+  voice_emotion: 'calm', delivery: 'ささやくように', audio_url: '/old', ...fields })
+const voice = (fields = {}) => ({ job_id: 'job-1', production_id: 'p', utterance_id: 'u1', spoken_text: 'また光が見えた。', voice_emotion: 'calm',
+  delivery: 'ささやくように', status: 'completed', error: null, url: '/new', ...fields })
+
+test('changed words need a voice chosen again, and narration reads what it shows', () => {
+  let edits = state.editLine(state.noScriptEdits, 'p', spoken(), { voice_job_id: 'job-1' })
+  assert.equal(state.lineVoice(spoken(), 'p', edits, [voice()]).state, 'adopted')
+  // The recording was made for the old words; new ones leave the line waiting again.
+  edits = state.editLine(edits, 'p', spoken(), { voice_emotion: 'sad' })
+  const value = state.lineValue(spoken(), 'p', edits)
+  assert.equal(value.voice_job_id, null)
+  assert.deepEqual(state.lineVoice(spoken(), 'p', edits, [voice()]), { state: 'stale', candidate: voice(), pending: true })
+  assert.deepEqual(state.lineVoice(spoken(), 'p', state.editLine(edits, 'p', spoken(), { audio: 'old' }), [voice()]).state, 'kept')
+  // A candidate made for exactly these words waits to be chosen.
+  assert.deepEqual(state.lineVoice(spoken(), 'p', edits, [voice({ job_id: 'job-2', voice_emotion: 'sad' })]).state, 'candidate')
+  assert.equal(state.lineVoice(spoken(), 'p', edits, [voice({ job_id: 'job-2', voice_emotion: 'sad', status: 'running', url: null })]).state, 'working')
+  // Showing other words alone keeps the recording.
+  const shown = state.editLine(state.noScriptEdits, 'p', spoken(), { display_text: 'また、光が見えた。' })
+  assert.equal(state.lineVoice(spoken(), 'p', shown, []).pending, false)
+  assert.equal(state.lineChanged(spoken(), 'p', shown), true)
+  const narration = line('u2', 's1')
+  const told = state.editLine(state.noScriptEdits, 'p', narration, { display_text: '灯台は暗いままだった。' })
+  assert.equal(state.lineValue(narration, 'p', told).spoken_text, '灯台は暗いままだった。')
+  assert.equal(state.lineVoice(narration, 'p', told, []).pending, false)
+})
+
+test('directions keep only what differs from the published value, and undoing keeps the entry', () => {
+  const face = direction('expression', { id: 'f', character_name: 'ナギ', expression: 'smile', disabled: false })
+  const pause = direction('pause', { id: 'p1', duration_ms: 600, disabled: false })
+  const other = direction('pause', { id: 'p2', timing: 'after', duration_ms: 500, disabled: false })
+  const row = spoken({ directions: [face, pause, other] })
+  let edits = state.editDirection(state.noScriptEdits, 'p', face, { expression: 'angry' })
+  edits = state.editDirection(edits, 'p', pause, { disabled: true })
+  assert.deepEqual(edits.directions.map(item => [item.direction_id, item.disabled, item.expression, item.duration_ms]), [['f', false, 'angry', null], ['p1', true, null, null]])
+  assert.equal(state.directionValue(face, 'p', edits).edited, true)
+  assert.equal(state.lineChanged(row, 'p', edits), true)
+  // A disabled pause leaves its time to the other one.
+  assert.equal(state.pauseLimit(row, other, 'p', edits), 1500)
+  assert.equal(state.pauseLimit(row, other, 'p', state.noScriptEdits), 900)
+  const undone = state.revertLine(edits, 'p', row)
+  assert.deepEqual(undone.directions.map(item => [item.direction_id, item.disabled, item.expression, item.duration_ms]), [['f', false, null, null], ['p1', false, null, null]])
+  assert.equal(state.lineChanged(row, 'p', undone), false)
+  // A direction an earlier edition left out comes back by turning it on.
+  const earlier = direction('pause', { id: 'p3', duration_ms: 300, disabled: true })
+  assert.equal(state.directionValue(earlier, 'p', state.editDirection(state.noScriptEdits, 'p', earlier, { disabled: false })).edited, true)
+  // The server's copy of a direction is not sent back.
+  assert.deepEqual(state.scriptPayload({ lines: [], directions: [{ production_id: 'p', direction_id: 'f', disabled: false, original: { id: 'f' } }] }).directions,
+    [{ production_id: 'p', direction_id: 'f', disabled: false }])
+})
