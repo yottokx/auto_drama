@@ -93,6 +93,12 @@ def router(coordinator: Callable[[], Coordinator]):
 
         return MusicAdjustmentService(coordinator()).replan(project_id, body)
 
+    @routes.get("/script/{production_id}")
+    def script(project_id: str, production_id: str):
+        from .script_adjustments import ScriptAdjustmentService
+
+        return ScriptAdjustmentService(coordinator()).chapter(project_id, production_id)
+
     @routes.post("/sample")
     def sample(project_id: str, body: AdjustmentSample):
         return AdjustmentService(coordinator()).sample(project_id, body)

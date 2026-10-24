@@ -8,6 +8,7 @@ import { Dialog } from './PreviewComponents'
 import { AdjustmentPreview, type AdjustmentGeometry, type PreviewSlot } from './AdjustmentPreview'
 import { AdjustmentMusicPreview } from './AdjustmentMusicPreview'
 import { AdjustmentMusicSeamPreview } from './AdjustmentMusicSeamPreview'
+import { ScriptTimeline } from './ScriptTimeline'
 import {
   adjustmentDirty, adjustmentJobProgress, adjustmentPayload, adjustmentSelfIntroduction, adjustmentSetting, adjustmentUploadError, changeAdjustment, initialAdjustmentEditor,
   adjustmentMusicSetting, changeAdjustmentMusic, selectAdjustmentMusicCandidate, adjustmentMusicContinuity,
@@ -37,7 +38,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
   const [characterId, setCharacterId] = useState('')
   const [sceneKey, setSceneKey] = useState('')
   const [selected, setSelected] = useState<Record<string, PreviewSlot>>({})
-  const [tab, setTab] = useState<'layout' | AdjustmentKind | 'music'>('layout')
+  const [tab, setTab] = useState<'layout' | AdjustmentKind | 'music' | 'script'>('layout')
   const [musicPreviewId, setMusicPreviewId] = useState('')
   const [musicPlayRequest, setMusicPlayRequest] = useState(0)
   const [musicAuditionMode, setMusicAuditionMode] = useState<'candidate' | 'seam'>('candidate')
@@ -114,6 +115,10 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
     ?? musicActive?.candidate
     ?? musicCandidates.find(value => value.music_url || value.source_url)
   const chapterNumbers = [...new Set(source?.scenes.map(value => value.chapter_number) ?? [])]
+  const scriptChapters = chapterNumbers.flatMap(number => {
+    const production = source?.scenes.find(value => value.chapter_number === number)?.production_id
+    return production ? [{ production_id: production, chapter_number: number }] : []
+  })
   const candidates = source?.candidates.filter(value => value.character_id === character?.character_id && value.kind === kind) ?? []
   const chosenImage = source?.candidates.find(value => value.id === edit?.image_candidate_id)
   const promptCandidate = source?.candidates.find(value => value.id === promptCandidateId)
@@ -291,9 +296,9 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
         {(state.conflict || dirty || formPending) && <div className="adjustment-actions"><button type="button" className="button button-light" disabled={mutating} onClick={() => void reload()}>{confirmReload ? '入力を破棄して最新の下書きを読み込む' : '入力を取り消して読み直す'}</button>{confirmReload && <button type="button" className="button button-light" onClick={() => setConfirmReload(false)}>入力を残す</button>}</div>}
         {(!draft || draft.status === 'applied') && <div className="adjustment-actions"><button type="button" className="button button-primary" disabled={disabled || source.readonly || !source.complete || source.busy || mutating} onClick={() => void action('start')}>{draft?.status === 'applied' ? 'この版から次の調整を始める' : '調整を始める'}</button>{draft?.status === 'applied' && <span role="status">調整版を反映しました。制作画面の鑑賞・書き出しから確認できます。</span>}</div>}
         {draft && <>
-          {tab !== 'music' && <div className="adjustment-character-heading"><label>編集対象の人物<select value={character?.character_id ?? ''} onChange={event => setCharacterId(event.target.value)}>{source.cast.map(cast => <option key={cast.character_id} value={cast.character_id}>{cast.name}（{cast.role === 'main' ? 'メイン' : cast.role === 'look' ? '別バージョン' : 'サブ'}）</option>)}</select></label>{character && <span>登場章：{character.chapter_numbers.map(number => `第${number}章`).join('・')}</span>}</div>}
+          {tab !== 'music' && tab !== 'script' && <div className="adjustment-character-heading"><label>編集対象の人物<select value={character?.character_id ?? ''} onChange={event => setCharacterId(event.target.value)}>{source.cast.map(cast => <option key={cast.character_id} value={cast.character_id}>{cast.name}（{cast.role === 'main' ? 'メイン' : cast.role === 'look' ? '別バージョン' : 'サブ'}）</option>)}</select></label>{character && <span>登場章：{character.chapter_numbers.map(number => `第${number}章`).join('・')}</span>}</div>}
           <div className="adjustment-kind-tabs" role="tablist" aria-label="編集対象">
-            {([{ id: 'layout', label: '表示位置調整' }, { id: 'image', label: '立ち絵' }, { id: 'voice', label: '基準音声' }, { id: 'music', label: 'BGM' }] as const).map((item, index, tabs) => <button key={item.id} type="button" role="tab" id={`adjustment-tab-${item.id}`} aria-controls={`adjustment-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => { setTab(item.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate') }} onKeyDown={event => {
+            {([{ id: 'layout', label: '表示位置調整' }, { id: 'image', label: '立ち絵' }, { id: 'voice', label: '基準音声' }, { id: 'music', label: 'BGM' }, { id: 'script', label: '台本・演出' }] as const).map((item, index, tabs) => <button key={item.id} type="button" role="tab" id={`adjustment-tab-${item.id}`} aria-controls={`adjustment-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => { setTab(item.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate') }} onKeyDown={event => {
               const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length] : event.key === 'ArrowLeft' ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] : null
               if (next) { event.preventDefault(); setTab(next.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate'); document.getElementById(`adjustment-tab-${next.id}`)?.focus() }
             }}>{item.label}</button>)}
@@ -396,6 +401,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
               </div>
             </fieldset></div>
           </section>}
+          {tab === 'script' && <ScriptTimeline key={source.edition?.id ?? ''} projectId={projectId} chapters={scriptChapters}/>}
           {tab === 'voice' && isLook && <section id="adjustment-panel-voice" role="tabpanel" aria-labelledby="adjustment-tab-voice" tabIndex={0}><p className="adjustment-help">別バージョンは立ち絵だけを持ちます。声は元の人物の基準音声を使うので、編集対象の人物で元の人物を選んでください。</p></section>}
           {(tab === 'image' || tab === 'voice') && !(tab === 'voice' && isLook) && character && edit && <section id={`adjustment-panel-${kind}`} role="tabpanel" aria-labelledby={`adjustment-tab-${kind}`} tabIndex={0}>
             <div className="adjustment-material-heading"><h3>{character.name}の{kind === 'image' ? '立ち絵' : '基準音声'}</h3></div>

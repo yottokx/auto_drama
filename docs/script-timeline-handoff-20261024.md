@@ -9,6 +9,15 @@
 - 長尺化のマージでは、この機能が触る予定のファイル（下の「実装の足場」）は変わっていない。長尺化が触ったのは計画の工程（`script_plot`・`script_continuation`・`script_cast`・`planning_*`・STEP3/4の画面）で、重なりは無い。
 - モック: https://claude.ai/artifact/3jUNU9czEwiTBGQk8udp2y （ユーザーのアカウントでだけ開ける）。リポジトリにはソースを置いていない。背景・立ち絵は `apps/web/public/demo/` のデモ素材。
 
+## 進み具合（ローカル、10/24）
+
+- ①行の一覧とプレビュー（読み取り専用）を `claude/script-timeline` に実装した。②編集と反映はまだ。
+  - 行時点の舞台: `compiler.py` の `_stage_walk` が、ジャンプ用の `entry_states` と、プレビュー用の `line_stages`（`before`・`start` の後の舞台、明るい人物、画面に反映されない演出）を同じ1回の走査で出す。
+  - API: `GET /api/m3/projects/{id}/adjustments/script/{production_id}`（`services/coordinator/script_adjustments.py`）。現在の公開版の章の台本を、場面・BGM・イベントCG・演出・行ごとの舞台付きで返す。focus は返さない。
+  - 画面: `apps/web/src/ScriptTimeline.tsx`、`scriptTimelineState.ts`。完成後調整の5番目のタブ。
+- 同じ行・同じ timing の登場と退場は、それぞれ1つのチップにまとめる（「退場 A・B」「登場 A（左）・B（右）」）。場面頭の全員退場で、場面の最初の行にチップが並びすぎるため（ユーザーの指示）。
+- 場面頭の無意味な退場（直後に登場し直す人物や、もともと舞台にいない人物の退場）そのものは、focus の削除と一緒に対応するかもしれない（[効かない演出の調査](experiments/dead-directions-20261024.md)）。
+
 ## 決めたこと
 
 ### 範囲

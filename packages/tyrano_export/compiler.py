@@ -117,6 +117,12 @@ class _Wardrobe:
         # The face replaces only the picture: it stands where its look stands.
         return self.face_files.get(face, self.files[key]), self.portraits[key]
 
+    def storage_with(self, character_id: str, expression: str | None) -> str:
+        """The picture the current look would show with another face."""
+        worn = self.worn.get(character_id)
+        face = (character_id, None if worn == "default" else worn, expression)
+        return self.face_files.get(face, self.files[portrait_key(character_id, worn)])
+
     def shown(self, character_id: str, z_index: int) -> dict:
         """The stage record of a visible character in its current look and slot."""
         storage, portrait = self.look(character_id)
@@ -314,32 +320,62 @@ def compile_scenario(script: Script, images: dict[str, bytes]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def entry_states(script: Script, images: dict[str, bytes]) -> dict:
-    """The stage and music in effect when each line begins, before its own directions.
+def _stage_walk(script: Script, images: dict[str, bytes]) -> dict:
+    """Follow the stage through every line once, as the player shows it.
 
-    A jump restores this and then replays the line from its label, so entrances
-    and scene transitions that belong to the line still play as written.
+    Each line is seen twice: as it begins, before its own directions, and while its text
+    shows, after its ``before`` and ``start`` directions. Jumps restore the first; the
+    adjustment preview shows the second. Both come from this one pass so they cannot
+    drift apart, nor from what the scenario does.
+
+    A face counts as shown once some moment of a line shows it on stage: a face set
+    while its character is away, or under an event CG and changed again before the CG
+    ends, or that has no picture of its own, never reaches the screen.
     """
     assets = {value.id: value for value in script.assets}
+    characters = {value.id: value for value in script.characters}
     wardrobe = _Wardrobe(script, script_portrait_layouts(script, images))
     cg_frames = event_cg_frames(script)
     cues = {value.utterance_id: value for value in script.music_cues}
     directions: dict[str, list] = {}
     for value in script.directions:
         directions.setdefault(value.utterance_id, []).append(value)
-    background, cast, music, frame, entries = None, {}, None, None, {}
-    for utterance in script.utterances:
-        entries[utterance.id] = {
+    background, cast, music, frame = None, {}, None, None
+    entries, shown, faces_seen, unseen_faces = {}, {}, set(), {}
+
+    def stage(cg):
+        return {
             "background": dict(background) if background else None,
             "characters": [dict(cast[key]) for key in sorted(cast)],
-            "event_cg": {**frame, "storage": assets[frame["asset_id"]].filename} if frame else None,
+            "event_cg": {**cg, "storage": assets[cg["asset_id"]].filename} if cg else None,
             "music_cue_id": music,
         }
+
+    def look_faces(utterance_id):
+        if utterance_id in cg_frames:
+            return
+        for character_id, (identifier, before) in list(unseen_faces.items()):
+            if character_id in cast and (wardrobe.look(character_id)[0]
+                                         != wardrobe.storage_with(character_id, before)):
+                faces_seen.add(identifier)
+                del unseen_faces[character_id]
+
+    for utterance in script.utterances:
+        entries[utterance.id] = stage(frame)
         cue = cues.get(utterance.id)
         if cue and cue.action in {"play", "stop"}:
             music = cue.id if cue.action == "play" else None
+        lit = None
         for timing in ("before", "start", "after"):
             for direction in (value for value in directions.get(utterance.id, []) if value.timing == timing):
+                if direction.kind == "expression":
+                    unseen_faces[direction.character_id] = (direction.id,
+                                                            wardrobe.faces.get(direction.character_id))
+                elif direction.kind == "enter":
+                    # Everyone comes on in their ordinary face, so a face set before is gone.
+                    unseen_faces.pop(direction.character_id, None)
+                elif direction.kind == "focus" and timing == "start":
+                    lit = direction.character_id
                 if direction.kind == "background":
                     background = {"storage": assets[direction.asset_id].filename,
                                   "position": BACKGROUND["position"] if script.portrait_baseline else ""}
@@ -353,8 +389,41 @@ def entry_states(script: Script, images: dict[str, bytes]) -> dict:
                     wardrobe.enter(direction)
                     cast[direction.character_id] = wardrobe.shown(
                         direction.character_id, PORTRAIT_Z_INDEX if script.portrait_baseline else 1)
+            if timing == "before":
+                # The scenario lights the speaker here; a voice from elsewhere lights no one.
+                speaker = characters.get(utterance.speaker_id)
+                lit = speaker.id if speaker and speaker.image_asset_id and utterance.remote is None else None
+            elif timing == "start":
+                shown[utterance.id] = {**stage(cg_frames.get(utterance.id)),
+                                       "lit": lit if lit in cast else None}
+            if timing != "before":
+                look_faces(utterance.id)
         frame = cg_frames.get(utterance.id)
-    return {"schema_version": 1, "entries": entries}
+    faces = {value.id for value in script.directions if value.kind == "expression"}
+    return {"entries": entries, "shown": shown, "unseen_faces": faces - faces_seen}
+
+
+def entry_states(script: Script, images: dict[str, bytes]) -> dict:
+    """The stage and music in effect when each line begins, before its own directions.
+
+    A jump restores this and then replays the line from its label, so entrances
+    and scene transitions that belong to the line still play as written.
+    """
+    return {"schema_version": 1, "entries": _stage_walk(script, images)["entries"]}
+
+
+def line_stages(script: Script, images: dict[str, bytes]) -> dict:
+    """What each line looks like while its text shows, for the adjustment preview.
+
+    ``lit`` is the one person on stage left bright; everyone else is dimmed. Directions
+    listed in ``unseen`` change nothing on screen: faces that are never shown, and
+    blackouts the scene transition of their line replaces.
+    """
+    walk = _stage_walk(script, images)
+    entries = {cue.utterance_id for cue in script.scene_transitions}
+    blackouts = {value.id for value in script.directions if value.kind == "blackout"
+                 and value.utterance_id in entries and value.timing in {"before", "start"}}
+    return {"lines": walk["shown"], "unseen": sorted(walk["unseen_faces"] | blackouts)}
 
 
 # The frame of a remote voice shows the speaker from the shoulders up, 3:4: from 0.45 face heights
