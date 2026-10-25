@@ -308,8 +308,9 @@ class ExternalLLM:
         """Input tokens exactly as the provider will bill them, schema and tools included."""
         if self.provider == "openai":
             body = openai_request(request, self.model)
-            body.pop("max_output_tokens")
-            body.pop("store")
+            # The counting endpoint refuses generation-only fields; they add no input tokens.
+            for key in ("max_output_tokens", "store", "temperature", "top_p"):
+                body.pop(key, None)
             tokens = self._post("/v1/responses/input_tokens", body).get("input_tokens")
         else:
             body = anthropic_request(request, self.model)

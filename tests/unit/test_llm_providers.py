@@ -242,6 +242,8 @@ def test_external_input_beyond_the_model_limit_fails_before_generation(tmp_path,
         llm.chat("scene", [{"role": "user", "content": "書いて"}])
     assert len(opener.requests) == 1
     assert opener.requests[0]["url"] == "https://api.openai.com/v1/responses/input_tokens"
+    # The counting endpoint rejects generation-only fields.
+    assert not {"temperature", "top_p", "max_output_tokens", "store"} & set(opener.requests[0]["body"])
 
 
 def test_routed_script_runs_reach_the_external_model(tmp_path, monkeypatch):
