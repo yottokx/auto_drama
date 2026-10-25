@@ -20,6 +20,9 @@ from .cancellation import check_cancelled
 
 KEY_VARIABLES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 ANTHROPIC_VERSION = "2026-10-21"
+# Part of each cached request's model identity: a converter change must not replay old replies.
+# 2: structured requests state their counts and numeric ranges in words.
+PROTOCOL_VERSION = 2
 # What each API accepts for reasoning (docs/experiments/external-llm-api-probe-20261025.md).
 REASONING_EFFORTS = {"openai": ["none", "low", "medium", "high", "xhigh", "max"],
                      "anthropic": ["none", "low", "medium", "high", "xhigh", "max"]}
@@ -102,6 +105,58 @@ def anthropic_schema(schema: dict) -> dict:
     return _map_schema(schema, convert)
 
 
+def _count(low, high, unit: str) -> str:
+    if low is not None and low == high:
+        return f"{low}{unit}"
+    if low is not None and high is not None:
+        return f"{low}〜{high}{unit}"
+    return f"{low}{unit}以上" if low is not None else f"最大{high}{unit}"
+
+
+def schema_limits(schema: dict) -> list[str]:
+    """Counts and numeric ranges, by field path, that the reply must meet.
+
+    llama-server's grammar stops the local model at these bounds without it knowing them.
+    Anthropic does not enforce them at all, and a model held back by OpenAI's strict mode
+    without knowing why can derail mid-answer, so external models are told them in words.
+    """
+    definitions = schema.get("$defs", {})
+    lines: list[str] = []
+
+    def walk(node, path, depth=0):
+        if not isinstance(node, dict) or depth > 32:
+            return
+        if "$ref" in node:
+            walk(definitions.get(node["$ref"].rsplit("/", 1)[-1]), path, depth + 1)
+            return
+        for option in node.get("anyOf", []) + node.get("allOf", []):
+            walk(option, path, depth + 1)
+        if "minItems" in node or "maxItems" in node or node.get("uniqueItems"):
+            parts = []
+            if "minItems" in node or "maxItems" in node:
+                parts.append(_count(node.get("minItems"), node.get("maxItems"), "件"))
+            if node.get("uniqueItems"):
+                parts.append("重複なし")
+            lines.append(f"{path}: {'、'.join(parts)}")
+        if "minimum" in node or "maximum" in node:
+            lines.append(f"{path}: {_count(node.get('minimum'), node.get('maximum'), '')}")
+        if isinstance(node.get("items"), dict):
+            walk(node["items"], path + "[]", depth + 1)
+        for name, child in (node.get("properties") or {}).items():
+            walk(child, f"{path}.{name}" if path else name, depth + 1)
+
+    walk(schema, "")
+    return list(dict.fromkeys(line for line in lines if not line.startswith(": ")))
+
+
+def _with_limits(turns: list[dict], schema: dict) -> list[dict]:
+    limits = schema_limits(schema)
+    if not limits or not turns or turns[-1]["role"] != "user" or not isinstance(turns[-1]["content"], str):
+        return turns
+    note = "\n\n回答のJSONの件数と数値の範囲（必ず守る）:\n" + "\n".join("- " + line for line in limits)
+    return [*turns[:-1], {**turns[-1], "content": turns[-1]["content"] + note}]
+
+
 # ----- requests -----
 
 def _check_fields(request: dict) -> None:
@@ -126,6 +181,8 @@ def _effort(request: dict) -> str:
 def openai_request(request: dict, model: str) -> dict:
     _check_fields(request)
     system, turns = _system_and_turns(request["messages"])
+    if request.get("response_format") is not None:
+        turns = _with_limits(turns, request["response_format"]["json_schema"]["schema"])
     items = []
     for message in turns:
         if message["role"] == "tool":
@@ -166,6 +223,8 @@ def openai_request(request: dict, model: str) -> dict:
 def anthropic_request(request: dict, model: str) -> dict:
     _check_fields(request)
     system, turns = _system_and_turns(request["messages"])
+    if request.get("response_format") is not None:
+        turns = _with_limits(turns, request["response_format"]["json_schema"]["schema"])
     messages = []
     for message in turns:
         if message["role"] == "tool":

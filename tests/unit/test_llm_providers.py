@@ -87,6 +87,30 @@ def test_schemas_are_converted_for_each_provider_without_touching_property_names
     assert schema["properties"]["a"]["minItems"] == 2
 
 
+def test_structured_requests_state_the_counts_and_ranges_a_grammar_would_enforce():
+    schema = {"type": "object", "additionalProperties": False, "required": ["subs", "pairs"],
+              "properties": {"subs": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/Sub"}},
+                             "pairs": {"type": "array", "uniqueItems": True, "items": {
+                                 "type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string"}}}},
+              "$defs": {"Sub": {"type": "object", "additionalProperties": False, "required": ["lines", "age"],
+                                "properties": {"lines": {"type": "array", "minItems": 3, "maxItems": 3,
+                                                         "items": {"type": "string", "maxLength": 9}},
+                                               "age": {"anyOf": [{"type": "integer", "minimum": 1},
+                                                                 {"type": "null"}]}}}}}
+    assert providers.schema_limits(schema) == [
+        "subs: 最大1件", "subs[].lines: 3件", "subs[].age: 1以上", "pairs: 重複なし", "pairs[]: 2件"]
+    request = {"messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "作って"}],
+               "max_tokens": 512, "response_format": {"type": "json_schema", "json_schema": {
+                   "name": "cast", "strict": True, "schema": schema}}}
+    for body in (providers.openai_request(request, "gpt-6-luna")["input"],
+                 providers.anthropic_request(request, "claude-haiku-5-5")["messages"]):
+        assert body[-1]["content"].startswith("作って\n\n回答のJSONの件数と数値の範囲（必ず守る）:\n- subs: 最大1件\n")
+    assert request["messages"][-1]["content"] == "作って"
+    plain = {**request, "response_format": None}
+    plain.pop("response_format")
+    assert providers.openai_request(plain, "gpt-6-luna")["input"][-1]["content"] == "作って"
+
+
 def test_openai_request_keeps_sampling_only_without_reasoning():
     request = {"model": "m2-local", "messages": [{"role": "system", "content": "脚本家"},
                                                  {"role": "user", "content": "書いて"}],
@@ -222,7 +246,8 @@ def test_external_chat_counts_against_the_model_limit_and_caches_like_local(tmp_
     assert budget["fits"] and budget["expanded"] and budget["context_size"] == 1_000_000
     cache = next(output.glob("01-scene-*.json"))
     saved = json.loads(cache.read_text("utf-8"))
-    assert saved["runtime"]["model"] == {"provider": "anthropic", "api_model": "claude-haiku-5-5"}
+    assert saved["runtime"]["model"] == {"provider": "anthropic", "api_model": "claude-haiku-5-5",
+                                         "protocol": providers.PROTOCOL_VERSION}
     assert saved["response"]["choices"][0]["finish_reason"] == "stop"
     assert KEY not in cache.read_text("utf-8")
     assert KEY not in (output / "llm-metrics.json").read_text("utf-8")

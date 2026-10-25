@@ -7,6 +7,7 @@ from packages.contracts.llm_settings import LLMCapability
 
 from .generation.llm_providers import (
     KEY_VARIABLES,
+    PROTOCOL_VERSION,
     REASONING_EFFORTS,
     SAMPLING_EFFORTS,
     has_key,
@@ -87,7 +88,8 @@ def _resolve_api_entry(model_id: str, entry: dict) -> tuple[dict, dict]:
     if not has_key(provider):
         raise ValueError(f"{KEY_VARIABLES[provider]} is not set for this worker")
     limit = entry["max_input_tokens"]
-    base = {"schema_version": 1, "model": {"provider": provider, "api_model": entry["api_model"]}}
+    base = {"schema_version": 1, "model": {"provider": provider, "api_model": entry["api_model"],
+                                           "protocol": PROTOCOL_VERSION}}
     settings = {"model_id": model_id, "provider": provider, "context_size": 16384,
                 "max_context_size": limit, "model_context_size": limit,
                 "reasoning_levels": REASONING_EFFORTS[provider], "reasoning_template": None,

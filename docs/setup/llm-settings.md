@@ -100,6 +100,9 @@ CoordinatorはジョブのモデルIDに対応するWorkerへ
 - 中止は、送信中のリクエストの応答を待ってから効く。
 - 各社が受け付けないJSONスキーマの制約は送る前に外し、応答は元のスキーマで検証する
   （`docs/experiments/external-llm-api-probe-20261025.md`）。
+- 構造化出力の依頼には、スキーマにある件数（`minItems` / `maxItems` / `uniqueItems`）と数値の範囲を、
+  依頼文の末尾に一覧で書き足す。ローカルモデルではgrammarが黙って止めていた制約で、
+  Anthropic は強制せず、OpenAI は強制するがモデルが知らないまま止められると回答が崩れるため。
 
 ## 設定変更の適用範囲
 
