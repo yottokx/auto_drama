@@ -285,6 +285,119 @@ def test_routed_script_runs_reach_the_external_model(tmp_path, monkeypatch):
     assert opener.requests[1]["body"]["text"]["format"]["strict"] is True
 
 
+def test_production_identity_accepts_a_model_without_a_local_server(tmp_path, monkeypatch):
+    from services.worker.generation.script_production import _generation_identity_config
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
+    config, profile = external_config(tmp_path, "anthropic/claude-haiku-5-5")
+    identity = _generation_identity_config(config, {"profile": profile})
+    assert identity["llm_base"]["model"]["provider"] == "anthropic"
+    assert "server" not in identity["llm_base"] and "llm_config" not in identity
+
+
+def chat_text(text, finish="stop", host="CoreWeave"):
+    return {"model": "google/gemma-4-31b-it", "provider": host, "choices": [
+        {"index": 0, "finish_reason": finish, "message": {"role": "assistant", "content": text}}],
+        "usage": {"prompt_tokens": 40, "completion_tokens": 12, "total_tokens": 52}}
+
+
+def test_compatible_requests_keep_the_chat_shape_and_route_to_capable_hosts():
+    assert model_provider("openrouter/google/gemma-4-31b-it") == "openrouter"
+    assert providers.split_model_id("openrouter/google/gemma-4-31b-it") == ("openrouter", "google/gemma-4-31b-it")
+    schema = {"type": "object", "additionalProperties": False, "required": ["lines"],
+              "properties": {"lines": {"type": "array", "minItems": 2, "maxItems": 3, "uniqueItems": True,
+                                       "items": {"type": "string"}}}}
+    request = {"model": "m2-local", "messages": [{"role": "system", "content": "脚本家"},
+                                                 {"role": "user", "content": "書いて"}],
+               "stream": False, "seed": 3, "temperature": 0.65, "top_p": 0.95, "max_tokens": 2048,
+               "reasoning_effort": "none", "response_format": {"type": "json_schema", "json_schema": {
+                   "name": "script plan", "strict": True, "schema": schema}}}
+    routing = providers.DEFAULT_ROUTING["openrouter"]
+    body = providers.chat_request(request, "google/gemma-4-31b-it", routing)
+    assert body["messages"][0] == {"role": "system", "content": "脚本家"}
+    assert body["messages"][1]["content"].startswith("書いて\n\n回答のJSONの件数と数値の範囲（必ず守る）:\n- lines: 2〜3件")
+    assert (body["temperature"], body["top_p"], body["max_tokens"]) == (0.65, 0.95, 2048)
+    # A compatible host enforces the schema as llama-server does, so it goes unchanged.
+    assert body["response_format"]["json_schema"] == {"name": "script_plan", "strict": True, "schema": schema}
+    assert body["provider"] == {"require_parameters": True, "data_collection": "deny"}
+    assert not {"seed", "stream", "reasoning", "reasoning_effort"} & set(body)
+    assert providers.chat_request({**request, "reasoning_effort": "low"}, "m")["reasoning"] == {"effort": "low"}
+    tools = providers.chat_request({**request, "tools": [{"type": "function"}], "tool_choice": "auto",
+                                    "parallel_tool_calls": False}, "m")
+    assert tools["tool_choice"] == "auto" and "parallel_tool_calls" not in tools
+    assert "provider" not in providers.chat_request(request, "m")
+    with pytest.raises(ValueError, match="grammar"):
+        providers.chat_request({**request, "grammar": "root ::= x"}, "m")
+    # The estimate stays above the characters the model reads.
+    assert providers.estimate_tokens(body) > len("脚本家書いて")
+
+
+def test_compatible_replies_keep_finish_reasons_and_name_the_serving_host():
+    reply = providers.chat_reply(chat_text("本文"), "openrouter")
+    assert reply["choices"][0] == {"index": 0, "finish_reason": "stop",
+                                   "message": {"role": "assistant", "content": "本文"}}
+    assert (reply["provider"], reply["upstream_provider"]) == ("openrouter", "CoreWeave")
+    assert reply["usage"]["completion_tokens"] == 12
+    assert providers.chat_reply(chat_text("途", "length"), "openrouter")["choices"][0]["finish_reason"] == "length"
+    tool = providers.chat_reply({"choices": [{"finish_reason": "tool_calls", "message": {
+        "role": "assistant", "content": None, "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "random_integer",
+                                                          "arguments": "{\"minimum\": 1}"}}]}}]}, "openrouter")
+    assert tool["choices"][0]["message"]["content"] is None
+    assert tool["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "random_integer"
+    with pytest.raises(providers.ExternalRefusal):
+        providers.chat_reply(chat_text("", "content_filter"), "openrouter")
+    with pytest.raises(RuntimeError, match="upstream timed out"):
+        providers.chat_reply({"error": {"message": "upstream timed out"}}, "openrouter")
+    with pytest.raises(RuntimeError, match="ended as error"):
+        providers.chat_reply(chat_text("", "error"), "openrouter")
+
+
+def test_compatible_model_runs_without_a_counting_call_and_caches_its_host_choice(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    config, profile = external_config(tmp_path, "openrouter/google/gemma-4-31b-it")
+    opener = FakeOpener(chat_text("NARRATOR: 朝。"))
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: opener)
+    output = tmp_path / "llm"
+    with LocalLLM(ROOT, config, {"seed": 1, "profile": profile}, output) as llm:
+        reply = llm.chat("scene", [{"role": "user", "content": "書いて"}], allow_truncated=True)
+    assert reply["content"] == "NARRATOR: 朝。"
+    assert [request["url"] for request in opener.requests] == ["https://openrouter.ai/api/v1/chat/completions"]
+    sent = opener.requests[0]
+    assert sent["headers"]["Authorization"] == "Bearer " + KEY
+    assert sent["body"]["model"] == "google/gemma-4-31b-it" and sent["body"]["temperature"] == 0.65
+    budget = next(row for row in llm.trace if row["type"] == "context_budget")
+    assert budget["fits"]
+    cache = next(output.glob("01-scene-*.json"))
+    saved = json.loads(cache.read_text("utf-8"))
+    assert saved["runtime"]["model"]["routing"] == providers.DEFAULT_ROUTING["openrouter"]
+    assert saved["response"]["upstream_provider"] == "CoreWeave"
+    assert KEY not in cache.read_text("utf-8")
+
+
+def test_compatible_entries_may_name_their_efforts_and_hosts(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+    root = worker_root(tmp_path)
+    models_file = root / "services/worker/config/models.local.json"
+    routing = {"require_parameters": True, "data_collection": "deny", "quantizations": ["bf16"]}
+    models_file.write_text(json.dumps({"schema_version": 1, "api_models": [
+        {"id": "openrouter/google/gemma-4-31b-it", "max_input_tokens": 262144},
+        {"id": "openrouter/qwen/qwen3.8-27b", "max_input_tokens": 262144,
+         "reasoning_efforts": ["none", "low"], "routing": routing}]}))
+    models, errors = catalog(root)
+    assert errors == []
+    # Open models take temperature and top_p with every effort, as they do locally.
+    assert models == [{"model": "openrouter/google/gemma-4-31b-it", "reasoning_efforts": ["none"]},
+                      {"model": "openrouter/qwen/qwen3.8-27b", "reasoning_efforts": ["none", "low"]}]
+    profile = LLMSettings(model="openrouter/qwen/qwen3.8-27b", temperature=0.65, top_p=0.95,
+                          reasoning_effort="low", ctx_size=32768).profile()
+    config = select_config(load_config(), {"profile": profile}, root)
+    assert config["llm_base"]["model"]["routing"] == routing
+    models_file.write_text(json.dumps({"schema_version": 1, "api_models": [
+        {"id": "anthropic/claude-haiku-5-5", "max_input_tokens": 1_000_000, "routing": routing}]}))
+    assert "routing is an object" in catalog(root)[1][0]
+
+
 def test_external_scene_source_names_the_speakers_a_grammar_would_allow():
     plan = type("Plan", (), {"character_ids": ["c1"]})()
     for effort in ("none", "low"):

@@ -1,4 +1,5 @@
-"""OpenAI Responses and Anthropic Messages behind the chat-completions shape LocalLLM keeps.
+"""OpenAI Responses, Anthropic Messages and OpenAI-compatible chat completions behind the
+chat-completions shape LocalLLM keeps.
 
 Requests are built as for llama-server and converted only here, just before sending; replies
 are converted back to choices[0].message / finish_reason / usage. API keys are read from the
@@ -18,7 +19,15 @@ from packages.contracts.llm_settings import API_PROVIDERS as PROVIDERS
 
 from .cancellation import check_cancelled
 
-KEY_VARIABLES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+KEY_VARIABLES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+                 "openrouter": "OPENROUTER_API_KEY"}
+BASE_URLS = {"openai": "https://api.openai.com", "anthropic": "https://api.anthropic.com",
+             "openrouter": "https://openrouter.ai/api"}
+# Services that take the chat-completions request as is; another one is a row here and in the above.
+CHAT_PROVIDERS = frozenset({"openrouter"})
+# OpenRouter forwards to one of several hosts. Only hosts that honour every sent parameter
+# (the JSON schema above all) and do not train on the work are used. Part of the model identity.
+DEFAULT_ROUTING = {"openrouter": {"require_parameters": True, "data_collection": "deny"}}
 ANTHROPIC_VERSION = "2026-10-21"
 # Part of each cached request's model identity: a converter change must not replay old replies.
 # 2: structured requests state their counts and numeric ranges in words.
@@ -26,9 +35,11 @@ ANTHROPIC_VERSION = "2026-10-21"
 PROTOCOL_VERSION = 3
 # What each API accepts for reasoning (docs/experiments/external-llm-api-probe-20261025.md).
 REASONING_EFFORTS = {"openai": ["none", "low", "medium", "high", "xhigh", "max"],
-                     "anthropic": ["none", "low", "medium", "high", "xhigh", "max"]}
-# The reasoning efforts with which temperature and top_p are accepted.
-SAMPLING_EFFORTS = {"openai": ["none"], "anthropic": []}
+                     "anthropic": ["none", "low", "medium", "high", "xhigh", "max"],
+                     # Open models as run locally; an entry may list more for a reasoning model.
+                     "openrouter": ["none"]}
+# The reasoning efforts with which temperature and top_p are accepted; None means all.
+SAMPLING_EFFORTS = {"openai": ["none"], "anthropic": [], "openrouter": None}
 RETRY_STATUSES = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
 MAX_RETRIES = 2
 # Fields of the llama-server request that have a counterpart (or are deliberately dropped).
@@ -293,6 +304,41 @@ def anthropic_request(request: dict, model: str) -> dict:
     return body
 
 
+def chat_request(request: dict, model: str, routing: dict | None = None) -> dict:
+    """The llama-server request minus its local-only fields; the schema goes unchanged."""
+    _check_fields(request)
+    system, turns = _conversation(request)
+    body = {"model": model, "messages": ([{"role": "system", "content": system}] if system else []) + turns,
+            "max_tokens": request["max_tokens"]}
+    # No host advertises parallel_tool_calls, so asking for it would leave none to route to;
+    # random tool rounds run every call they get in order.
+    for key in ("temperature", "top_p", "tools", "tool_choice"):
+        if key in request:
+            body[key] = copy.deepcopy(request[key])
+    effort = _effort(request)
+    if effort != "none":
+        body["reasoning"] = {"effort": effort}
+    response_format = request.get("response_format")
+    if response_format is not None:
+        schema = response_format["json_schema"]
+        body["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": re.sub(r"[^A-Za-z0-9_-]", "_", schema.get("name", "result"))[:64],
+            "strict": True, "schema": copy.deepcopy(schema["schema"])}}
+    if routing:
+        body["provider"] = copy.deepcopy(routing)
+    return body
+
+
+def estimate_tokens(body: dict) -> int:
+    """At most one token per character of what the model reads (messages, schema, tools).
+
+    Compatible services have no counting endpoint. Japanese runs about a token per character
+    and JSON or English far less, so this overstates; the model's own limit leaves room for it.
+    """
+    parts = [body.get("messages"), body.get("response_format"), body.get("tools")]
+    return len(json.dumps([part for part in parts if part], ensure_ascii=False))
+
+
 # ----- replies -----
 
 def openai_reply(body: dict) -> dict:
@@ -363,15 +409,53 @@ def anthropic_reply(body: dict) -> dict:
                                                     .get("thinking_tokens", 0)}}}
 
 
+CHAT_FINISH = frozenset({"stop", "length", "tool_calls"})
+
+
+def chat_reply(body: dict, provider: str) -> dict:
+    error = body.get("error")
+    if error:
+        message = error.get("message") if isinstance(error, dict) else error
+        raise RuntimeError(f"{provider} response failed: {str(message)[:500]}")
+    choices = body.get("choices") or []
+    if len(choices) != 1:
+        raise RuntimeError(f"{provider} returned {len(choices)} choices.")
+    choice = choices[0]
+    message = choice.get("message") or {}
+    finish = choice.get("finish_reason")
+    if message.get("refusal") or finish == "content_filter":
+        raise ExternalRefusal(f"{provider} declined to answer: {str(message.get('refusal') or finish)[:500]}")
+    if finish not in CHAT_FINISH:
+        raise RuntimeError(f"{provider} response ended as {finish}.")
+    calls = [{"id": call["id"], "type": "function",
+              "function": {"name": call["function"]["name"], "arguments": call["function"].get("arguments", "")}}
+             for call in message.get("tool_calls") or []]
+    content = message.get("content") or ""
+    reply = {"role": "assistant", "content": content if content or not calls else None}
+    if calls:
+        reply["tool_calls"] = calls
+    usage = body.get("usage") or {}
+    # Which host served the request; hosts may run differently quantized weights.
+    return {"choices": [{"index": 0, "message": reply, "finish_reason": finish}],
+            "model": body.get("model"), "provider": provider, "upstream_provider": body.get("provider"),
+            "usage": {"prompt_tokens": usage.get("prompt_tokens"),
+                      "completion_tokens": usage.get("completion_tokens"),
+                      "total_tokens": usage.get("total_tokens"),
+                      "prompt_tokens_details": {"cached_tokens": (usage.get("prompt_tokens_details") or {})
+                                                .get("cached_tokens", 0)},
+                      "completion_tokens_details": {"reasoning_tokens": (usage.get("completion_tokens_details") or {})
+                                                    .get("reasoning_tokens", 0)}}}
+
+
 # ----- transport -----
 
 class ExternalLLM:
     """Send one converted request for the LocalLLM that owns the deadline, trace and ordinal."""
 
-    def __init__(self, provider: str, model: str, owner, *, opener=None):
+    def __init__(self, provider: str, model: str, owner, *, routing: dict | None = None, opener=None):
         if provider not in PROVIDERS:
             raise ValueError(f"Unsupported LLM provider: {provider}")
-        self.provider, self.model, self.owner = provider, model, owner
+        self.provider, self.model, self.owner, self.routing = provider, model, owner, routing
         # Unlike the local server, a remote API may sit behind the system proxy.
         self.http = opener or urllib.request.build_opener()
 
@@ -379,12 +463,20 @@ class ExternalLLM:
         return {"provider": self.provider, "api_model": self.model}
 
     def chat(self, request: dict) -> dict:
+        if self.provider in CHAT_PROVIDERS:
+            return chat_reply(self._post("/v1/chat/completions",
+                                         chat_request(request, self.model, self.routing)), self.provider)
         if self.provider == "openai":
             return openai_reply(self._post("/v1/responses", openai_request(request, self.model)))
         return anthropic_reply(self._post("/v1/messages", anthropic_request(request, self.model)))
 
     def count(self, request: dict) -> int:
-        """Input tokens exactly as the provider will bill them, schema and tools included."""
+        """Input tokens as the provider will bill them, schema and tools included.
+
+        Exact where the provider counts them; an overstating estimate where it cannot.
+        """
+        if self.provider in CHAT_PROVIDERS:
+            return estimate_tokens(chat_request(request, self.model, self.routing))
         if self.provider == "openai":
             body = openai_request(request, self.model)
             # The counting endpoint refuses generation-only fields; they add no input tokens.
@@ -403,13 +495,13 @@ class ExternalLLM:
         key = os.environ.get(KEY_VARIABLES[self.provider])
         if not key:
             raise RuntimeError(f"{KEY_VARIABLES[self.provider]} is not set for this worker.")
-        if self.provider == "openai":
-            return {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
-        return {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION,
-                "Content-Type": "application/json"}
+        if self.provider == "anthropic":
+            return {"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION,
+                    "Content-Type": "application/json"}
+        return {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
 
     def _post(self, path: str, body: dict) -> dict:
-        base = "https://api.openai.com" if self.provider == "openai" else "https://api.anthropic.com"
+        base = BASE_URLS[self.provider]
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         for attempt in range(MAX_RETRIES + 1):
             check_cancelled()

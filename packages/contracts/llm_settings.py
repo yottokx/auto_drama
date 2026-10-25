@@ -13,7 +13,7 @@ def context_tier(size: int) -> int:
 
 
 # External API models are named provider/model; a local GGUF file name cannot contain '/'.
-API_PROVIDERS = ("openai", "anthropic")
+API_PROVIDERS = ("openai", "anthropic", "openrouter")
 
 
 def model_provider(model_id: str) -> str:

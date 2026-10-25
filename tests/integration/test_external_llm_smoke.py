@@ -1,4 +1,4 @@
-"""Live OpenAI / Anthropic calls through LocalLLM. Costs real money (well under one cent a run).
+"""Live OpenAI / Anthropic / OpenRouter calls through LocalLLM. Costs real money (well under one cent a run).
 
 Needs the provider keys in the environment and the models in models.local.json's api_models.
 """
@@ -8,15 +8,16 @@ import os
 
 import pytest
 
-from packages.contracts.llm_settings import LLMSettings
+from packages.contracts.llm_settings import LLMSettings, model_provider
 from packages.narrative.validation import parse_scene_text
 from services.worker.generation.llm import LocalLLM
+from services.worker.generation.llm_providers import KEY_VARIABLES
 from services.worker.generation.pipeline import ROOT, load_config
 from services.worker.model_config import select_config
 
 pytestmark = pytest.mark.skipif(os.environ.get("AUTO_DRAMA_API_SMOKE") != "1",
                                 reason="Set AUTO_DRAMA_API_SMOKE=1 for live external LLM calls")
-MODELS = ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"]
+MODELS = ["openai/gpt-6-luna", "anthropic/claude-haiku-5-5", "openrouter/google/gemma-4-31b-it"]
 # Bounds each API cannot enforce itself; the reply must still meet them all.
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["names", "age"],
           "properties": {"names": {"type": "array", "minItems": 2, "maxItems": 3, "uniqueItems": True,
@@ -32,8 +33,8 @@ def client(model, tmp_path):
     return LocalLLM(ROOT, config, {"seed": 1, "profile": profile}, tmp_path / "llm")
 
 
-def keys():
-    return [os.environ.get(name, "") for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY")]
+def key(model):
+    return os.environ.get(KEY_VARIABLES[model_provider(model)], "")
 
 
 @pytest.mark.parametrize("model", MODELS)
@@ -46,7 +47,9 @@ def test_structured_scene_and_tools_through_the_external_api(model, tmp_path):
             {"role": "system", "content": "あなたは日本語の脚本家です。"},
             {"role": "user", "content": "駅で再会した二人の短い場面を書いてください。各行は `NARRATOR: 地の文`、"
                                         "`character-1: 台詞`、`character-2: 台詞` のどれかで、6行ほど。"
-                                        "前置きや見出しは書かない。"}], allow_truncated=True)
+                                        "前置きや見出しは書かない。"}], allow_truncated=True,
+            # As scene sources name them: no API enforces the speakers as the local grammar does.
+            allowed_speakers=["NARRATOR", "character-1", "character-2"])
         history = llm.random_context("smoke-tools", [
             {"role": "system", "content": "乱数が必要なら道具を使います。"},
             {"role": "user", "content": "random_integer で1から6を1回引き、その値を一文で伝えてください。"}])
@@ -57,7 +60,7 @@ def test_structured_scene_and_tools_through_the_external_api(model, tmp_path):
     budgets = [row for row in llm.trace if row["type"] == "context_budget"]
     assert budgets and all(row["fits"] for row in budgets)
     saved = "".join(path.read_text("utf-8") for path in (tmp_path / "llm").glob("*.json"))
-    assert all(key and key not in saved for key in keys())
+    assert key(model) and key(model) not in saved
     usage = [json.loads(path.read_text("utf-8"))["response"]["usage"]
              for path in (tmp_path / "llm").glob("0*.json")]
     assert all(row["completion_tokens_details"]["reasoning_tokens"] == 0 for row in usage)

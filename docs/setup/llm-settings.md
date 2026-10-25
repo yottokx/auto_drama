@@ -68,7 +68,7 @@ UIの「Worker情報を更新」で最新の申告内容を取得できる。
 CoordinatorはジョブのモデルIDに対応するWorkerへ
 処理を割り当てる。同じモデルIDを複数Workerで使う場合は、同じモデル・量子化を配置する。
 
-## 外部API（OpenAI・Anthropic）のモデル
+## 外部API（OpenAI・Anthropic・OpenRouter）のモデル
 
 `models.local.json` の `api_models` に、使うモデルとその入力上限を書く。
 
@@ -78,13 +78,15 @@ CoordinatorはジョブのモデルIDに対応するWorkerへ
   "model_dirs": ["private/model_download"],
   "api_models": [
     {"id": "openai/gpt-6-luna", "max_input_tokens": 272000},
-    {"id": "anthropic/claude-haiku-5-5", "max_input_tokens": 1000000}
+    {"id": "anthropic/claude-haiku-5-5", "max_input_tokens": 1000000},
+    {"id": "openrouter/google/gemma-4-31b-it", "max_input_tokens": 262144}
   ]
 }
 ```
 
-- モデルIDは `プロバイダー/APIのモデル名`。プロバイダーは `openai` と `anthropic`。
-- APIキーはWorkerのプロセスの環境変数 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` から読む。
+- モデルIDは `プロバイダー/APIのモデル名`。プロバイダーは `openai`・`anthropic`・`openrouter`。
+- APIキーはWorkerのプロセスの環境変数 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
+  `OPENROUTER_API_KEY` から読む。
   キーが設定されていないプロバイダーのモデルは候補に出ない（Workerのログに理由が出る）。
   キーはCoordinator・DB・ジョブ・ログ・応答キャッシュには保存しない。
 - ユーザー環境変数を設定した後は、環境変数が見える新しいターミナル（またはエクスプローラー）から
@@ -98,6 +100,21 @@ CoordinatorはジョブのモデルIDに対応するWorkerへ
 - 推論なし（`none`）は、OpenAI に `reasoning.effort: "none"`、Anthropic に思考なしとして送る。
 - 本文の形式（`話者ID: 台詞`）はgrammarで強制できないので、生成後に検証する。
 - 中止は、送信中のリクエストの応答を待ってから効く。
+
+### OpenRouter（OpenAI互換のChat Completions）
+
+- ローカルで使うのと同じ公開モデル（例: Gemma 4 31B）を、GPUなしで使うための経路。
+  依頼はllama-server向けの形のまま送り、JSONスキーマも変えずに渡す（提供元が文法で守らせる）。
+- OpenRouterは複数の提供元に振り分ける。既定では、送った指定（スキーマなど）をすべて守れて、
+  作品を学習に使わない提供元だけに送る（`{"require_parameters": true, "data_collection": "deny"}`）。
+  `api_models` の項目に `routing` を書くと置き換えられる（例: `"quantizations": ["bf16"]` を足す）。
+  `routing` はモデルの識別に入るので、変えると応答キャッシュは別扱いになる。
+- 応答キャッシュには、実際に応答した提供元（`upstream_provider`）も残る。提供元で量子化が違い、
+  同じ依頼でも応答が変わりうるため。
+- 入力トークンを数えるAPIがないので、送る文字数を上限の見積もりとして `max_input_tokens` と比べる。
+- 推論は既定で `none` のみ。推論するモデルは項目に `"reasoning_efforts": ["none", "low"]` のように書く。
+- 温度・top_p は推論の有無に関係なく送り、設定画面にも出す（ローカルと同じ）。
+- `parallel_tool_calls` は送らない（対応を表明している提供元がなく、振り分け先がなくなる）。
 - 各社が受け付けないJSONスキーマの制約は送る前に外し、応答は元のスキーマで検証する
   （`docs/experiments/external-llm-api-probe-20261025.md`）。
 - 構造化出力の依頼には、スキーマにある件数（`minItems` / `maxItems` / `uniqueItems`）と数値の範囲を、

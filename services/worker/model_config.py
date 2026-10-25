@@ -6,6 +6,7 @@ from pathlib import Path
 from packages.contracts.llm_settings import LLMCapability
 
 from .generation.llm_providers import (
+    DEFAULT_ROUTING,
     KEY_VARIABLES,
     PROTOCOL_VERSION,
     REASONING_EFFORTS,
@@ -76,7 +77,21 @@ def entries(root: Path) -> dict:
             raise ValueError(f"{item['id']}: max_input_tokens must be an integer of at least 16384")
         if item["id"] in registry:
             raise ValueError(f"Duplicate model ID in api_models: {item['id']}")
-        registry[item["id"]] = {"provider": provider, "api_model": api_model, "max_input_tokens": limit}
+        entry = {"provider": provider, "api_model": api_model, "max_input_tokens": limit}
+        # A compatible service's open model: its reasoning efforts and host choice may differ.
+        efforts = item.get("reasoning_efforts", REASONING_EFFORTS[provider])
+        if efforts != REASONING_EFFORTS[provider]:
+            if (provider not in DEFAULT_ROUTING or not isinstance(efforts, list)
+                    or "none" not in efforts or not all(isinstance(level, str) and level for level in efforts)):
+                raise ValueError(f"{item['id']}: reasoning_efforts must list 'none' and only a "
+                                 "compatible service's models may set them")
+            entry["reasoning_efforts"] = efforts
+        routing = item.get("routing", DEFAULT_ROUTING.get(provider))
+        if routing is not None:
+            if provider not in DEFAULT_ROUTING or not isinstance(routing, dict):
+                raise ValueError(f"{item['id']}: routing is an object for {sorted(DEFAULT_ROUTING)} models")
+            entry["routing"] = routing
+        registry[item["id"]] = entry
     # Optional overrides are still supported for existing installations.
     registry.update(value.get("models", {}))
     return registry
@@ -90,9 +105,13 @@ def _resolve_api_entry(model_id: str, entry: dict) -> tuple[dict, dict]:
     limit = entry["max_input_tokens"]
     base = {"schema_version": 1, "model": {"provider": provider, "api_model": entry["api_model"],
                                            "protocol": PROTOCOL_VERSION}}
+    if "routing" in entry:
+        # Another host choice may answer differently, so it joins the cached model identity.
+        base["model"]["routing"] = copy.deepcopy(entry["routing"])
     settings = {"model_id": model_id, "provider": provider, "context_size": 16384,
                 "max_context_size": limit, "model_context_size": limit,
-                "reasoning_levels": REASONING_EFFORTS[provider], "reasoning_template": None,
+                "reasoning_levels": entry.get("reasoning_efforts", REASONING_EFFORTS[provider]),
+                "reasoning_template": None,
                 "sampling_efforts": SAMPLING_EFFORTS[provider], "max_output_tokens": 8192}
     return base, settings
 

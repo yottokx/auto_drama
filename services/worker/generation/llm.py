@@ -278,7 +278,7 @@ class LocalLLM:
 
     def _start_remote(self):
         model = self.base["model"]
-        self.remote = ExternalLLM(model["provider"], model["api_model"], self)
+        self.remote = ExternalLLM(model["provider"], model["api_model"], self, routing=model.get("routing"))
         # Fit is checked against the model's own input limit; the context tier only sizes the
         # work and its answers, since tokenizers differ (docs/external-llm-api-plan.md).
         self._launch_context_size = self._startup_context_size()

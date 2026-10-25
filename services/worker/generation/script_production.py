@@ -41,7 +41,8 @@ def _generation_identity_config(config: dict, payload: dict) -> dict:
     if "llm_base" in identity:
         identity.pop("llm_config", None)
         identity["llm_base"]["model"].pop("relative_path", None)
-        identity["llm_base"]["server"].pop("executable", None)
+        # An external API model has no local server.
+        identity["llm_base"].get("server", {}).pop("executable", None)
     return identity
 
 
