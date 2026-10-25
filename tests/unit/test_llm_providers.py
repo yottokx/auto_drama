@@ -285,7 +285,16 @@ def test_routed_script_runs_reach_the_external_model(tmp_path, monkeypatch):
     assert opener.requests[1]["body"]["text"]["format"]["strict"] is True
 
 
-def test_external_scene_source_has_no_grammar():
+def test_external_scene_source_names_the_speakers_a_grammar_would_allow():
     plan = type("Plan", (), {"character_ids": ["c1"]})()
-    assert narrative._source_options({"reasoning_level": "none", "provider": "openai"}, plan) == {}
+    for effort in ("none", "low"):
+        assert narrative._source_options({"reasoning_level": effort, "provider": "openai"}, plan) == {
+            "allowed_speakers": ["NARRATOR", "c1"]}
     assert "grammar" in narrative._source_options({"reasoning_level": "none", "provider": "local"}, plan)
+    request = {"messages": [{"role": "user", "content": "書いて"}], "max_tokens": 512,
+               "allowed_speakers": ["NARRATOR", "c1"]}
+    for body, turns in ((providers.openai_request(request, "gpt-6-luna"), "input"),
+                        (providers.anthropic_request(request, "claude-haiku-5-5"), "messages")):
+        assert "allowed_speakers" not in body
+        assert body[turns][-1]["content"].startswith(
+            "書いて\n\nこのシーンで発話できる人物IDは次の一覧のみです: [\"NARRATOR\", \"c1\"]。")

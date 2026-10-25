@@ -354,9 +354,12 @@ def _source_options(profile: dict, plan: ScenePlan, raw: str = "") -> dict:
 
     Keep the requested effort intact and validate the final source/anchor after
     generation. Only an explicit 'none' profile retains the eager body grammar.
-    External APIs have no grammar: their source is validated the same way.
+    External APIs have no grammar: the speakers it would allow are named in words instead,
+    and their source is validated the same way.
     """
-    if profile.get("reasoning_level", "none") != "none" or profile.get("provider", "local") != "local":
+    if profile.get("provider", "local") != "local":
+        return {"allowed_speakers": ["NARRATOR", *plan.character_ids]}
+    if profile.get("reasoning_level", "none") != "none":
         return {}
     return {"grammar": _source_grammar(plan, raw)}
 

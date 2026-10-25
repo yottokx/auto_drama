@@ -22,7 +22,8 @@ KEY_VARIABLES = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 ANTHROPIC_VERSION = "2026-10-21"
 # Part of each cached request's model identity: a converter change must not replay old replies.
 # 2: structured requests state their counts and numeric ranges in words.
-PROTOCOL_VERSION = 2
+# 3: scene sources name the speakers a local grammar would allow.
+PROTOCOL_VERSION = 3
 # What each API accepts for reasoning (docs/experiments/external-llm-api-probe-20261025.md).
 REASONING_EFFORTS = {"openai": ["none", "low", "medium", "high", "xhigh", "max"],
                      "anthropic": ["none", "low", "medium", "high", "xhigh", "max"]}
@@ -33,7 +34,7 @@ MAX_RETRIES = 2
 # Fields of the llama-server request that have a counterpart (or are deliberately dropped).
 REQUEST_FIELDS = frozenset({"model", "messages", "stream", "seed", "temperature", "top_p",
                             "max_tokens", "reasoning_effort", "response_format", "tools",
-                            "tool_choice", "parallel_tool_calls"})
+                            "tool_choice", "parallel_tool_calls", "allowed_speakers"})
 
 
 class ExternalRefusal(RuntimeError):
@@ -149,12 +150,35 @@ def schema_limits(schema: dict) -> list[str]:
     return list(dict.fromkeys(line for line in lines if not line.startswith(": ")))
 
 
+def _append_note(turns: list[dict], note: str) -> list[dict]:
+    if not turns or turns[-1]["role"] != "user" or not isinstance(turns[-1]["content"], str):
+        return turns
+    return [*turns[:-1], {**turns[-1], "content": turns[-1]["content"] + note}]
+
+
 def _with_limits(turns: list[dict], schema: dict) -> list[dict]:
     limits = schema_limits(schema)
-    if not limits or not turns or turns[-1]["role"] != "user" or not isinstance(turns[-1]["content"], str):
+    if not limits:
         return turns
-    note = "\n\n回答のJSONの件数と数値の範囲（必ず守る）:\n" + "\n".join("- " + line for line in limits)
-    return [*turns[:-1], {**turns[-1], "content": turns[-1]["content"] + note}]
+    return _append_note(turns, "\n\n回答のJSONの件数と数値の範囲（必ず守る）:\n"
+                        + "\n".join("- " + line for line in limits))
+
+
+def _with_speakers(turns: list[dict], speakers: list[str] | None) -> list[dict]:
+    """What the local source grammar enforces: only these prefixes may begin a line."""
+    if not speakers:
+        return turns
+    return _append_note(turns, "\n\nこのシーンで発話できる人物IDは次の一覧のみです: "
+                        + json.dumps(speakers, ensure_ascii=False)
+                        + "。一覧外の人物に台詞を与えず、新しい人物IDを作らないでください。"
+                        "動作・反応はNARRATORの行で描きます。")
+
+
+def _conversation(request: dict) -> tuple[str, list[dict]]:
+    system, turns = _system_and_turns(request["messages"])
+    if request.get("response_format") is not None:
+        turns = _with_limits(turns, request["response_format"]["json_schema"]["schema"])
+    return system, _with_speakers(turns, request.get("allowed_speakers"))
 
 
 # ----- requests -----
@@ -180,9 +204,7 @@ def _effort(request: dict) -> str:
 
 def openai_request(request: dict, model: str) -> dict:
     _check_fields(request)
-    system, turns = _system_and_turns(request["messages"])
-    if request.get("response_format") is not None:
-        turns = _with_limits(turns, request["response_format"]["json_schema"]["schema"])
+    system, turns = _conversation(request)
     items = []
     for message in turns:
         if message["role"] == "tool":
@@ -222,9 +244,7 @@ def openai_request(request: dict, model: str) -> dict:
 
 def anthropic_request(request: dict, model: str) -> dict:
     _check_fields(request)
-    system, turns = _system_and_turns(request["messages"])
-    if request.get("response_format") is not None:
-        turns = _with_limits(turns, request["response_format"]["json_schema"]["schema"])
+    system, turns = _conversation(request)
     messages = []
     for message in turns:
         if message["role"] == "tool":
