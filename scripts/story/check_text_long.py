@@ -26,6 +26,7 @@ from pydantic import Field, create_model
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from packages.contracts.llm_settings import model_provider
 from packages.contracts.m3 import Foreshadowing
 from packages.contracts.script import Contract
 from services.worker.generation import pipeline, script_continuation, script_plot
@@ -476,7 +477,8 @@ def experiment_input(value: dict, chapters: int, model_id: str | None, skip_stag
     value = copy.deepcopy(value)
     value["approval_snapshot"]["world"]["result"]["chapterCount"] = chapters
     if model_id:
-        value.setdefault("profile", {})["model_id"] = model_id
+        # An external model (openai/..., anthropic/...) brings its provider with it.
+        value.setdefault("profile", {}).update(model_id=model_id, provider=model_provider(model_id))
     if skip_staging:
         value.setdefault("script_options", {})["skip_staging"] = True
     if cast_limit is not None:

@@ -5,6 +5,14 @@ from pathlib import Path
 
 from packages.contracts.llm_settings import LLMCapability
 
+from .generation.llm_providers import (
+    KEY_VARIABLES,
+    REASONING_EFFORTS,
+    SAMPLING_EFFORTS,
+    has_key,
+    split_model_id,
+)
+
 REGISTRY = Path("services/worker/config/models.local.json")
 
 
@@ -55,12 +63,41 @@ def entries(root: Path) -> dict:
                 "max_context_size": 16384,
                 "reasoning_efforts": profile.get("reasoning_levels", ["none"]),
                 "reasoning_template": profile.get("reasoning_template")}
+    api_models = value.get("api_models", [])
+    if not isinstance(api_models, list):
+        raise TypeError("api_models must be a list of {id, max_input_tokens} entries")
+    for item in api_models:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise TypeError("api_models entries need an id such as openai/gpt-6-luna")
+        provider, api_model = split_model_id(item["id"])
+        limit = item.get("max_input_tokens")
+        if type(limit) is not int or limit < 16384:
+            raise ValueError(f"{item['id']}: max_input_tokens must be an integer of at least 16384")
+        if item["id"] in registry:
+            raise ValueError(f"Duplicate model ID in api_models: {item['id']}")
+        registry[item["id"]] = {"provider": provider, "api_model": api_model, "max_input_tokens": limit}
     # Optional overrides are still supported for existing installations.
     registry.update(value.get("models", {}))
     return registry
 
 
+def _resolve_api_entry(model_id: str, entry: dict) -> tuple[dict, dict]:
+    """An API model has no files to check; it is offered only while its key is set."""
+    provider = entry["provider"]
+    if not has_key(provider):
+        raise ValueError(f"{KEY_VARIABLES[provider]} is not set for this worker")
+    limit = entry["max_input_tokens"]
+    base = {"schema_version": 1, "model": {"provider": provider, "api_model": entry["api_model"]}}
+    settings = {"model_id": model_id, "provider": provider, "context_size": 16384,
+                "max_context_size": limit, "model_context_size": limit,
+                "reasoning_levels": REASONING_EFFORTS[provider], "reasoning_template": None,
+                "sampling_efforts": SAMPLING_EFFORTS[provider], "max_output_tokens": 8192}
+    return base, settings
+
+
 def resolve_entry(root: Path, model_id: str, entry: dict) -> tuple[dict, dict]:
+    if "provider" in entry:
+        return _resolve_api_entry(model_id, entry)
     base = (copy.deepcopy(entry["llm_base"]) if "llm_base" in entry
             else json.loads((root / entry["llm_config"]).read_text(encoding="utf-8")))
     path = (root / entry["path"]).resolve(strict=True)
@@ -95,7 +132,8 @@ def catalog(root: Path) -> tuple[list[dict], list[str]]:
         try:
             _, settings = resolve_entry(root, model_id, entry)
             models.append(LLMCapability(model=model_id,
-                reasoning_efforts=settings["reasoning_levels"]).model_dump(exclude_none=True))
+                reasoning_efforts=settings["reasoning_levels"],
+                sampling_efforts=settings.get("sampling_efforts")).model_dump(exclude_none=True))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors.append(f"{model_id}: {exc}")
     return models, errors
@@ -113,13 +151,21 @@ def select_config(config: dict, payload: dict, root: Path) -> dict:
     requested_context = profile.get("context_size", 16384)
     if type(requested_context) is not int or requested_context < 16384:
         raise ValueError("Common context_size must be an integer of at least 16384.")
-    # This is the user's requested runtime allocation, not an inferred model limit.
-    # Let llama-server load this context and report actual capacity or a load error.
-    settings.update(context_size=requested_context, max_context_size=requested_context,
-                    model_context_size=requested_context, allow_context_expansion=False)
+    if settings.get("provider", "local") != "local":
+        # The tier sizes the work and its answers; whether the input fits is checked against
+        # the model's own limit, since its tokenizer counts the same text differently.
+        if requested_context > settings["max_context_size"]:
+            raise ValueError(f"{model_id} takes at most {settings['max_context_size']} input tokens.")
+        settings.update(context_size=requested_context, allow_context_expansion=True)
+    else:
+        # This is the user's requested runtime allocation, not an inferred model limit.
+        # Let llama-server load this context and report actual capacity or a load error.
+        settings.update(context_size=requested_context, max_context_size=requested_context,
+                        model_context_size=requested_context, allow_context_expansion=False)
     result = copy.deepcopy(config)
     result["llm_base"] = base
-    result["llm_config"] = registry[model_id].get("llm_config", "worker-discovered")
+    result["llm_config"] = registry[model_id].get(
+        "llm_config", "worker-api" if "provider" in registry[model_id] else "worker-discovered")
     result["llm"].update(settings)
     result["model_routing"] = {}
     return result

@@ -126,7 +126,7 @@ def model_configuration_identity(root, config: dict) -> dict:
         if base is not None and "llm_base" in value:
             # The same model may be installed at different paths on each worker.
             base["model"].pop("relative_path", None)
-            base["server"].pop("executable", None)
+            base.get("server", {}).pop("executable", None)
         return base
 
     return {name: {"settings": deepcopy(value["llm"]),
@@ -301,6 +301,12 @@ class RoutedLLM(LocalLLM):
             raise RuntimeError("No active server for the selected model route.")
         self._active.requests = self.requests
         return self._active.request(path, value, timeout)
+
+    def _remote(self):
+        if self._active is None or self._active_route != self._route_name(self.profile):
+            return None
+        self._active.requests = self.requests
+        return self._active.remote
 
     def chat(self, stage, messages, *, allow_truncated=False, **extra):
         # CausalRun checks this same cache before charging a real request.

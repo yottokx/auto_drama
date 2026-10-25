@@ -10,6 +10,7 @@ import zipfile
 from itertools import combinations
 from pathlib import Path
 
+from packages.contracts.llm_settings import API_PROVIDERS
 from packages.contracts.tts_profile import select_tts_profile
 
 from ..model_config import catalog, model_base, select_config
@@ -1207,8 +1208,8 @@ def generate_job(job: dict, work_dir: Path, *, supporting_portrait: bool = False
         raise ValueError("Unsupported M2 job or payload schema.")
     if type(payload.get("seed")) is not int or not 0 <= payload["seed"] < 2**63:
         raise ValueError("Invalid generation seed.")
-    if payload.get("profile", {}).get("provider", "local") != "local":
-        raise ValueError("M2 supports the configured local provider only.")
+    if payload.get("profile", {}).get("provider", "local") not in ("local", *API_PROVIDERS):
+        raise ValueError("M2 supports the local provider and the configured API providers only.")
     config = load_config()
     if kind in {"m2_world", "m2_character", "m2_relationships", "m2_image"}:
         config = select_config(config, payload, ROOT)

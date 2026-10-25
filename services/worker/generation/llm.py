@@ -1,4 +1,4 @@
-"""Pinned local LLM, structured output and job-specific persisted request cache."""
+"""Pinned local or external LLM, structured output and job-specific persisted request cache."""
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +18,7 @@ from .context_budget import (
     server_context_from_properties,
 )
 from .id_aliases import IdAliases
+from .llm_providers import ExternalLLM
 from .processes import kill_owned_process, owned_process
 from .random_tools import TOOL_DEFINITIONS, RandomTools
 from .schemas import validate_schema
@@ -50,6 +51,8 @@ class LocalLLM:
         self._validate_profile(self.profile)
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.base_url = ""
+        # Set instead of base_url while an external API model serves this client.
+        self.remote: ExternalLLM | None = None
         self._owner = None
         self._resident_session = None
         self._cancel_scope = None
@@ -73,8 +76,8 @@ class LocalLLM:
         if not math.isfinite(profile.get("top_p", 0.95)) or not 0 < profile.get("top_p", 0.95) <= 1:
             raise ValueError("top_p must be finite and greater than zero, at most one.")
         settings = self._profile_settings(profile)
-        if profile.get("provider", "local") != "local":
-            raise ValueError("M2 supports the configured local provider only.")
+        if profile.get("provider", "local") != settings.get("provider", "local"):
+            raise ValueError("Requested provider is not the configured model's provider.")
         if profile["model_id"] != settings["model_id"]:
             raise ValueError("Requested model_id is not the configured pinned local model.")
         effort = profile.get("reasoning_level", "none")
@@ -163,6 +166,9 @@ class LocalLLM:
         check_cancelled()
         self.output.mkdir(parents=True, exist_ok=True)
         self.deadline = time.monotonic() + self.config["llm"]["total_timeout_seconds"]
+        if self._profile_settings(self.profile).get("provider", "local") != "local":
+            # No process or GPU memory to keep resident between jobs.
+            return self._start_remote()
         from .llm_session import current_session
 
         session = current_session()
@@ -270,7 +276,47 @@ class LocalLLM:
             write_json(self.output / "llm-metrics.json", self.trace)
             raise
 
+    def _start_remote(self):
+        model = self.base["model"]
+        self.remote = ExternalLLM(model["provider"], model["api_model"], self)
+        # Fit is checked against the model's own input limit; the context tier only sizes the
+        # work and its answers, since tokenizers differ (docs/external-llm-api-plan.md).
+        self._launch_context_size = self._startup_context_size()
+        self.server_context_size = self._launch_context_size
+        self.context_source = "provider_input_limit"
+        self.trace.append({"type": "llm_runtime", **self.runtime_identity(),
+                           "context_source": self.context_source})
+        return self
+
+    def _remote(self) -> ExternalLLM | None:
+        return self.remote
+
+    def _live(self) -> bool:
+        """A model is reachable for counting and generation (a cache replay needs neither)."""
+        return bool(self.base_url) or self._remote() is not None
+
+    def _send_chat(self, request: dict) -> dict:
+        remote = self._remote()
+        return remote.chat(request) if remote is not None else self.request("/v1/chat/completions", request)
+
+    def _prompt_tokens(self, request: dict) -> int:
+        remote = self._remote()
+        if remote is not None:
+            return remote.count(request)
+        formatted = self.request("/apply-template", request)
+        if not isinstance(formatted.get("prompt"), str):
+            raise TypeError("Local LLM did not return its formatted prompt for token counting.")
+        encoded = self.request("/tokenize", {"content": formatted["prompt"],
+                                            "add_special": True, "parse_special": True})
+        if not isinstance(encoded.get("tokens"), list):
+            raise TypeError("Local LLM did not return prompt tokens.")
+        return len(encoded["tokens"])
+
     def __exit__(self, *args):
+        if self.remote is not None:
+            self.remote = None
+            write_json(self.output / "llm-metrics.json", self.trace)
+            return None
         session = self._resident_session
         if session is None:
             return self._stop_runtime(*args)
@@ -407,14 +453,7 @@ class LocalLLM:
 
     def check_context(self, stage: str, request: dict) -> dict:
         """Use the loaded model's tokenizer and exact chat template, including schema/tools."""
-        formatted = self.request("/apply-template", request)
-        if not isinstance(formatted.get("prompt"), str):
-            raise TypeError("Local LLM did not return its formatted prompt for token counting.")
-        encoded = self.request("/tokenize", {"content": formatted["prompt"],
-                                            "add_special": True, "parse_special": True})
-        if not isinstance(encoded.get("tokens"), list):
-            raise TypeError("Local LLM did not return prompt tokens.")
-        prompt_tokens = len(encoded["tokens"])
+        prompt_tokens = self._prompt_tokens(request)
         budget = {"type": "context_budget", "stage": stage, "request": self.requests,
                   **self.context_budget(prompt_tokens=prompt_tokens,
                                         output_tokens=request["max_tokens"])}
@@ -446,11 +485,11 @@ class LocalLLM:
                 raise ValueError("LLM response cache fingerprint mismatch.")
             response = saved["response"]
         else:
-            if self.base_url:
+            if self._live():
                 budget = self.check_context(stage, request)
             generation_started = time.monotonic()
             try:
-                response = self.request("/v1/chat/completions", request)
+                response = self._send_chat(request)
             except BaseException:
                 self.trace.append({"type": "llm_generation", "stage": stage,
                                    "request": self.requests, "cache_hit": False,

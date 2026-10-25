@@ -12,6 +12,15 @@ def context_tier(size: int) -> int:
     return max([tier for tier in CONTEXT_TIERS if tier <= size] or [CONTEXT_TIERS[0]])
 
 
+# External API models are named provider/model; a local GGUF file name cannot contain '/'.
+API_PROVIDERS = ("openai", "anthropic")
+
+
+def model_provider(model_id: str) -> str:
+    provider, separator, _ = model_id.partition("/")
+    return provider if separator and provider in API_PROVIDERS else "local"
+
+
 class LLMSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     model: str = Field(min_length=1, max_length=120)
@@ -29,7 +38,7 @@ class LLMSettings(BaseModel):
         return self
 
     def profile(self) -> dict:
-        return {"provider": "local", "model_id": self.model,
+        return {"provider": model_provider(self.model), "model_id": self.model,
                 "temperature": self.temperature, "top_p": self.top_p,
                 "reasoning_level": self.reasoning_effort, "context_size": self.ctx_size,
                 "common_settings_version": 1}
@@ -41,6 +50,9 @@ class LLMCapability(BaseModel):
     # Accepted from older workers; common settings no longer impose this cap.
     max_context_size: int | None = Field(default=None, ge=16384, strict=True)
     reasoning_efforts: list[str] = Field(min_length=1)
+    # The reasoning efforts with which temperature and top_p take effect; None means all.
+    # Settings hide both where a model would refuse them.
+    sampling_efforts: list[str] | None = None
 
     def supports(self, profile: dict) -> bool:
         return (profile.get("model_id") == self.model

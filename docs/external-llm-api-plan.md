@@ -11,9 +11,9 @@ GPT-6 Luna（`gpt-6-luna`）と Claude Haiku 5.5（`claude-haiku-5-5`）が台�
 | 対象 | `LocalLLM` / `RoutedLLM` を通るテキストLLMの呼び出しすべて。画像・音楽・音声の生成モデルはローカルのまま。画像の生成ジョブや音楽ジョブの中にあるLLMの工程（立ち絵の指示文、衣装の案など）も `LocalLLM` を通るので、共通設定のモデルに従う |
 | 対象外 | 画像編集GUI・音声GUIのLLM呼び出し（`scripts/image_edit/llm_runner.py`、`scripts/audio/llm_runtime.py`）。外部APIに対応させるかは未定 |
 | 差し替える場所 | `LocalLLM` の送受信だけ。内部のリクエストは今の chat completions 形のまま作り、送る直前に各社の形式へ変換し、受け取った応答を `choices[0].message` / `finish_reason` / `usage` の形へ戻す。呼び出し側・応答キャッシュの形式・trace は変えない |
-| 使うAPI | OpenAI は Responses API（`store: false`）、Anthropic は Messages API。公式SDK（`openai`、`anthropic`）をWorkerのvenvにバージョン固定で入れる。429・5xxの再送はSDKの既定に任せる（通信の再送で、出力の検査・やり直しではない） |
+| 使うAPI | OpenAI は Responses API（`store: false`）、Anthropic は Messages API（`anthropic-version: 2026-10-21`）。SDKは入れず、llama-server と同じく urllib で直接送る（2026-10-25 実装時に変更。WorkerとテストのvenvにSDKを入れずに済み、Phase 0で確かめた形のまま送れるため）。408・409・429・5xx・接続失敗は、待ってから2回まで送り直す（通信の再送で、出力の検査・やり直しではない） |
 | APIキー | Workerのプロセスの環境変数 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` だけを読む。Coordinator・DB・ジョブのpayload・設定のスナップショット・trace・キャッシュ・ログ・エラーメッセージには出さない。`.env` の読み込みは今回は入れない |
-| モデルの申告 | `services/worker/config/models.local.json` に `api_models` を書く（例: `["openai/gpt-6-luna", "anthropic/claude-haiku-5-5"]`）。キーがあるプロバイダーのものだけをWorkerが候補として申告する。モデルIDの `/` はファイル名に使えない文字なので、GGUFのファイル名から作るIDとは重ならない |
+| モデルの申告 | `services/worker/config/models.local.json` に `api_models` を書く（例: `[{"id": "openai/gpt-6-luna", "max_input_tokens": 272000}]`。入力上限はモデルごとに書く）。キーがあるプロバイダーのものだけをWorkerが候補として申告する。モデルIDの `/` はファイル名に使えない文字なので、GGUFのファイル名から作るIDとは重ならない |
 | コンテキストの段 | 16k / 32k / 64k の段はそのまま選ぶ。外部モデルでは、段は作品の上限（章数・キャラ数など）と総生成枠の拡張にだけ使い、入力が収まるかの確認はモデルの実際の入力上限で行う（入力トークンがモデルで Gemma の1.2〜1.9倍になるため。送る資料の量は段で変わらないので、費用も変わらない。2026-10-25 決定）。llama-server は起動しない |
 | 推論 | `reasoning_effort` の文字列を、OpenAI は `reasoning.effort` へ（`none`〜`max`）、Anthropic は `none` なら `thinking: {type: "disabled"}`、それ以外は `thinking: {type: "adaptive"}` と effort（`low`〜`max`）へ渡す。両社とも何も指定しないと推論するので、`none` は必ず送る（Phase 0で確認） |
 | 本文の形式 | 外部APIでは grammar（`話者ID: 台詞` を強制する仕組み）を使えない。今の推論ありの経路と同じく、生成後に `parse_scene_text` で検証する。モデルに検査させてやり直す仕組みは足さない。形式の崩れが多ければ、Phase 2の結果を見て指示文や入力の構造で直す |
@@ -54,7 +54,7 @@ GPT-6 Luna（`gpt-6-luna`）と Claude Haiku 5.5（`claude-haiku-5-5`）が台�
 
 | 変更する場所 | 内容 |
 |---|---|
-| `services/worker/generation/llm_providers.py`（新規） | 各社への変換と送受信。SDKのクライアントは環境変数から作り、キーを引数や属性に保存しない |
+| `services/worker/generation/llm_providers.py`（新規） | 各社への変換と送受信。キーは送るたびに環境変数から読み、引数や属性に保存しない |
 | `services/worker/generation/llm.py` | `__enter__` / `request` / `chat` / `check_context` で、外部モデルなら llama-server を起動せず `llm_providers` へ送る。`provider != "local"` を弾く検証を外部モデル用に分ける |
 | `services/worker/model_config.py` | `api_models` の読み込みと、キーがあるものだけの申告。`select_config` / `resolve_entry` に外部モデルの分岐を足す（GGUF・サーバーの確認をしない） |
 | `packages/contracts/llm_settings.py`、`services/coordinator/llm_settings.py` | `profile()` の `provider` をモデルIDから決める。Workerの申告に、受け付ける温度の範囲と最大コンテキストを含める |

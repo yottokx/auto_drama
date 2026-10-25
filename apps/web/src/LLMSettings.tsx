@@ -4,7 +4,8 @@ import { Dialog } from './PreviewComponents'
 import './llm-settings.css'
 
 type Settings = { model: string; temperature: number; top_p: number; reasoning_effort: string; ctx_size: number }
-type Model = { model: string; reasoning_efforts: string[]; worker_name: string }
+// sampling_efforts: the reasoning efforts with which the model takes temperature and top_p (absent: all).
+type Model = { model: string; reasoning_efforts: string[]; sampling_efforts?: string[]; worker_name: string }
 type Response = { settings: Settings; models: Model[] }
 // The contexts a work can be made with; the coordinator accepts only these.
 const CONTEXT_TIERS = [16384, 32768, 65536]
@@ -33,6 +34,8 @@ export function LLMSettingsContent({ onBusyChange }: { onBusyChange?: (busy: boo
   }, [attempt])
   const available = models.filter(model => model.model === value?.model)
   const supported = value && available.length > 0 && CONTEXT_TIERS.includes(value.ctx_size)
+  // A model that refuses temperature and top_p (with this reasoning effort) shows neither.
+  const sampling = !value || !available.length || available.some(model => !model.sampling_efforts || model.sampling_efforts.includes(value.reasoning_effort))
   function change(patch: Partial<Settings>) { setValue(current => current && { ...current, ...patch }); setSaved(false) }
   async function save() {
     if (!value) return
@@ -52,8 +55,8 @@ export function LLMSettingsContent({ onBusyChange }: { onBusyChange?: (busy: boo
           {!available.length && <option value={value.model}>{value.model}（対応Worker未接続）</option>}
           {[...new Set(models.map(model => model.model))].map(model => <option key={model} value={model}>{model}</option>)}
         </select></label>
-        <label>Temperature<input type="number" min="0" max="2" step="any" required value={value.temperature} onChange={event => change({ temperature: event.target.valueAsNumber })}/></label>
-        <label>Top P<input type="number" min="0.000001" max="1" step="any" required value={value.top_p} onChange={event => change({ top_p: event.target.valueAsNumber })}/></label>
+        {sampling && <label>Temperature<input type="number" min="0" max="2" step="any" required value={value.temperature} onChange={event => change({ temperature: event.target.valueAsNumber })}/></label>}
+        {sampling && <label>Top P<input type="number" min="0.000001" max="1" step="any" required value={value.top_p} onChange={event => change({ top_p: event.target.valueAsNumber })}/></label>}
         <label>Reasoning effort<input type="text" value={value.reasoning_effort} disabled={value.ctx_size === CONTEXT_TIERS[0]} onChange={event => change({ reasoning_effort: event.target.value })}/>{value.ctx_size === CONTEXT_TIERS[0] && <small>推論は32,768以上で使えます。</small>}</label>
         <label>コンテキスト長<select value={value.ctx_size} onChange={event => { const ctx_size = Number(event.target.value); change(ctx_size === CONTEXT_TIERS[0] ? { ctx_size, reasoning_effort: 'none' } : { ctx_size }) }}>
           {CONTEXT_TIERS.map(size => <option key={size} value={size}>{size.toLocaleString()}</option>)}

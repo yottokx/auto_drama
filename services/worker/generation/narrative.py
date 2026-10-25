@@ -222,8 +222,8 @@ def _purpose(llm: LocalLLM, purpose: str) -> None:
     profile_purpose, profile = resolve_purpose_profile(config, llm.payload, purpose)
     settings = next(value["llm"] for value in route_configs(config).values()
                     if value["llm"]["model_id"] == profile["model_id"])
-    if profile.get("provider", "local") != "local":
-        raise ValueError("M3 currently supports the pinned local provider only.")
+    if profile.get("provider", "local") != settings.get("provider", "local"):
+        raise ValueError("The task profile's provider is not the configured model's provider.")
     if (not profile.get("common_settings_version")
             and profile.get("reasoning_level", "none") not in settings.get("reasoning_levels", ["none"])):
         raise ValueError("The selected local model does not support this reasoning_level.")
@@ -354,8 +354,9 @@ def _source_options(profile: dict, plan: ScenePlan, raw: str = "") -> dict:
 
     Keep the requested effort intact and validate the final source/anchor after
     generation. Only an explicit 'none' profile retains the eager body grammar.
+    External APIs have no grammar: their source is validated the same way.
     """
-    if profile.get("reasoning_level", "none") != "none":
+    if profile.get("reasoning_level", "none") != "none" or profile.get("provider", "local") != "local":
         return {}
     return {"grammar": _source_grammar(plan, raw)}
 

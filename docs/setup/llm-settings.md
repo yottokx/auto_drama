@@ -68,6 +68,39 @@ UIの「Worker情報を更新」で最新の申告内容を取得できる。
 CoordinatorはジョブのモデルIDに対応するWorkerへ
 処理を割り当てる。同じモデルIDを複数Workerで使う場合は、同じモデル・量子化を配置する。
 
+## 外部API（OpenAI・Anthropic）のモデル
+
+`models.local.json` の `api_models` に、使うモデルとその入力上限を書く。
+
+```json
+{
+  "schema_version": 1,
+  "model_dirs": ["private/model_download"],
+  "api_models": [
+    {"id": "openai/gpt-6-luna", "max_input_tokens": 272000},
+    {"id": "anthropic/claude-haiku-5-5", "max_input_tokens": 1000000}
+  ]
+}
+```
+
+- モデルIDは `プロバイダー/APIのモデル名`。プロバイダーは `openai` と `anthropic`。
+- APIキーはWorkerのプロセスの環境変数 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` から読む。
+  キーが設定されていないプロバイダーのモデルは候補に出ない（Workerのログに理由が出る）。
+  キーはCoordinator・DB・ジョブ・ログ・応答キャッシュには保存しない。
+- ユーザー環境変数を設定した後は、環境変数が見える新しいターミナル（またはエクスプローラー）から
+  Workerを起動し直す。
+- 外部モデルでは llama-server を起動せず、GPUのモデルも読み込まない。
+- コンテキスト長の段は、章数・登場キャラなどの上限と出力トークン上限にだけ使う。
+  入力が収まるかは、各社のトークン数を数えるAPIで数えて `max_input_tokens` と比べる。
+  同じ文章でもトークン数はモデルで違う（Gemmaの1.2〜1.9倍）ため。
+- 温度・top_p は、受け付けるモデルと推論の組み合わせでだけ送り、設定画面にも出す
+  （Anthropic は送らない。OpenAI は推論なしのときだけ）。
+- 推論なし（`none`）は、OpenAI に `reasoning.effort: "none"`、Anthropic に思考なしとして送る。
+- 本文の形式（`話者ID: 台詞`）はgrammarで強制できないので、生成後に検証する。
+- 中止は、送信中のリクエストの応答を待ってから効く。
+- 各社が受け付けないJSONスキーマの制約は送る前に外し、応答は元のスキーマで検証する
+  （`docs/experiments/external-llm-api-probe-20261025.md`）。
+
 ## 設定変更の適用範囲
 
 新しい生成ジョブを作成するときと、失敗したジョブの「再試行」を明示的に選んだときに、
