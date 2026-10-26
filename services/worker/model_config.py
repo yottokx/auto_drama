@@ -1,21 +1,23 @@
 """Resolve model IDs on this worker. Local paths are never sent to coordinator."""
 import copy
 import json
+import os
+import re
 from pathlib import Path
 
 from packages.contracts.llm_settings import LLMCapability
 
 from .generation.llm_providers import (
-    DEFAULT_ROUTING,
-    KEY_VARIABLES,
+    API_TYPES,
+    DEFAULT_ENDPOINTS,
     PROTOCOL_VERSION,
     REASONING_EFFORTS,
     SAMPLING_EFFORTS,
-    has_key,
-    split_model_id,
 )
 
 REGISTRY = Path("services/worker/config/models.local.json")
+PROVIDER_ID = re.compile(r"[A-Za-z0-9._-]+")
+KEY_VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def entries(root: Path) -> dict:
@@ -65,54 +67,77 @@ def entries(root: Path) -> dict:
                 "max_context_size": 16384,
                 "reasoning_efforts": profile.get("reasoning_levels", ["none"]),
                 "reasoning_template": profile.get("reasoning_template")}
+    providers = api_providers(value.get("api_providers", []))
     api_models = value.get("api_models", [])
     if not isinstance(api_models, list):
-        raise TypeError("api_models must be a list of {id, max_input_tokens} entries")
+        raise TypeError("api_models must be a list of {provider, model, max_input_tokens} entries")
     for item in api_models:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            raise TypeError("api_models entries need an id such as openai/gpt-6-luna")
-        provider, api_model = split_model_id(item["id"])
+        if not isinstance(item, dict) or item.get("provider") not in providers:
+            raise ValueError(f"api_models entries name one of the api_providers {sorted(providers)}: {item}")
+        provider = providers[item["provider"]]
+        api_model = item.get("model")
+        if not isinstance(api_model, str) or not api_model.strip():
+            raise ValueError(f"api_models entries need the provider's model name: {item}")
+        model_id = f"{item['provider']}/{api_model}"
         limit = item.get("max_input_tokens")
         if type(limit) is not int or limit < 16384:
-            raise ValueError(f"{item['id']}: max_input_tokens must be an integer of at least 16384")
-        if item["id"] in registry:
-            raise ValueError(f"Duplicate model ID in api_models: {item['id']}")
-        entry = {"provider": provider, "api_model": api_model, "max_input_tokens": limit}
-        # A compatible service's open model: its reasoning efforts and host choice may differ.
-        efforts = item.get("reasoning_efforts", REASONING_EFFORTS[provider])
-        if efforts != REASONING_EFFORTS[provider]:
-            if (provider not in DEFAULT_ROUTING or not isinstance(efforts, list)
-                    or "none" not in efforts or not all(isinstance(level, str) and level for level in efforts)):
-                raise ValueError(f"{item['id']}: reasoning_efforts must list 'none' and only a "
-                                 "compatible service's models may set them")
-            entry["reasoning_efforts"] = efforts
-        routing = item.get("routing", DEFAULT_ROUTING.get(provider))
-        if routing is not None:
-            if provider not in DEFAULT_ROUTING or not isinstance(routing, dict):
-                raise ValueError(f"{item['id']}: routing is an object for {sorted(DEFAULT_ROUTING)} models")
-            entry["routing"] = routing
-        registry[item["id"]] = entry
+            raise ValueError(f"{model_id}: max_input_tokens must be an integer of at least 16384")
+        if model_id in registry:
+            raise ValueError(f"Duplicate model ID in api_models: {model_id}")
+        efforts = item.get("reasoning_efforts", REASONING_EFFORTS[provider["type"]])
+        if (not isinstance(efforts, list) or "none" not in efforts
+                or not all(isinstance(level, str) and level for level in efforts)):
+            raise ValueError(f"{model_id}: reasoning_efforts must be a list of names including 'none'")
+        registry[model_id] = {**provider, "provider": item["provider"], "api_model": api_model,
+                              "max_input_tokens": limit, "reasoning_efforts": efforts}
     # Optional overrides are still supported for existing installations.
     registry.update(value.get("models", {}))
     return registry
 
 
+def api_providers(rows) -> dict:
+    """Where API models are reached: the request shape, the endpoint and the key's variable."""
+    if not isinstance(rows, list):
+        raise TypeError("api_providers must be a list of {id, type, endpoint, api_key_env} entries")
+    providers = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not PROVIDER_ID.fullmatch(row["id"]):
+            raise ValueError(f"api_providers entries need an id of letters, digits, '.', '_' or '-': {row}")
+        name = row["id"]
+        if name in providers or name == "local":
+            raise ValueError(f"api_providers id is reserved or repeated: {name}")
+        if row.get("type") not in API_TYPES:
+            raise ValueError(f"{name}: type must be one of {API_TYPES}")
+        endpoint = row.get("endpoint", DEFAULT_ENDPOINTS.get(row["type"]))
+        if not isinstance(endpoint, str) or not endpoint.startswith(("https://", "http://")):
+            raise ValueError(f"{name}: endpoint must be an http(s) URL; {row['type']} has no default")
+        key = row.get("api_key_env")
+        if key is not None and (not isinstance(key, str) or not KEY_VARIABLE.fullmatch(key)):
+            raise ValueError(f"{name}: api_key_env names an environment variable, never the key itself")
+        fields = row.get("request_fields", {})
+        if not isinstance(fields, dict):
+            raise TypeError(f"{name}: request_fields must be an object")
+        providers[name] = {"type": row["type"], "endpoint": endpoint.rstrip("/"), "api_key_env": key,
+                           "request_fields": fields}
+    return providers
+
+
 def _resolve_api_entry(model_id: str, entry: dict) -> tuple[dict, dict]:
     """An API model has no files to check; it is offered only while its key is set."""
-    provider = entry["provider"]
-    if not has_key(provider):
-        raise ValueError(f"{KEY_VARIABLES[provider]} is not set for this worker")
+    key = entry["api_key_env"]
+    if key is not None and not os.environ.get(key):
+        raise ValueError(f"{key} is not set for this worker")
     limit = entry["max_input_tokens"]
-    base = {"schema_version": 1, "model": {"provider": provider, "api_model": entry["api_model"],
-                                           "protocol": PROTOCOL_VERSION}}
-    if "routing" in entry:
-        # Another host choice may answer differently, so it joins the cached model identity.
-        base["model"]["routing"] = copy.deepcopy(entry["routing"])
-    settings = {"model_id": model_id, "provider": provider, "context_size": 16384,
-                "max_context_size": limit, "model_context_size": limit,
-                "reasoning_levels": entry.get("reasoning_efforts", REASONING_EFFORTS[provider]),
-                "reasoning_template": None,
-                "sampling_efforts": SAMPLING_EFFORTS[provider], "max_output_tokens": 8192}
+    # Everything that may change a reply joins the cached model identity; the key's variable does not.
+    base = {"schema_version": 1, "model": {
+        "provider": entry["provider"], "type": entry["type"], "endpoint": entry["endpoint"],
+        "api_model": entry["api_model"], "protocol": PROTOCOL_VERSION}}
+    if entry["request_fields"]:
+        base["model"]["request_fields"] = copy.deepcopy(entry["request_fields"])
+    settings = {"model_id": model_id, "provider": entry["provider"], "api_key_env": key,
+                "context_size": 16384, "max_context_size": limit, "model_context_size": limit,
+                "reasoning_levels": entry["reasoning_efforts"], "reasoning_template": None,
+                "sampling_efforts": SAMPLING_EFFORTS[entry["type"]], "max_output_tokens": 8192}
     return base, settings
 
 

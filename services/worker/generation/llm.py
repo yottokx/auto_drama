@@ -142,8 +142,10 @@ class LocalLLM:
         model = dict(self.base["model"])
         if "llm_base" in self.config:
             model.pop("relative_path", None)
+        # Which variable holds an API key changes no reply, so it stays out of the cache identity.
+        profile = {key: value for key, value in self.profile.items() if key != "api_key_env"}
         return {"version": 2, "model": model, "context": context,
-                "profile": dict(self.profile), "output_limit": self._output_limit(self.profile)}
+                "profile": profile, "output_limit": self._output_limit(self.profile)}
 
     def context_budget(self, *, prompt_tokens: int = 0, output_tokens: int | None = None) -> dict:
         """Share the same budget with evidence retrieval and scene splitting."""
@@ -278,7 +280,10 @@ class LocalLLM:
 
     def _start_remote(self):
         model = self.base["model"]
-        self.remote = ExternalLLM(model["provider"], model["api_model"], self, routing=model.get("routing"))
+        self.remote = ExternalLLM(model["type"], model["endpoint"], model["api_model"], self,
+                                  provider=model["provider"],
+                                  key_variable=self._profile_settings(self.profile).get("api_key_env"),
+                                  request_fields=model.get("request_fields"))
         # Fit is checked against the model's own input limit; the context tier only sizes the
         # work and its answers, since tokenizers differ (docs/external-llm-api-plan.md).
         self._launch_context_size = self._startup_context_size()

@@ -13,7 +13,7 @@ GPT-6 Luna（`gpt-6-luna`）と Claude Haiku 5.5（`claude-haiku-5-5`）が台�
 | 差し替える場所 | `LocalLLM` の送受信だけ。内部のリクエストは今の chat completions 形のまま作り、送る直前に各社の形式へ変換し、受け取った応答を `choices[0].message` / `finish_reason` / `usage` の形へ戻す。呼び出し側・応答キャッシュの形式・trace は変えない |
 | 使うAPI | OpenAI は Responses API（`store: false`）、Anthropic は Messages API（`anthropic-version: 2026-10-21`）。SDKは入れず、llama-server と同じく urllib で直接送る（2026-10-25 実装時に変更。WorkerとテストのvenvにSDKを入れずに済み、Phase 0で確かめた形のまま送れるため）。408・409・429・5xx・接続失敗は、待ってから2回まで送り直す（通信の再送で、出力の検査・やり直しではない） |
 | APIキー | Workerのプロセスの環境変数 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` だけを読む。Coordinator・DB・ジョブのpayload・設定のスナップショット・trace・キャッシュ・ログ・エラーメッセージには出さない。`.env` の読み込みは今回は入れない |
-| モデルの申告 | `services/worker/config/models.local.json` に `api_models` を書く（例: `[{"id": "openai/gpt-6-luna", "max_input_tokens": 272000}]`。入力上限はモデルごとに書く）。キーがあるプロバイダーのものだけをWorkerが候補として申告する。モデルIDの `/` はファイル名に使えない文字なので、GGUFのファイル名から作るIDとは重ならない |
+| モデルの申告 | `services/worker/config/models.local.json` の `api_providers` に接続先（API種別・エンドポイント・キーの環境変数名）を、`api_models` にその接続先のモデルと入力上限を書く（書き方は `docs/setup/llm-settings.md`）。キーがあるプロバイダーのものだけをWorkerが候補として申告する。モデルIDの `/` はファイル名に使えない文字なので、GGUFのファイル名から作るIDとは重ならない |
 | コンテキストの段 | 16k / 32k / 64k の段はそのまま選ぶ。外部モデルでは、段は作品の上限（章数・キャラ数など）と総生成枠の拡張にだけ使い、入力が収まるかの確認はモデルの実際の入力上限で行う（入力トークンがモデルで Gemma の1.2〜1.9倍になるため。送る資料の量は段で変わらないので、費用も変わらない。2026-10-25 決定）。llama-server は起動しない |
 | 推論 | `reasoning_effort` の文字列を、OpenAI は `reasoning.effort` へ（`none`〜`max`）、Anthropic は `none` なら `thinking: {type: "disabled"}`、それ以外は `thinking: {type: "adaptive"}` と effort（`low`〜`max`）へ渡す。両社とも何も指定しないと推論するので、`none` は必ず送る（Phase 0で確認） |
 | 本文の形式 | 外部APIでは grammar（`話者ID: 台詞` を強制する仕組み）を使えない。今の推論ありの経路と同じく、生成後に `parse_scene_text` で検証する。モデルに検査させてやり直す仕組みは足さない。形式の崩れが多ければ、Phase 2の結果を見て指示文や入力の構造で直す |

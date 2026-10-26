@@ -36,11 +36,20 @@ class FakeOpener:
         return response
 
 
-def worker_root(tmp_path, *models):
+ROUTING = {"provider": {"require_parameters": True, "data_collection": "deny"}}
+PROVIDERS = [{"id": "openai", "type": "openai_responses", "api_key_env": "OPENAI_API_KEY"},
+             {"id": "anthropic", "type": "anthropic_messages", "api_key_env": "ANTHROPIC_API_KEY"},
+             {"id": "openrouter", "type": "openai_chat", "endpoint": "https://openrouter.ai/api/v1",
+              "api_key_env": "OPENROUTER_API_KEY", "request_fields": ROUTING}]
+
+
+def worker_root(tmp_path, *models, providers=PROVIDERS, **model_fields):
     root = tmp_path / "root"
-    (root / "services/worker/config").mkdir(parents=True)
+    (root / "services/worker/config").mkdir(parents=True, exist_ok=True)
     (root / "services/worker/config/models.local.json").write_text(json.dumps(
-        {"schema_version": 1, "api_models": [{"id": model, "max_input_tokens": 1_000_000} for model in models]}))
+        {"schema_version": 1, "api_providers": providers, "api_models": [
+            {"provider": model.split("/", 1)[0], "model": model.split("/", 1)[1], "max_input_tokens": 1_000_000,
+             **model_fields} for model in models]}))
     return root
 
 
@@ -60,10 +69,10 @@ def test_model_ids_name_their_provider():
     assert model_provider("openai/gpt-6-luna") == "openai"
     assert model_provider("anthropic/claude-haiku-5-5") == "anthropic"
     assert model_provider("gemma-4-31B-it-UD-Q4_K_XL") == "local"
+    # Provider IDs come from each worker's config, not from a fixed list.
+    assert model_provider("my-vllm/qwen/qwen3.8-27b") == "my-vllm"
     assert LLMSettings(model="openai/gpt-6-luna", temperature=1, top_p=1, reasoning_effort="none",
                        ctx_size=16384).profile()["provider"] == "openai"
-    with pytest.raises(ValueError):
-        providers.split_model_id("mistral/large")
 
 
 def test_schemas_are_converted_for_each_provider_without_touching_property_names():
@@ -201,7 +210,8 @@ def test_transport_retries_overload_and_never_reveals_the_key(tmp_path, monkeypa
     llm = LocalLLM(ROOT, load_config(), {"seed": 1}, tmp_path)
     llm.deadline = providers.time.monotonic() + 60
     opener = FakeOpener(529, anthropic_text("おはよう"), 400)
-    remote = providers.ExternalLLM("anthropic", "claude-haiku-5-5", llm, opener=opener)
+    remote = providers.ExternalLLM("anthropic_messages", "https://api.anthropic.com/v1", "claude-haiku-5-5", llm,
+                                   provider="anthropic", key_variable="ANTHROPIC_API_KEY", opener=opener)
     request = {"messages": [{"role": "user", "content": "u"}], "max_tokens": 64, "reasoning_effort": "none"}
     assert remote.chat(request)["choices"][0]["message"]["content"] == "おはよう"
     assert opener.requests[0]["headers"]["X-api-key"] == KEY
@@ -222,7 +232,7 @@ def test_worker_offers_api_models_only_while_their_key_is_set(tmp_path, monkeypa
     root = worker_root(tmp_path, "openai/gpt-6-luna", "anthropic/claude-haiku-5-5")
     models, errors = catalog(root)
     assert models == [{"model": "anthropic/claude-haiku-5-5", "reasoning_efforts": providers.REASONING_EFFORTS[
-        "anthropic"], "sampling_efforts": []}]
+        "anthropic_messages"], "sampling_efforts": []}]
     assert errors == ["openai/gpt-6-luna: OPENAI_API_KEY is not set for this worker"]
     assert KEY not in json.dumps(models)
 
@@ -246,8 +256,9 @@ def test_external_chat_counts_against_the_model_limit_and_caches_like_local(tmp_
     assert budget["fits"] and budget["expanded"] and budget["context_size"] == 1_000_000
     cache = next(output.glob("01-scene-*.json"))
     saved = json.loads(cache.read_text("utf-8"))
-    assert saved["runtime"]["model"] == {"provider": "anthropic", "api_model": "claude-haiku-5-5",
-                                         "protocol": providers.PROTOCOL_VERSION}
+    assert saved["runtime"]["model"] == {"provider": "anthropic", "type": "anthropic_messages",
+                                         "endpoint": "https://api.anthropic.com/v1",
+                                         "api_model": "claude-haiku-5-5", "protocol": providers.PROTOCOL_VERSION}
     assert saved["response"]["choices"][0]["finish_reason"] == "stop"
     assert KEY not in cache.read_text("utf-8")
     assert KEY not in (output / "llm-metrics.json").read_text("utf-8")
@@ -302,8 +313,6 @@ def chat_text(text, finish="stop", host="CoreWeave"):
 
 
 def test_compatible_requests_keep_the_chat_shape_and_route_to_capable_hosts():
-    assert model_provider("openrouter/google/gemma-4-31b-it") == "openrouter"
-    assert providers.split_model_id("openrouter/google/gemma-4-31b-it") == ("openrouter", "google/gemma-4-31b-it")
     schema = {"type": "object", "additionalProperties": False, "required": ["lines"],
               "properties": {"lines": {"type": "array", "minItems": 2, "maxItems": 3, "uniqueItems": True,
                                        "items": {"type": "string"}}}}
@@ -312,8 +321,7 @@ def test_compatible_requests_keep_the_chat_shape_and_route_to_capable_hosts():
                "stream": False, "seed": 3, "temperature": 0.65, "top_p": 0.95, "max_tokens": 2048,
                "reasoning_effort": "none", "response_format": {"type": "json_schema", "json_schema": {
                    "name": "script plan", "strict": True, "schema": schema}}}
-    routing = providers.DEFAULT_ROUTING["openrouter"]
-    body = providers.chat_request(request, "google/gemma-4-31b-it", routing)
+    body = providers.with_fields(providers.chat_request(request, "google/gemma-4-31b-it"), ROUTING)
     assert body["messages"][0] == {"role": "system", "content": "脚本家"}
     assert body["messages"][1]["content"].startswith("書いて\n\n回答のJSONの件数と数値の範囲（必ず守る）:\n- lines: 2〜3件")
     assert (body["temperature"], body["top_p"], body["max_tokens"]) == (0.65, 0.95, 2048)
@@ -326,6 +334,8 @@ def test_compatible_requests_keep_the_chat_shape_and_route_to_capable_hosts():
                                     "parallel_tool_calls": False}, "m")
     assert tools["tool_choice"] == "auto" and "parallel_tool_calls" not in tools
     assert "provider" not in providers.chat_request(request, "m")
+    with pytest.raises(ValueError, match="replace"):
+        providers.with_fields(body, {"model": "other"})
     with pytest.raises(ValueError, match="grammar"):
         providers.chat_request({**request, "grammar": "root ::= x"}, "m")
     # The estimate stays above the characters the model reads.
@@ -370,32 +380,43 @@ def test_compatible_model_runs_without_a_counting_call_and_caches_its_host_choic
     assert budget["fits"]
     cache = next(output.glob("01-scene-*.json"))
     saved = json.loads(cache.read_text("utf-8"))
-    assert saved["runtime"]["model"]["routing"] == providers.DEFAULT_ROUTING["openrouter"]
+    assert saved["runtime"]["model"]["request_fields"] == ROUTING
+    assert "api_key_env" not in json.dumps(saved["runtime"])
     assert saved["response"]["upstream_provider"] == "CoreWeave"
     assert KEY not in cache.read_text("utf-8")
 
 
-def test_compatible_entries_may_name_their_efforts_and_hosts(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
-    root = worker_root(tmp_path)
-    models_file = root / "services/worker/config/models.local.json"
-    routing = {"require_parameters": True, "data_collection": "deny", "quantizations": ["bf16"]}
-    models_file.write_text(json.dumps({"schema_version": 1, "api_models": [
-        {"id": "openrouter/google/gemma-4-31b-it", "max_input_tokens": 262144},
-        {"id": "openrouter/qwen/qwen3.8-27b", "max_input_tokens": 262144,
-         "reasoning_efforts": ["none", "low"], "routing": routing}]}))
+def test_providers_are_configured_with_their_api_type_endpoint_and_key_variable(tmp_path, monkeypatch):
+    monkeypatch.delenv("MY_VLLM_KEY", raising=False)
+    own = [{"id": "my-vllm", "type": "openai_chat", "endpoint": "http://127.0.0.1:8001/v1/"},
+           {"id": "reasoner", "type": "openai_chat", "endpoint": "https://example.test/v1",
+            "api_key_env": "MY_VLLM_KEY"}]
+    root = worker_root(tmp_path, "my-vllm/qwen/qwen3.8-27b", "reasoner/deep-model", providers=own,
+                       reasoning_efforts=["none", "low"])
     models, errors = catalog(root)
-    assert errors == []
-    # Open models take temperature and top_p with every effort, as they do locally.
-    assert models == [{"model": "openrouter/google/gemma-4-31b-it", "reasoning_efforts": ["none"]},
-                      {"model": "openrouter/qwen/qwen3.8-27b", "reasoning_efforts": ["none", "low"]}]
-    profile = LLMSettings(model="openrouter/qwen/qwen3.8-27b", temperature=0.65, top_p=0.95,
+    # A server without authentication needs no key; open models take sampling with every effort.
+    assert models == [{"model": "my-vllm/qwen/qwen3.8-27b", "reasoning_efforts": ["none", "low"]}]
+    assert errors == ["reasoner/deep-model: MY_VLLM_KEY is not set for this worker"]
+    profile = LLMSettings(model="my-vllm/qwen/qwen3.8-27b", temperature=0.65, top_p=0.95,
                           reasoning_effort="low", ctx_size=32768).profile()
     config = select_config(load_config(), {"profile": profile}, root)
-    assert config["llm_base"]["model"]["routing"] == routing
-    models_file.write_text(json.dumps({"schema_version": 1, "api_models": [
-        {"id": "anthropic/claude-haiku-5-5", "max_input_tokens": 1_000_000, "routing": routing}]}))
-    assert "routing is an object" in catalog(root)[1][0]
+    assert config["llm_base"]["model"] == {"provider": "my-vllm", "type": "openai_chat",
+                                           "endpoint": "http://127.0.0.1:8001/v1", "api_model": "qwen/qwen3.8-27b",
+                                           "protocol": providers.PROTOCOL_VERSION}
+    opener = FakeOpener(chat_text("本文"))
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args: opener)
+    with LocalLLM(ROOT, config, {"seed": 1, "profile": profile}, tmp_path / "llm") as llm:
+        llm.chat("scene", [{"role": "user", "content": "書いて"}], allow_truncated=True)
+    assert opener.requests[0]["url"] == "http://127.0.0.1:8001/v1/chat/completions"
+    assert "Authorization" not in opener.requests[0]["headers"]
+    assert opener.requests[0]["body"]["reasoning"] == {"effort": "low"}
+    for bad, message in (({"id": "x", "type": "gemini"}, "type must be one of"),
+                         ({"id": "x", "type": "openai_chat"}, "endpoint must be"),
+                         ({"id": "x", "type": "openai_responses", "api_key_env": "sk-secret-value"}, "never the key"),
+                         ({"id": "local", "type": "openai_responses"}, "reserved"),
+                         ({"id": "a/b", "type": "openai_responses"}, "letters, digits")):
+        assert message in catalog(worker_root(tmp_path, providers=[bad]))[1][0]
+    assert "name one of the api_providers" in catalog(worker_root(tmp_path, "nowhere/model"))[1][0]
 
 
 def test_external_scene_source_names_the_speakers_a_grammar_would_allow():

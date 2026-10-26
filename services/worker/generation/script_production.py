@@ -43,6 +43,8 @@ def _generation_identity_config(config: dict, payload: dict) -> dict:
         identity["llm_base"]["model"].pop("relative_path", None)
         # An external API model has no local server.
         identity["llm_base"].get("server", {}).pop("executable", None)
+    # Which variable holds an API key changes no reply.
+    identity.get("llm", {}).pop("api_key_env", None)
     return identity
 
 

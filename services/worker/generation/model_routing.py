@@ -129,8 +129,11 @@ def model_configuration_identity(root, config: dict) -> dict:
             base.get("server", {}).pop("executable", None)
         return base
 
-    return {name: {"settings": deepcopy(value["llm"]),
-                   "base": identity_base(value)}
+    def settings(value):
+        # Which variable holds an API key changes no reply.
+        return {key: item for key, item in deepcopy(value["llm"]).items() if key != "api_key_env"}
+
+    return {name: {"settings": settings(value), "base": identity_base(value)}
             for name, value in route_configs(config).items()}
 
 

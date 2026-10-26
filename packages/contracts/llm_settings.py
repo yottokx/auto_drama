@@ -12,13 +12,11 @@ def context_tier(size: int) -> int:
     return max([tier for tier in CONTEXT_TIERS if tier <= size] or [CONTEXT_TIERS[0]])
 
 
-# External API models are named provider/model; a local GGUF file name cannot contain '/'.
-API_PROVIDERS = ("openai", "anthropic", "openrouter")
-
-
 def model_provider(model_id: str) -> str:
+    """API models are named provider/model after a worker's configured provider ID;
+    a local GGUF file name cannot contain '/'."""
     provider, separator, _ = model_id.partition("/")
-    return provider if separator and provider in API_PROVIDERS else "local"
+    return provider if separator and provider else "local"
 
 
 class LLMSettings(BaseModel):

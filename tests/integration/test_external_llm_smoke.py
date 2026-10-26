@@ -1,6 +1,7 @@
 """Live OpenAI / Anthropic / OpenRouter calls through LocalLLM. Costs real money (well under one cent a run).
 
-Needs the provider keys in the environment and the models in models.local.json's api_models.
+Needs the provider keys in the environment and these models in models.local.json's
+api_providers / api_models.
 """
 
 import json
@@ -8,12 +9,11 @@ import os
 
 import pytest
 
-from packages.contracts.llm_settings import LLMSettings, model_provider
+from packages.contracts.llm_settings import LLMSettings
 from packages.narrative.validation import parse_scene_text
 from services.worker.generation.llm import LocalLLM
-from services.worker.generation.llm_providers import KEY_VARIABLES
 from services.worker.generation.pipeline import ROOT, load_config
-from services.worker.model_config import select_config
+from services.worker.model_config import entries, select_config
 
 pytestmark = pytest.mark.skipif(os.environ.get("AUTO_DRAMA_API_SMOKE") != "1",
                                 reason="Set AUTO_DRAMA_API_SMOKE=1 for live external LLM calls")
@@ -34,7 +34,7 @@ def client(model, tmp_path):
 
 
 def key(model):
-    return os.environ.get(KEY_VARIABLES[model_provider(model)], "")
+    return os.environ.get(entries(ROOT)[model]["api_key_env"], "")
 
 
 @pytest.mark.parametrize("model", MODELS)
