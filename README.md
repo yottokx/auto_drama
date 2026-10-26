@@ -19,6 +19,12 @@
 
 開発者向けの情報は [開発ガイド](DEVELOPMENT.md) を参照してください。
 
+## BGM生成モデル
+
+**Powered by Stability AI**
+
+BGMの生成にStable Audio 3.0（Medium・Small）を使用しています。Stability AI Community Licenseのもとで利用しており、規約本文とNoticeは [services/worker/runtimes/stable_audio3/licenses](services/worker/runtimes/stable_audio3/licenses) にあります。モデル本体はこのリポジトリに含まれず、利用者が各自Hugging Faceで規約に同意して取得します。
+
 ## テスト出力結果
 
 ### 2026/10/10アップロード済

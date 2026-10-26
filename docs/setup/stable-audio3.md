@@ -1,5 +1,7 @@
 # Stable Audio 3.0 BGMと音楽生成テストGUI
 
+**Powered by Stability AI** — Stable Audio 3.0はStability AI Community Licenseのもとで利用しています。規約本文とNoticeは [licenses](../../services/worker/runtimes/stable_audio3/licenses) にあります。
+
 ## 本体のBGM生成
 
 通常のSTEP4で構成を承認して新しく始めた制作は、章の本文・画像・台詞音声に続いてBGMも自動生成します。完成後調整を操作しなくても、初回の鑑賞・書き出しに場面ごとのBGMが含まれます。既に保存されている制作・公開版はそのまま再現でき、完成後の「BGM」タブから追加・変更できます。
