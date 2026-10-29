@@ -1,6 +1,6 @@
 # LLM共通設定
 
-サイドバーの「LLM共通設定」で、モデル、temperature、top_p、reasoning_effort、
+サイドバーの「LLM共通設定」で、接続先、モデル、temperature、top_p、推論（reasoning_effort）、
 コンテキスト長を設定する。用途別の設定欄は設けない。
 保存先はCoordinatorのDBであり、ブラウザーのローカルストレージには保存しない。
 
@@ -8,8 +8,11 @@
 - top_p: 0より大きく1以下。
 - コンテキスト長: 最低16,384。指定値をそのままllama-serverの `--ctx-size` に渡す。
   既存の16,384や32,768を固定上限として扱わない。ロード後は実際のコンテキスト容量を確認する。
-- reasoning_effort: 任意のテキストを自由入力する。入力値をそのままLLMリクエストに渡す。
-  Workerの申告値で制限せず、モデルを変更しても入力値を保持する。
+- 接続先: ローカルと、Workerの設定の `api_providers` に書いた接続先（その `id` で出る）のうち、
+  接続中のWorkerに使えるモデルがあるものだけを出す。
+  モデルは選んだ接続先のものだけを、接続先の部分を除いた名前で出す。
+- 推論（reasoning_effort）: そのモデルをWorkerが受け付ける強さ（なし・低・中・高・とても高い・最大）から選ぶ。
+  受け付けないモデルに切り替えると「なし」に戻す。
 - 総生成上限（本文＋推論）は16,384を基準に自動拡張する。
   既存の処理別上限・本文の予算計算を基準値として、
   `floor((ctx_size - 16384) / 2)` トークンを加える。
@@ -67,6 +70,83 @@ UIの「Worker情報を更新」で最新の申告内容を取得できる。
 
 CoordinatorはジョブのモデルIDに対応するWorkerへ
 処理を割り当てる。同じモデルIDを複数Workerで使う場合は、同じモデル・量子化を配置する。
+
+## 外部APIのモデル
+
+`models.local.json` の `api_providers` に接続先（API種別・エンドポイント・キーの環境変数名）を、
+`api_models` にその接続先で使うモデルと入力上限を書く。
+
+```json
+{
+  "schema_version": 1,
+  "model_dirs": ["private/model_download"],
+  "api_providers": [
+    {"id": "openai", "type": "openai_responses", "api_key_env": "OPENAI_API_KEY"},
+    {"id": "anthropic", "type": "anthropic_messages", "api_key_env": "ANTHROPIC_API_KEY"},
+    {"id": "openrouter", "type": "openai_chat", "endpoint": "https://openrouter.ai/api/v1",
+     "api_key_env": "OPENROUTER_API_KEY",
+     "request_fields": {"provider": {"require_parameters": true, "data_collection": "deny"}}}
+  ],
+  "api_models": [
+    {"provider": "openai", "model": "gpt-6-luna", "max_input_tokens": 272000},
+    {"provider": "anthropic", "model": "claude-haiku-5-5", "max_input_tokens": 1000000},
+    {"provider": "openrouter", "model": "google/gemma-4-31b-it", "max_input_tokens": 262144}
+  ]
+}
+```
+
+`api_providers` の項目:
+
+| 項目 | 内容 |
+|---|---|
+| `id` | 接続先の名前。英数字と `.` `_` `-`。設定画面の「接続先」にこの名前で出る。`local` は使えない。 |
+| `type` | APIの種別。`openai_responses`（OpenAI Responses API）、`anthropic_messages`（Anthropic Messages API）、`openai_chat`（OpenAI互換のChat Completions。OpenRouter・vLLMなど）。 |
+| `endpoint` | APIのURL（`/v1` まで）。`openai_responses` と `anthropic_messages` は省略すると公式のURL。`openai_chat` は必須。 |
+| `api_key_env` | APIキーを入れた環境変数の名前。キーそのものは書かない。省略すると認証なしで送る（同じPCのvLLMなど）。 |
+| `request_fields` | 毎回の依頼に足すフィールド（任意）。例: OpenRouterの提供元の選び方 `provider`。依頼が元から持つフィールドは置き換えられない。 |
+
+`api_models` の項目:
+
+| 項目 | 内容 |
+|---|---|
+| `provider` | `api_providers` の `id`。 |
+| `model` | その接続先でのモデル名（例: OpenRouterの `google/gemma-4-31b-it`）。 |
+| `max_input_tokens` | そのモデルの入力上限。最低16,384。 |
+| `reasoning_efforts` | 受け付ける推論の強さ（任意、`none` を含む）。省略するとAPI種別の既定（`openai_chat` は `none` のみ）。 |
+
+- アプリの中のモデルIDは `接続先のid/モデル名`（例: `openrouter/google/gemma-4-31b-it`）。
+- 接続先の `type`・`endpoint`・`request_fields` とモデル名はモデルの識別に入るので、
+  変えると応答キャッシュは別扱いになる。キーの環境変数名は識別に入らない。
+- キーの環境変数が設定されていない接続先のモデルは候補に出ない（Workerのログに理由が出る）。
+  キーはCoordinator・DB・ジョブ・ログ・応答キャッシュには保存しない。
+- ユーザー環境変数を設定した後は、環境変数が見える新しいターミナル（またはエクスプローラー）から
+  Workerを起動し直す。
+- 外部モデルでは llama-server を起動せず、GPUのモデルも読み込まない。
+- コンテキスト長の段は、章数・登場キャラなどの上限と出力トークン上限にだけ使う。
+  入力が収まるかは `max_input_tokens` と比べる。`openai_responses` と `anthropic_messages` は
+  各社のトークン数を数えるAPIで数え、`openai_chat` は数えるAPIがないので送る文字数を上限の見積もりとする。
+  同じ文章でもトークン数はモデルで違う（Gemmaの1.2〜1.9倍）ため。
+- 温度・top_p は、受け付けるAPI種別と推論の組み合わせでだけ送り、設定画面にも出す
+  （`anthropic_messages` は送らない。`openai_responses` は推論なしのときだけ。`openai_chat` は常に送る）。
+- 推論なし（`none`）は、`openai_responses` に `reasoning.effort: "none"`、`anthropic_messages` に思考なし、
+  `openai_chat` には推論の指定を付けずに送る。推論ありは `openai_chat` に `reasoning.effort` を付ける。
+- 本文の形式（`話者ID: 台詞`）はgrammarで強制できないので、話せる人物IDを依頼文で伝え、生成後に検証する。
+- 中止は、送信中のリクエストの応答を待ってから効く。
+
+### OpenAI互換のChat Completions（`openai_chat`）
+
+- ローカルで使うのと同じ公開モデル（例: Gemma 4 31B）を、GPUなしで使うための経路。
+  依頼はllama-server向けの形のまま送り、JSONスキーマも変えずに渡す（提供元が文法で守らせる）。
+- OpenRouterは複数の提供元に振り分ける。上の例の `request_fields` は、送った指定（スキーマなど）を
+  すべて守れて、作品を学習に使わない提供元だけに送る指定。`"quantizations": ["bf16"]` などを足せる。
+- 応答キャッシュには、実際に応答した提供元（`upstream_provider`）も残る。提供元で量子化が違い、
+  同じ依頼でも応答が変わりうるため。
+- `parallel_tool_calls` は送らない（OpenRouterでは対応を表明している提供元がなく、振り分け先がなくなる）。
+- 各社が受け付けないJSONスキーマの制約は送る前に外し、応答は元のスキーマで検証する
+  （`docs/experiments/external-llm-api-probe-20261025.md`）。
+- 構造化出力の依頼には、スキーマにある件数（`minItems` / `maxItems` / `uniqueItems`）と数値の範囲を、
+  依頼文の末尾に一覧で書き足す。ローカルモデルではgrammarが黙って止めていた制約で、
+  Anthropic は強制せず、OpenAI は強制するがモデルが知らないまま止められると回答が崩れるため。
 
 ## 設定変更の適用範囲
 
