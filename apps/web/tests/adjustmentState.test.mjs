@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { transformWithOxc } from 'vite'
 import { adjustmentFixture, adjustmentMusicFixture, adjustmentContinuityFixture } from './adjustmentFixture.mjs'
+import { scriptStateUrl } from './scriptStateModule.mjs'
 
-const { code } = await transformWithOxc(await readFile(new URL('../src/adjustmentState.ts', import.meta.url), 'utf8'), 'adjustmentState.ts', { target: 'es2022' })
+const { code } = await transformWithOxc((await readFile(new URL('../src/adjustmentState.ts', import.meta.url), 'utf8'))
+  .replaceAll("'./scriptTimelineState'", JSON.stringify(scriptStateUrl)), 'adjustmentState.ts', { target: 'es2022' })
 const state = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
 const start = () => state.receiveAdjustment(state.initialAdjustmentEditor, adjustmentFixture())
 

@@ -227,8 +227,16 @@ class AdjustmentService:
         jobs.extend(music_jobs)
         if draft:
             baseline, geometry = self._geometry(connection, draft, state)
+            from .script_adjustments import pending_voices, script_voices
+
+            saved = json.loads(draft["state"]).get("script")
             draft = {**draft, "characters": state["characters"], "baseline": baseline, "geometry": geometry,
-                     "scene_music": effective_settings(connection, chapters, self.m3, state)}
+                     "scene_music": effective_settings(connection, chapters, self.m3, state),
+                     "script": state.get("script") or {"lines": [], "directions": []},
+                     "script_voices": script_voices(connection, draft["id"]),
+                     # Lines of the saved draft still waiting for a voice; they hold the apply back.
+                     "script_pending": [{"production_id": row["production_id"], "utterance_id": row["utterance_id"]}
+                                        for row in pending_voices(self, connection, chapters, saved)]}
             draft.pop("state", None)
             selected = {row["character_id"]: row for row in state["characters"]}
             cast = [row for row in cast if row["character_id"] in selected or row["role"] != "look"]
@@ -355,7 +363,7 @@ class AdjustmentService:
         for production_id, build_id in builds.items():
             connection.execute("INSERT INTO edition_build VALUES (?,?,?)", (identifier, production_id, build_id))
 
-    def _save_state(self, connection, draft, request):
+    def _save_state(self, connection, draft, request, chapters):
         state = json.loads(draft["state"])
         prior = {row["character_id"]: row for row in state["characters"]}
         values = [row.model_dump(mode="json") for row in request.characters]
@@ -379,13 +387,17 @@ class AdjustmentService:
             from .music_adjustments import validate_settings
 
             validate_settings(self, connection, draft, state, request.scene_music)
+        if request.script is not None:
+            from .script_adjustments import store_script_edits
+
+            state["script"] = store_script_edits(self, connection, draft, chapters, request.script)
         state["baseline"], _ = self._geometry(connection, draft, state)
         return state
 
     def save(self, project_id, request, *, preview=False):
         with self.db.transaction() as connection:
-            draft, _root, _chapters = self._editable(connection, project_id, request.expected_revision)
-            state = self._save_state(connection, draft, request)
+            draft, _root, chapters = self._editable(connection, project_id, request.expected_revision)
+            state = self._save_state(connection, draft, request, chapters)
             if preview:
                 return self._view(connection, project_id, preview=state)
             self.history.begin(connection, project_id, "調整中の表示・素材を保存", "m3-adjustment-save", concurrent=True)
@@ -539,6 +551,12 @@ class AdjustmentService:
             draft, root, chapters = self._editable(connection, project_id, request.expected_revision)
             state = json.loads(draft["state"])
             source = json.loads(required(connection, "publication_edition", draft["base_edition_id"])["state"])
+            from .script_adjustments import pending_voices
+
+            if pending_voices(self, connection, chapters, state.get("script")):
+                raise ServiceError(409, "音声が古い台詞があります。再生成するか、旧音声を使うかを選んでください。")
+            edited = {(row["production_id"], row["utterance_id"]): row
+                      for row in (state.get("script") or {}).get("lines", [])}
             self.history.begin(connection, project_id, "調整版を全章へ反映", "m3-adjustment-apply", concurrent=True)
             identifier = uuid4().hex
             connection.execute("INSERT INTO adjustment_apply VALUES (?,?,?,?,'pending',NULL,NULL)",
@@ -553,6 +571,10 @@ class AdjustmentService:
                 for chapter in chapters:
                     for requirement in source["requirements"][chapter["id"]]:
                         descriptor = json.loads(requirement["descriptor"])
+                        line = edited.get((chapter["id"], requirement["target_id"]))
+                        if line:
+                            descriptor = {**descriptor, "dialogue_text": line["spoken_text"],
+                                          "voice_emotion": line["voice_emotion"], "delivery": line["delivery"]}
                         if requirement["kind"] == "m3_voice_clone" and descriptor["character_id"] == cid:
                             self._enqueue(connection, draft, root, "m3_voice_clone", "dialogue", cid,
                                 apply_id=identifier, production=chapter, target_id=requirement["target_id"],
@@ -592,11 +614,24 @@ class AdjustmentService:
                                 kind = "image" if row["kind"] == "m3_image" else "voice"
                                 candidate = self._candidate(connection, draft, value[kind + "_candidate_id"], value["character_id"], kind)
                                 row["artifact_id"] = candidate["artifact_id"]
+                script = state.get("script") or {}
+                for line in script.get("lines", []):
+                    # A line recorded again for its new words; a new reference voice records it once more below.
+                    if line.get("voice_job_id"):
+                        artifact = connection.execute("SELECT artifact_id FROM adjustment_job WHERE job_id=?",
+                                                      (line["voice_job_id"],)).fetchone()[0]
+                        for row in requirements[line["production_id"]]:
+                            if row["kind"] == "m3_voice_clone" and row["target_id"] == line["utterance_id"]:
+                                row["artifact_id"] = artifact
                 for job in jobs:
                     for row in requirements[job["production_id"]]:
                         if row["kind"] == "m3_voice_clone" and row["target_id"] == job["target_id"]:
                             row["artifact_id"] = job["artifact_id"]
                 state["requirements"] = requirements
+                if script.get("lines"):
+                    # Once published, the words and their voice belong together; nothing waits on them.
+                    state["script"] = {**script, "lines": [{**line, "audio": None, "voice_job_id": None}
+                                                           for line in script["lines"]]}
                 state["baseline"], _ = self._geometry(connection, draft, state)
                 source = json.loads(required(connection, "publication_edition", draft["base_edition_id"])["state"])
                 music_fields = {"scene_music", "music_plans"}

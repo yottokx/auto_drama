@@ -8,6 +8,8 @@ import { Dialog } from './PreviewComponents'
 import { AdjustmentPreview, type AdjustmentGeometry, type PreviewSlot } from './AdjustmentPreview'
 import { AdjustmentMusicPreview } from './AdjustmentMusicPreview'
 import { AdjustmentMusicSeamPreview } from './AdjustmentMusicSeamPreview'
+import { ScriptTimeline, type ScriptVoiceRequest } from './ScriptTimeline'
+import { noScriptEdits } from './scriptTimelineState'
 import {
   adjustmentDirty, adjustmentJobProgress, adjustmentPayload, adjustmentSelfIntroduction, adjustmentSetting, adjustmentUploadError, changeAdjustment, initialAdjustmentEditor,
   adjustmentMusicSetting, changeAdjustmentMusic, selectAdjustmentMusicCandidate, adjustmentMusicContinuity,
@@ -37,7 +39,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
   const [characterId, setCharacterId] = useState('')
   const [sceneKey, setSceneKey] = useState('')
   const [selected, setSelected] = useState<Record<string, PreviewSlot>>({})
-  const [tab, setTab] = useState<'layout' | AdjustmentKind | 'music'>('layout')
+  const [tab, setTab] = useState<'layout' | AdjustmentKind | 'music' | 'script'>('layout')
   const [musicPreviewId, setMusicPreviewId] = useState('')
   const [musicPlayRequest, setMusicPlayRequest] = useState(0)
   const [musicAuditionMode, setMusicAuditionMode] = useState<'candidate' | 'seam'>('candidate')
@@ -81,6 +83,8 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
   })
   const transcriptPending = Object.entries(transcripts).some(([id, value]) => value !== (submittedTranscripts[id] ?? adjustmentSelfIntroduction(source?.cast.find(person => person.character_id === id))))
   const formPending = sourcePromptPending || Object.values(prompts).some(value => value.trim()) || Object.keys(files).length > 0 || transcriptPending
+  // Saved lines whose words changed without a voice chosen for them hold the apply back.
+  const scriptPending = Boolean(draft?.script_pending?.length)
   const blocked = disabled || Boolean(source?.readonly) || !source?.complete || state.conflict || source?.draft?.status === 'applying' || source?.draft?.status === 'applied'
   const sendingBlocked = blocked || mutating || Boolean(source?.busy)
   const character = source?.cast.find(value => value.character_id === characterId) ?? source?.cast[0]
@@ -114,6 +118,10 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
     ?? musicActive?.candidate
     ?? musicCandidates.find(value => value.music_url || value.source_url)
   const chapterNumbers = [...new Set(source?.scenes.map(value => value.chapter_number) ?? [])]
+  const scriptChapters = chapterNumbers.flatMap(number => {
+    const production = source?.scenes.find(value => value.chapter_number === number)?.production_id
+    return production ? [{ production_id: production, chapter_number: number }] : []
+  })
   const candidates = source?.candidates.filter(value => value.character_id === character?.character_id && value.kind === kind) ?? []
   const chosenImage = source?.candidates.find(value => value.id === edit?.image_candidate_id)
   const promptCandidate = source?.candidates.find(value => value.id === promptCandidateId)
@@ -191,10 +199,10 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
     commit(changeAdjustment(current.current, edit.character_id, patch)); setNotice('')
   }
 
-  async function action(name: 'start' | 'save' | 'generate' | 'upload' | 'apply' | 'retry' | 'sample' | 'music/generate' | 'music/upload' | 'music/replan', candidate?: AdjustmentCandidate) {
+  async function action(name: 'start' | 'save' | 'generate' | 'upload' | 'apply' | 'retry' | 'sample' | 'music/generate' | 'music/upload' | 'music/replan' | 'script-voice', candidate?: AdjustmentCandidate, voice?: ScriptVoiceRequest) {
     if (mutation.current || disabled || source?.readonly || !source?.complete || state.conflict) return
     if (name !== 'start' && (!draft || (source?.draft?.status === 'applying' && name !== 'retry'))) return
-    if (name === 'apply' && (dirty || formPending)) return
+    if (name === 'apply' && (dirty || formPending || scriptPending)) return
     if ((name === 'save' || name === 'apply') && musicErrors.length) return
     if (name === 'music/replan' && dirty) return
     const controller = new AbortController(); controllers.current.add(controller)
@@ -220,6 +228,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
         body = form
       }
       if (name === 'sample') body = { expected_revision: draft?.revision, candidate_id: candidate?.id }
+      if (name === 'script-voice') body = { expected_revision: draft?.revision, ...voice }
       if (name === 'music/generate') {
         if (!scene?.production_id) throw new Error('BGMを生成する場面を選んでください。')
         body = { expected_revision: draft?.revision, production_id: scene.production_id, scene_id: scene.scene_id,
@@ -239,7 +248,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
       }
       const next = await adjustmentRequest(name === 'save' ? endpoint : `${endpoint}/${name}`, controller.signal, name === 'save' ? 'PUT' : 'POST', body)
       if (!mounted.current || controller.signal.aborted) return
-      accept(next, ['generate', 'upload', 'sample', 'retry', 'music/generate', 'music/upload', 'music/replan'].includes(name) ? 'candidate' : 'adopt')
+      accept(next, ['generate', 'upload', 'sample', 'retry', 'music/generate', 'music/upload', 'music/replan', 'script-voice'].includes(name) ? 'candidate' : 'adopt')
       if (name === 'generate') {
         setPrompts(previous => ({ ...previous, [inputKey]: '' }))
         setSubmittedPrompts(previous => ({ ...previous, [inputKey]: sourcePrompt }))
@@ -291,9 +300,9 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
         {(state.conflict || dirty || formPending) && <div className="adjustment-actions"><button type="button" className="button button-light" disabled={mutating} onClick={() => void reload()}>{confirmReload ? '入力を破棄して最新の下書きを読み込む' : '入力を取り消して読み直す'}</button>{confirmReload && <button type="button" className="button button-light" onClick={() => setConfirmReload(false)}>入力を残す</button>}</div>}
         {(!draft || draft.status === 'applied') && <div className="adjustment-actions"><button type="button" className="button button-primary" disabled={disabled || source.readonly || !source.complete || source.busy || mutating} onClick={() => void action('start')}>{draft?.status === 'applied' ? 'この版から次の調整を始める' : '調整を始める'}</button>{draft?.status === 'applied' && <span role="status">調整版を反映しました。制作画面の鑑賞・書き出しから確認できます。</span>}</div>}
         {draft && <>
-          {tab !== 'music' && <div className="adjustment-character-heading"><label>編集対象の人物<select value={character?.character_id ?? ''} onChange={event => setCharacterId(event.target.value)}>{source.cast.map(cast => <option key={cast.character_id} value={cast.character_id}>{cast.name}（{cast.role === 'main' ? 'メイン' : cast.role === 'look' ? '別バージョン' : 'サブ'}）</option>)}</select></label>{character && <span>登場章：{character.chapter_numbers.map(number => `第${number}章`).join('・')}</span>}</div>}
+          {tab !== 'music' && tab !== 'script' && <div className="adjustment-character-heading"><label>編集対象の人物<select value={character?.character_id ?? ''} onChange={event => setCharacterId(event.target.value)}>{source.cast.map(cast => <option key={cast.character_id} value={cast.character_id}>{cast.name}（{cast.role === 'main' ? 'メイン' : cast.role === 'look' ? '別バージョン' : 'サブ'}）</option>)}</select></label>{character && <span>登場章：{character.chapter_numbers.map(number => `第${number}章`).join('・')}</span>}</div>}
           <div className="adjustment-kind-tabs" role="tablist" aria-label="編集対象">
-            {([{ id: 'layout', label: '表示位置調整' }, { id: 'image', label: '立ち絵' }, { id: 'voice', label: '基準音声' }, { id: 'music', label: 'BGM' }] as const).map((item, index, tabs) => <button key={item.id} type="button" role="tab" id={`adjustment-tab-${item.id}`} aria-controls={`adjustment-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => { setTab(item.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate') }} onKeyDown={event => {
+            {([{ id: 'layout', label: '表示位置調整' }, { id: 'image', label: '立ち絵' }, { id: 'voice', label: '基準音声' }, { id: 'music', label: 'BGM' }, { id: 'script', label: '台本・演出' }] as const).map((item, index, tabs) => <button key={item.id} type="button" role="tab" id={`adjustment-tab-${item.id}`} aria-controls={`adjustment-panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => { setTab(item.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate') }} onKeyDown={event => {
               const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length] : event.key === 'ArrowLeft' ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] : null
               if (next) { event.preventDefault(); setTab(next.id); setMusicPlayRequest(0); setMusicAuditionMode('candidate'); document.getElementById(`adjustment-tab-${next.id}`)?.focus() }
             }}>{item.label}</button>)}
@@ -396,6 +405,11 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
               </div>
             </fieldset></div>
           </section>}
+          {tab === 'script' && <ScriptTimeline key={source.edition?.id ?? ''} projectId={projectId} chapters={scriptChapters}
+            edits={state.script ?? noScriptEdits} voices={draft.script_voices ?? []} pending={draft.script_pending ?? []}
+            disabled={blocked || mutating} sending={sendingBlocked} problem={previewError}
+            onChange={script => { if (!blocked && !mutation.current) { commit({ ...current.current, script }); setNotice('') } }}
+            onRegenerate={request => void action('script-voice', undefined, request)}/>}
           {tab === 'voice' && isLook && <section id="adjustment-panel-voice" role="tabpanel" aria-labelledby="adjustment-tab-voice" tabIndex={0}><p className="adjustment-help">別バージョンは立ち絵だけを持ちます。声は元の人物の基準音声を使うので、編集対象の人物で元の人物を選んでください。</p></section>}
           {(tab === 'image' || tab === 'voice') && !(tab === 'voice' && isLook) && character && edit && <section id={`adjustment-panel-${kind}`} role="tabpanel" aria-labelledby={`adjustment-tab-${kind}`} tabIndex={0}>
             <div className="adjustment-material-heading"><h3>{character.name}の{kind === 'image' ? '立ち絵' : '基準音声'}</h3></div>
@@ -440,7 +454,7 @@ export function AdjustmentEditor({ projectId, disabled = false, onPendingChange 
             </fieldset>
             </div>
           </section>}
-          <div className="adjustment-save"><div><strong>{dirty ? '未保存の調整があります' : '下書きの選択・配置は保存済みです'}</strong>{formPending && <p>未生成・未取り込みの入力があります。候補を生成・保存するか、入力を取り消してから反映してください。</p>}{musicErrors.length > 0 && <p role="alert">BGMの継続元と再生する候補を確認してください。{musicErrors.length}場面の設定が未完成です。</p>}<p>表示と画像は登場する全章へ反映します。声を変更した場合は、その人物の台詞音声も更新します。BGM・場面の切り替えは編集した章へ反映します。</p></div><button type="button" className="button button-light" disabled={sendingBlocked || !dirty || previewing || Boolean(previewError) || musicErrors.length > 0} onClick={() => void action('save')}>下書きを保存</button><button type="button" className="button button-primary" disabled={sendingBlocked || dirty || formPending || draft.status === 'failed' || musicErrors.length > 0} onClick={() => void action('apply')}>調整版を反映</button></div>
+          <div className="adjustment-save"><div><strong>{dirty ? '未保存の調整があります' : '下書きの選択・配置は保存済みです'}</strong>{formPending && <p>未生成・未取り込みの入力があります。候補を生成・保存するか、入力を取り消してから反映してください。</p>}{musicErrors.length > 0 && <p role="alert">BGMの継続元と再生する候補を確認してください。{musicErrors.length}場面の設定が未完成です。</p>}<p>表示と画像は登場する全章へ反映します。声を変更した場合は、その人物の台詞音声も更新します。BGM・場面の切り替えは編集した章へ反映します。</p></div><button type="button" className="button button-light" disabled={sendingBlocked || !dirty || previewing || Boolean(previewError) || musicErrors.length > 0} onClick={() => void action('save')}>下書きを保存</button><button type="button" className="button button-primary" disabled={sendingBlocked || dirty || formPending || scriptPending || draft.status === 'failed' || musicErrors.length > 0} onClick={() => void action('apply')}>調整版を反映</button></div>
         </>}
         {(working.length > 0 || failed.length > 0 || latestMusicReplan?.status === 'completed' || draft?.status === 'applying' || draft?.error) && <section className="adjustment-job-status" aria-label="調整の処理状況"><h3>{draft?.status === 'applying' ? '調整版を反映中' : '素材・調整の処理状況'}</h3><p>処理中も元の公開版を鑑賞できます。</p>{draft?.error && <p className="m2-job-error" role="alert">{draft.error}</p>}<GenerationProgress items={adjustmentJobProgress(source)} label="素材調整の進捗" paused={disabled || source.readonly}/>{latestMusicReplan?.status === 'completed' && <p role="status">{latestMusicReplan.adoption_status === 'stale' ? `章の見直し結果は下書きへ反映していません。${latestMusicReplan.adoption_reason || '見直し中に設定が変更されたため、現在の手動設定を保持しました。'}` : '章全体の見直しが完了しました。下書きの設定を確認してから調整版へ反映してください。'}</p>}{draft?.status === 'applying' && !working.length && <p role="status">対象章を組み立てて公開版を切り替えています…</p>}<ul>{failed.map(job => <li key={job.id}><span>{job.purpose === 'music_replan' ? '章のBGM・場面転換の見直し' : source.candidates.find(candidate => candidate.job_id === job.id)?.kind === 'image' ? '立ち絵候補' : source.candidates.find(candidate => candidate.job_id === job.id)?.kind === 'voice' ? '基準音声候補' : source.music_candidates?.some(candidate => candidate.job_id === job.id) || ['m3_music', 'music', 'm3_music_plan'].includes(job.kind) ? 'BGM候補' : '台詞・試聴音声'}</span><strong>再試行が必要</strong>{job.error && <p className="m2-job-error">{job.error}</p>}</li>)}</ul>{(failed.length > 0 || draft?.status === 'failed') && <button type="button" className="button button-light" disabled={mutating || source.busy || disabled || source.readonly || state.conflict || dirty} onClick={() => void action('retry')}><Icon name="refresh" size={15}/>失敗した処理を再試行</button>}</section>}
       </>}

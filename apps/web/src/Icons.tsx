@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-export type IconName = 'spark' | 'grid' | 'plus' | 'globe' | 'users' | 'film' | 'play' | 'settings' | 'help' | 'chevron' | 'check' | 'lock' | 'unlock' | 'refresh' | 'edit' | 'arrow' | 'volume' | 'expand' | 'close' | 'book' | 'pause' | 'leaf' | 'back' | 'headphones'
+export type IconName = 'spark' | 'grid' | 'plus' | 'globe' | 'users' | 'film' | 'play' | 'settings' | 'help' | 'chevron' | 'check' | 'lock' | 'unlock' | 'refresh' | 'edit' | 'arrow' | 'volume' | 'expand' | 'close' | 'book' | 'pause' | 'leaf' | 'back' | 'headphones' | 'unseen'
 export function Icon({ name, size = 18, className = '' }: { name: IconName; size?: number; className?: string }) {
   const paths: Record<IconName, ReactNode> = {
     spark: <><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/><path d="m20 2 .6 1.4L22 4l-1.4.6L20 6l-.6-1.4L18 4l1.4-.6Z"/></>,
@@ -21,6 +21,7 @@ export function Icon({ name, size = 18, className = '' }: { name: IconName; size
     book: <path d="M12 5v16M3 3c4 0 6 0 9 2 3-2 5-2 9-2v16c-4 0-6 0-9 2-3-2-5-2-9-2Z"/>,
     leaf: <path d="M20 3C8 1 2 8 5 15c7 5 15-1 15-12ZM4 21 15 10"/>,
     headphones: <><path d="M4 14v-3a8 8 0 0 1 16 0v3"/><rect x="2" y="12" width="5" height="9" rx="2"/><rect x="17" y="12" width="5" height="9" rx="2"/></>,
+    unseen: <><path d="M3 12s3.5-6 9-6c1.6 0 3 .5 4.2 1.2M21 12s-3.5 6-9 6c-1.6 0-3-.5-4.2-1.2"/><path d="M10 12a2 2 0 0 1 3-1.7M4 20 20 4"/></>,
   }
   return <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }

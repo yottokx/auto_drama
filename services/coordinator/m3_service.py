@@ -1250,6 +1250,11 @@ class M3Service(ChapterProduction):
             expression_pictures=self._expression_pictures(connection, production, references, content),
             portrait_faces=portrait_faces,
         )
+        if presentation is not None and presentation.get("script"):
+            from .script_adjustments import apply_script_edits
+
+            # The script is made from the narrative again each time; the adjusted words and staging go on top.
+            script = apply_script_edits(script, presentation["script"], production["id"])
         from .music_service import add_to_script
 
         script = add_to_script(self, connection, production, narrative, script, content, requirements, presentation)

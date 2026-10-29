@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { transformWithOxc } from 'vite'
+import { scriptStateUrl } from './scriptStateModule.mjs'
 import { adjustmentFixture, adjustmentMusicFixture, adjustmentContinuityFixture } from './adjustmentFixture.mjs'
 
 const dataUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
@@ -16,7 +17,7 @@ export function useRef(initial) { const i = cursor++; if (!(i in slots)) slots[i
 export function useEffect(callback, dependencies) { effects.push({ callback, dependencies }) }
 `)
 const apiUrl = dataUrl(`export class ApiError extends Error { constructor(message, status) { super(message); this.status = status } }; export const errorMessage = error => error.message;`)
-const childrenUrl = dataUrl(`export function Icon() { return null }; export function PortraitCanvas() { return null }; export function AdjustmentPreview() { return null }; export function AdjustmentMusicPreview() { return null }; export function AdjustmentMusicSeamPreview() { return null }; export function GenerationProgress() { return null }; export function Dialog() { return null }; export function PortraitExpressionPanel() { return null };`)
+const childrenUrl = dataUrl(`export function Icon() { return null }; export function PortraitCanvas() { return null }; export function AdjustmentPreview() { return null }; export function AdjustmentMusicPreview() { return null }; export function AdjustmentMusicSeamPreview() { return null }; export function GenerationProgress() { return null }; export function Dialog() { return null }; export function PortraitExpressionPanel() { return null }; export function ScriptTimeline() { return null };`)
 async function moduleUrl(file, replacements = {}) {
   let source = await readFile(new URL(`../src/${file}`, import.meta.url), 'utf8')
   for (const [name, url] of Object.entries(replacements)) source = source.replaceAll(`'${name}'`, JSON.stringify(url))
@@ -24,10 +25,10 @@ async function moduleUrl(file, replacements = {}) {
   const { code } = await transformWithOxc(source, file, { target: 'es2022', jsx: { runtime: 'automatic' } })
   return dataUrl(code.replace('"react/jsx-runtime"', JSON.stringify(import.meta.resolve('react/jsx-runtime'))))
 }
-const stateUrl = await moduleUrl('adjustmentState.ts')
+const stateUrl = await moduleUrl('adjustmentState.ts', { './scriptTimelineState': scriptStateUrl })
 const state = await import(stateUrl)
 const hooks = await import(hooksUrl)
-const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './CharacterExpressions': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
+const { AdjustmentEditor } = await import(await moduleUrl('AdjustmentEditor.tsx', { react: hooksUrl, './api': apiUrl, './Icons': childrenUrl, './CharacterExpressions': childrenUrl, './PortraitEditor': childrenUrl, './AdjustmentPreview': childrenUrl, './AdjustmentMusicPreview': childrenUrl, './AdjustmentMusicSeamPreview': childrenUrl, './ScriptTimeline': childrenUrl, './scriptTimelineState': scriptStateUrl, './GenerationProgress': childrenUrl, './PreviewComponents': childrenUrl, './adjustmentState': stateUrl }))
 const { AdjustmentPreview } = await import(await moduleUrl('AdjustmentPreview.tsx'))
 function walkAll(node, predicate) {
   if (!node || typeof node !== 'object') return []
@@ -235,7 +236,7 @@ test('dedicated editor uses separate tabs and preserves each character and mater
   let tree = h.render()
   assert.equal(tree.type, 'section', 'the dedicated editor is not a collapsed inline details panel')
   assert.equal(walkAll(tree, node => node.props?.role === 'tablist').length, 1)
-  assert.deepEqual(walkAll(tree, node => node.props?.role === 'tab').map(node => [text(node), node.props['aria-selected']]), [['表示位置調整', true], ['立ち絵', false], ['基準音声', false], ['BGM', false]])
+  assert.deepEqual(walkAll(tree, node => node.props?.role === 'tab').map(node => [text(node), node.props['aria-selected']]), [['表示位置調整', true], ['立ち絵', false], ['基準音声', false], ['BGM', false], ['台本・演出', false]])
   assert.equal(walkAll(tree, node => node.type === 'textarea').length, 0)
   h.button(tree, '立ち絵').props.onClick()
   tree = h.render()

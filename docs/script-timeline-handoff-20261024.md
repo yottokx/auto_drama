@@ -9,6 +9,22 @@
 - 長尺化のマージでは、この機能が触る予定のファイル（下の「実装の足場」）は変わっていない。長尺化が触ったのは計画の工程（`script_plot`・`script_continuation`・`script_cast`・`planning_*`・STEP3/4の画面）で、重なりは無い。
 - モック: https://claude.ai/artifact/3jUNU9czEwiTBGQk8udp2y （ユーザーのアカウントでだけ開ける）。リポジトリにはソースを置いていない。背景・立ち絵は `apps/web/public/demo/` のデモ素材。
 
+## 進み具合（ローカル、10/24）
+
+- ①行の一覧とプレビュー（読み取り専用）を `claude/script-timeline` に実装した（`69f6223`）。
+- ②編集と反映も同じブランチに実装した（10/25）。
+  - 下書き: `AdjustmentSave.script`（`ScriptEdits`: 行と演出の修正）。行は表示・読み・感情・話し方の値そのものを持ち、音声の扱い（`audio: "old"` か、その行の再生成ジョブ `voice_job_id`）も持つ。演出は無効・表情・長さと、元の演出の控え（`original`、サーバーが持つ）。検証は `script_adjustments.store_script_edits`。
+  - エントリは一度できたら消さない。反映のたびに narrative から作り直すので、前の調整版の修正はエントリにしか残らないため。「元に戻す」は公開版の値に戻すだけ。
+  - 反映: `m3_service._publish` で Script を作った直後に `apply_script_edits` で重ね、正規化を通す。音声が古いまま（`pending_voices`）だと `apply` は 409。基準音声の作り直しは、修正した行だけ直した読み・感情・話し方を descriptor に重ねる。再生成した候補を採用した行は、`advance` で要件の音声を差し替える。反映後の状態では `audio`・`voice_job_id` を空にする。
+  - 1行の再生成: `POST .../adjustments/script-voice`。`adjustment_job`（purpose `dialogue`、`apply_id` なし）として作る。DB の変更なし。候補は下書きの `script_voices` で返す。
+  - プレビュー: `POST .../adjustments/script/{章}/preview` が修正を重ねた台本の舞台を返す。画面は演出を直したときだけ呼ぶ。
+  - 無効にした演出は公開版の台本から消えるので、章の表示では前の調整版の控えから戻して「無効」として並べる。
+  - 行時点の舞台: `compiler.py` の `_stage_walk` が、ジャンプ用の `entry_states` と、プレビュー用の `line_stages`（`before`・`start` の後の舞台、明るい人物、画面に反映されない演出）を同じ1回の走査で出す。
+  - API: `GET /api/m3/projects/{id}/adjustments/script/{production_id}`（`services/coordinator/script_adjustments.py`）。現在の公開版の章の台本を、場面・BGM・イベントCG・演出・行ごとの舞台付きで返す。focus は返さない。
+  - 画面: `apps/web/src/ScriptTimeline.tsx`、`scriptTimelineState.ts`。完成後調整の5番目のタブ。
+- 同じ行・同じ timing の登場と退場は、それぞれ1つのチップにまとめる（「退場 A・B」「登場 A（左）・B（右）」）。場面頭の全員退場で、場面の最初の行にチップが並びすぎるため（ユーザーの指示）。
+- 場面頭の無意味な退場（直後に登場し直す人物や、もともと舞台にいない人物の退場）そのものは、focus の削除と一緒に対応するかもしれない（[効かない演出の調査](experiments/dead-directions-20261024.md)）。
+
 ## 決めたこと
 
 ### 範囲

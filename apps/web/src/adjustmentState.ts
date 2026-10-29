@@ -2,6 +2,7 @@ import type { Job } from './api'
 import type { BodyBounds } from './portraitEditorState'
 import type { AdjustmentGeometry, PreviewSlot } from './AdjustmentPreview'
 import type { GenerationProgressItem } from './productionState'
+import { noScriptEdits, scriptPayload, type ScriptEdits, type ScriptVoice } from './scriptTimelineState'
 
 export type AdjustmentKind = 'image' | 'voice'
 export type SceneMusicTransition = {
@@ -40,6 +41,9 @@ export type AdjustmentDraft = {
   id: string; revision: number; status: 'draft' | 'applying' | 'failed' | 'applied'; error: string | null
   base_edition_id: string | null; characters: AdjustmentCharacter[]; geometry: AdjustmentGeometry
   scene_music?: AdjustmentMusic[]
+  script?: ScriptEdits; script_voices?: ScriptVoice[]
+  /** Lines of the saved draft whose voice is out of date; they hold the apply back. */
+  script_pending?: { production_id: string; utterance_id: string }[]
 }
 export type AdjustmentScene = {
   chapter_number: number; scene_id: string; title: string; background_url: string | null
@@ -64,11 +68,13 @@ export type AdjustmentEditorState = {
   source: AdjustmentResponse | null; base: AdjustmentDraft | null
   characters: AdjustmentCharacter[]; conflict: boolean
   scene_music?: AdjustmentMusic[]
+  script?: ScriptEdits
 }
 export const initialAdjustmentEditor: AdjustmentEditorState = { source: null, base: null, characters: [], conflict: false }
 export const adjustmentDirty = (state: AdjustmentEditorState) => (
   JSON.stringify(state.characters) !== JSON.stringify(state.base?.characters ?? [])
   || JSON.stringify(state.scene_music ?? []) !== JSON.stringify(state.base?.scene_music ?? [])
+  || JSON.stringify(state.script ?? noScriptEdits) !== JSON.stringify(state.base?.script ?? noScriptEdits)
 )
 
 export function adjustmentSetting(character: AdjustmentResponse['cast'][number] | undefined, kind: AdjustmentKind): string {
@@ -87,7 +93,8 @@ export function adjustmentSelfIntroduction(character: AdjustmentResponse['cast']
 export function receiveAdjustment(state: AdjustmentEditorState, source: AdjustmentResponse, mode: 'poll' | 'adopt' | 'candidate' = 'poll'): AdjustmentEditorState {
   if (mode === 'adopt' || !state.base || (!adjustmentDirty(state) && !state.conflict)) {
     return { source, base: source.draft, characters: structuredClone(source.draft?.characters ?? []),
-      scene_music: structuredClone(source.draft?.scene_music ?? []), conflict: false }
+      scene_music: structuredClone(source.draft?.scene_music ?? []),
+      script: structuredClone(source.draft?.script ?? noScriptEdits), conflict: false }
   }
   if (mode === 'candidate') return { ...state, source, base: source.draft }
   const changed = state.base.id !== source.draft?.id || state.base.revision !== source.draft.revision
@@ -112,7 +119,8 @@ export function selectAdjustmentCandidate(state: AdjustmentEditorState, candidat
 export function adjustmentPayload(state: AdjustmentEditorState) {
   return { expected_revision: state.base?.revision ?? 0, characters: state.characters,
     ...(state.base?.scene_music !== undefined || state.scene_music?.length
-      ? { scene_music: state.scene_music ?? [] } : {}) }
+      ? { scene_music: state.scene_music ?? [] } : {}),
+    ...(state.base?.script !== undefined ? { script: scriptPayload(state.script ?? noScriptEdits) } : {}) }
 }
 
 export function adjustmentMusicSetting(state: AdjustmentEditorState, scene: AdjustmentScene | undefined): AdjustmentMusic | undefined {
