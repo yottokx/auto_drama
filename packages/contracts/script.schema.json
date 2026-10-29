@@ -711,7 +711,7 @@
     },
     "MusicCue": {
       "additionalProperties": false,
-      "description": "Backend-neutral scene music; media and engine code are adopted separately.",
+      "description": "Backend-neutral scene music; media and engine code are adopted separately.\n\n``drop`` fades the playing track out before its line and holds its place; ``resume``\nbrings it back from there, as does the next scene's ``continue``.",
       "properties": {
         "id": {
           "pattern": "^[a-z][a-z0-9_-]{0,63}$",
@@ -727,7 +727,9 @@
           "enum": [
             "play",
             "stop",
-            "continue"
+            "continue",
+            "drop",
+            "resume"
           ],
           "title": "Action",
           "type": "string"

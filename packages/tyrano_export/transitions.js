@@ -119,6 +119,8 @@
             if (!valid()) return false;
           }
           await commit();
+          // A track held silent to the end of the last scene comes back with the scene that continues it.
+          if (!visualOnly && cue?.action === "continue") music?.lift?.({fast: state.fast});
         }
         await reveal;
         if (!valid()) return false;

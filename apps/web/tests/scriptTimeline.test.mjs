@@ -76,6 +76,11 @@ test('voices from elsewhere, scene changes and music are named briefly', () => {
   assert.equal(state.transitionLabel({ visual: 'cut', duration_ms: 0 }), '場面転換 即時切り替え')
   assert.equal(state.transitionLabel({ visual: 'none', duration_ms: 0 }), '')
   assert.deepEqual(['play', 'continue', 'stop'].map(state.sceneMusicLabel), ['BGMを再生', 'BGMを継続', 'BGMなし'])
+  assert.deepEqual([{ action: 'play', title: 'シーン1の曲' }, { action: 'drop' }, { action: 'resume', title: 'シーン1の曲' }, { action: 'stop' }]
+    .map(state.lineMusicLabel), ['♪ シーン1の曲', 'BGMを止める', '♪ BGMを戻す', 'BGMなし'])
+  assert.equal(state.lineMusicNow({ music_title: null, music_dropped: true }), 'BGMを止めている')
+  assert.equal(state.lineMusicNow({ music_title: 'シーン1の曲', music_dropped: false }), '♪ シーン1の曲')
+  assert.equal(state.lineMusicNow({ music_title: null, music_dropped: false }), 'BGMなし')
 })
 
 test('a long text is estimated to split into pages, and sooner beside a voice frame', () => {

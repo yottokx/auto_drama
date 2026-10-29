@@ -378,7 +378,8 @@
   });
   define("ad_music", {cue: ""}, pm => {
     const token = gen;
-    Promise.resolve(music?.cue(cues.get(pm.cue))).catch(() => {
+    // A drop waits for its fade, so the line shows once the music is gone.
+    Promise.resolve(music?.cue(cues.get(pm.cue), {fast: !!k.stat.is_skip})).catch(() => {
       toast("BGMを再生できませんでした。本文の再生を続けます。");
     }).then(() => { if (token === gen) next(); });
   });
@@ -456,9 +457,12 @@
     stageAdapter.apply(state); stageAdapter.remember(state);
     if (music) {
       const cue = state.music_cue_id ? cues.get(state.music_cue_id) : null;
-      // 同じ曲の区間内へ戻るときは鳴らしたままにする。
+      const dropped = state.music_dropped === true;
+      // 同じ曲の区間内へ戻るときは鳴らしたままにする。音楽を止めている行へ戻るときは止めたままにする。
       if (!cue) music.stop();
-      else if (music.snapshot()?.cue_id !== cue.id) await Promise.resolve(music.cue(cue)).catch(() => {});
+      else if (music.snapshot()?.cue_id !== cue.id) await Promise.resolve(music.cue(cue, {dropped})).catch(() => {});
+      else if (dropped) await Promise.resolve(music.hold({fast: true})).catch(() => {});
+      else music.lift({fast: true});
     }
     tagState = "idle"; seeking = false;
     k.ftag.nextOrderWithLabel("utterance_" + lines[index].id);

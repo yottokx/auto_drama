@@ -42,6 +42,8 @@ def validate_plan(result, payload):
         raise ValueError("Music plan differs from its requested version.")
     if payload.get("planning_scope") == "single_scene" and any(row.action != "play" for row in plan.scenes):
         raise ValueError("A manual music candidate must request a new track.")
+    plan.check_drops([[line["id"] for line in row.get("utterances", [])]
+                      for row in payload["context"]["narrative"]["scenes"]])
     return plan
 
 
@@ -124,9 +126,13 @@ def chapter_plan(connection, chapter, m3, presentation=None):
             return None
         record = required(connection, "artifact", row["artifact_id"])
     plan = MusicPlan.model_validate_json(m3.store.read(record))
-    expected = [scene.id for scene in m3._load_narrative(connection, chapter).scenes]
-    if [row.scene_id for row in plan.scenes] != expected:
+    scenes = m3._load_narrative(connection, chapter).scenes
+    if [row.scene_id for row in plan.scenes] != [scene.id for scene in scenes]:
         raise ServiceError(422, "BGM計画と章の場面が一致しません。")
+    try:
+        plan.check_drops([[line.id for line in scene.utterances] for scene in scenes])
+    except ValueError as exc:
+        raise ServiceError(422, "BGM計画の音楽を止める位置が章の台詞と一致しません。") from exc
     return plan
 
 
@@ -191,10 +197,12 @@ def validate_continuity(settings, chapters, m3, connection):
                 active = action == "play"
 
 
-def candidate(connection, production_id, scene_id, identifier, project_id=None):
+def candidate(connection, production_id, scene_id, identifier, project_id=None, *, finished=True):
+    """A scene's music candidate. ``finished=False`` also accepts one whose track is still being made
+    (a replan's new track): settings and history may name it, but nothing publishes it."""
     row = required(connection, "music_candidate", identifier)
-    if (row["production_id"] != production_id or row["scene_id"] != scene_id or not row["artifact_id"]
-            or (project_id and row["project_id"] != project_id)):
+    if (row["production_id"] != production_id or row["scene_id"] != scene_id
+            or (finished and not row["artifact_id"]) or (project_id and row["project_id"] != project_id)):
         raise ServiceError(422, "この場面の完成済みBGM候補を指定してください。")
     return row
 
@@ -234,6 +242,13 @@ def add_to_script(m3, connection, production, narrative, script, content, requir
             cue.update(asset_id=identifier, loop_start_seconds=metadata["loop_start_seconds"],
                        loop_end_seconds=metadata["loop_end_seconds"])
         cues.append(cue)
+    if has_music:
+        plan = chapter_plan(connection, production, m3, presentation)
+        for number, drop in enumerate(plan.music_drops if plan else [], 1):
+            cues.append({"id": f"music-drop-{number}", "utterance_id": drop.start_utterance_id, "action": "drop"})
+            if drop.resume_utterance_id:
+                cues.append({"id": f"music-resume-{number}", "utterance_id": drop.resume_utterance_id,
+                             "action": "resume"})
     additions = {"assets": assets, "scene_transitions": transitions}
     if has_music:
         additions["music_cues"] = cues

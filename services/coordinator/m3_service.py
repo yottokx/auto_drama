@@ -957,7 +957,7 @@ class M3Service(ChapterProduction):
             from .music_service import context
 
             self._requirement(connection, production, "m3_music_plan", "chapter-music",
-                              {"context": context(self, connection, production, narrative), "planning_version": 2})
+                              {"context": context(self, connection, production, narrative), "planning_version": 3})
 
     def advance(self, production_id: str) -> None:
         with self.db.transaction() as connection:

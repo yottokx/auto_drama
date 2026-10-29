@@ -419,8 +419,9 @@ class HistoryService:
                 bindings = json.loads(required(connection, "artifact", identifier)["provenance"]).get("bindings", [])
                 for binding in bindings:
                     if binding.get("candidate_id"):
-                        picked = candidate(connection, production_id, binding["scene_id"], binding["candidate_id"], project_id)
-                        references.update((picked["artifact_id"], picked["source_artifact_id"]))
+                        picked = candidate(connection, production_id, binding["scene_id"], binding["candidate_id"], project_id,
+                                           finished=False)
+                        references.update(value for value in (picked["artifact_id"], picked["source_artifact_id"]) if value)
             for row in connection.execute("SELECT b.* FROM edition_build e JOIN chapter_build b ON b.id=e.build_id WHERE e.edition_id=?", (edition["id"],)):
                 references.update((row["script_artifact_id"], row["export_artifact_id"]))
                 references.update(item["artifact_id"] for item in json.loads(row["manifest"]))
@@ -462,8 +463,9 @@ class HistoryService:
                 if setting.candidate_id:
                     from .music_service import candidate
 
-                    picked = candidate(connection, setting.production_id, setting.scene_id, setting.candidate_id, project_id)
-                    references.update((picked["artifact_id"], picked["source_artifact_id"]))
+                    picked = candidate(connection, setting.production_id, setting.scene_id, setting.candidate_id, project_id,
+                                       finished=False)
+                    references.update(value for value in (picked["artifact_id"], picked["source_artifact_id"]) if value)
             if adjustment_content.get("scene_music"):
                 from .m3_service import M3Service
                 from .music_service import original_settings, validate_continuity
@@ -490,8 +492,9 @@ class HistoryService:
                     if binding.get("candidate_id"):
                         from .music_service import candidate
 
-                        picked = candidate(connection, production_id, binding["scene_id"], binding["candidate_id"], project_id)
-                        references.update((picked["artifact_id"], picked["source_artifact_id"]))
+                        picked = candidate(connection, production_id, binding["scene_id"], binding["candidate_id"], project_id,
+                                           finished=False)
+                        references.update(value for value in (picked["artifact_id"], picked["source_artifact_id"]) if value)
             for value in snapshot.get("music_candidates", []):
                 original = required(connection, "music_candidate", value["id"])
                 if original["storyline_id"] != selected["production_id"] or original["project_id"] != project_id:

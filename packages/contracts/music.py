@@ -23,9 +23,25 @@ class SceneMusicPrompt(Contract):
         return self
 
 
+class MusicDrop(Contract):
+    """A moment inside a scene that the music leaves to silence, and where it comes back.
+
+    The music fades out before ``start_utterance_id`` and returns before
+    ``resume_utterance_id``; ``None`` keeps it out until the scene ends.
+    """
+
+    kind: Literal["silence_in_text", "loss", "premise_overturned"]
+    start_utterance_id: Identifier
+    resume_utterance_id: Identifier | None = None
+    reason: str = Field(default="", max_length=2000)
+
+
 class MusicPlan(Contract):
-    planning_version: Literal[1, 2] = Field(default=1, exclude_if=lambda value: value == 1)
+    """Version 3 plans have no silent scenes: silence is only a drop inside one."""
+
+    planning_version: Literal[1, 2, 3] = Field(default=1, exclude_if=lambda value: value == 1)
     scenes: list[SceneMusicPrompt] = Field(min_length=1, max_length=8)
+    music_drops: list[MusicDrop] = Field(default_factory=list, max_length=200, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def unique_scenes(self):
@@ -37,9 +53,33 @@ class MusicPlan(Contract):
                 raise ValueError("Music cannot continue before play or after stop.")
             if row.action != "continue":
                 active = row.action == "play"
-            if self.planning_version == 2 and (row.transition is None or not row.reason.strip()):
+            if self.planning_version >= 2 and (row.transition is None or not row.reason.strip()):
                 raise ValueError("Chapter music decisions require a transition and a reason.")
+            if self.planning_version == 3 and row.action == "stop":
+                raise ValueError("A chapter music plan keeps music in every scene.")
+        if self.music_drops and self.planning_version != 3:
+            raise ValueError("Only a version 3 music plan can drop the music inside a scene.")
         return self
+
+    def check_drops(self, scene_lines: list[list[str]]) -> None:
+        """Each drop lies inside one scene, after its first line, in order and apart from the others."""
+        scene_of, order = {}, {}
+        for index, lines in enumerate(scene_lines):
+            for position, line in enumerate(lines):
+                scene_of[line] = (index, position)
+                order[line] = len(order)
+        previous = -1
+        for drop in self.music_drops:
+            start = scene_of.get(drop.start_utterance_id)
+            if start is None or start[1] == 0:
+                raise ValueError("A music drop must start after a scene's first line.")
+            end = scene_of.get(drop.resume_utterance_id) if drop.resume_utterance_id is not None else None
+            if drop.resume_utterance_id is not None and (end is None or end[0] != start[0] or end[1] <= start[1]):
+                raise ValueError("A music drop must resume at a later line of its own scene.")
+            if order[drop.start_utterance_id] <= previous:
+                raise ValueError("Music drops must be in line order and must not overlap.")
+            # The resume line holds its own cue, so the next drop starts after it.
+            previous = order[drop.resume_utterance_id] if end else order[scene_lines[start[0]][-1]]
 
 
 class MusicResult(Contract):

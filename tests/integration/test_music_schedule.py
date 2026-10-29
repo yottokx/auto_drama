@@ -66,13 +66,14 @@ def test_music_design_is_next_after_narrative_and_blocks_queued_media_until_adop
         for key in ("provider", "model_id", "temperature", "reasoning_level"):
             assert plan["payload"]["profile"][key] == narrative["payload"]["profile"][key]
         assert claim(client, other_worker) is None
-        result = grouped_output(plan, {}, ("stop", "stop"))
+        # Every scene has music: one track for the chapter.
+        result = grouped_output(plan, {}, ("play", "continue"))
         assert complete(client, worker, plan, result).status_code == 200
         after = production(client, project)["chapters"][0]
         assert after["narrative_artifact_id"] == text_id
         assert next(row for row in after["requirements"] if row["kind"] == "m3_music_plan")["artifact_id"]
-        assert not any(row["kind"] == "m3_music" for row in after["requirements"])
-        assert claim(client, worker)["kind"] in {"m3_image", "m3_background"}
+        assert [row["target_id"] for row in after["requirements"] if row["kind"] == "m3_music"] == ["scene-1"]
+        assert claim(client, worker)["kind"] in {"m3_image", "m3_background", "m3_music"}
 
 
 def test_failed_music_design_retries_before_media_without_repeating_narrative(tmp_path):
@@ -94,7 +95,7 @@ def test_failed_music_design_retries_before_media_without_repeating_narrative(tm
         assert client.post(f"/api/jobs/{plan['id']}/retry").status_code == 200
         retried = claim(client, worker)
         assert retried["id"] == plan["id"]
-        assert complete(client, worker, retried, grouped_output(retried, {}, ("stop", "stop"))).status_code == 200
+        assert complete(client, worker, retried, grouped_output(retried, {}, ("play", "continue"))).status_code == 200
         state = production(client, project)
         assert next(job for job in state["jobs"] if job["id"] == narrative["id"])["attempt_count"] == 1
-        assert claim(client, worker)["kind"] in {"m3_image", "m3_background"}
+        assert claim(client, worker)["kind"] in {"m3_image", "m3_background", "m3_music"}

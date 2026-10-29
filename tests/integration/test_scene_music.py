@@ -42,13 +42,8 @@ def music_output(job, files, *, patch=None):
             "Genre: Mystery soundtrack. Instruments: bass clarinet, marimba and muted strings. "
             "Mood: curious and alert. BPM: 90. TrackType: Music, VocalType: Instrumental."}
             for row in payload["context"]["narrative"]["scenes"]]}
-        if payload.get("planning_version") == 2:
-            result["planning_version"] = 2
-            for row in result["scenes"]:
-                row.update(transition={"visual": "fade", "duration_ms": 500, "music_fade_out_ms": 1000,
-                                       "music_fade_in_ms": 1000}, reason="場面の役割が変わるため、新しい曲を使います。")
-        if payload.get("planning_version") == 2:
-            result["planning_version"] = 2
+        if payload.get("planning_version") in (2, 3):
+            result["planning_version"] = payload["planning_version"]
             for row in result["scenes"]:
                 row.update(transition={"visual": "fade", "duration_ms": 500, "music_fade_out_ms": 1000,
                                        "music_fade_in_ms": 1000}, reason="場面の役割が変わるため、新しい曲を使います。")
@@ -176,12 +171,12 @@ def test_replan_reuses_inherited_audio_with_target_scope_and_preserves_narrative
                                                            "production_id": first["production_id"]})
     assert response.status_code == 200, response.text
     plan = claim(client, worker)
-    assert plan["kind"] == "m3_music_plan" and plan["payload"]["planning_version"] == 2
+    assert plan["kind"] == "m3_music_plan" and plan["payload"]["planning_version"] == 3
     assert plan["payload"]["adjustment"]["replan"] is True
-    assert complete(client, worker, plan, grouped_output(plan, mp3s, ("stop", "play"))).status_code == 200
+    assert complete(client, worker, plan, grouped_output(plan, mp3s, ("play", "play"))).status_code == 200
     assert claim(client, worker) is None, "replan must not generate fresh audio or text"
     after = client.get(endpoint).json()
-    assert after["draft"]["scene_music"][0]["action"] == "stop"
+    assert after["draft"]["scene_music"][0]["candidate_id"] == first["candidate_id"]
     selected = after["draft"]["scene_music"][1]
     assert selected["action"] == "play" and selected["candidate_id"] != first["candidate_id"]
     picked = next(row for row in after["music_candidates"] if row["id"] == selected["candidate_id"])
@@ -205,7 +200,7 @@ def test_replan_reuses_inherited_audio_with_target_scope_and_preserves_narrative
     with ZipFile(io.BytesIO(client.get(current[0]["export_url"]).content)) as archive:
         assert archive.read("narrative.json") == original_narrative
         script = json.loads(archive.read("script.json"))
-        assert [row["action"] for row in script["music_cues"]] == ["stop", "play"]
+        assert [row["action"] for row in script["music_cues"]] == ["play", "play"]
     assert client.get(before_chapters[0]["export_url"]).content == original_bytes
     restore(client, project, before_history)
     assert client.get(endpoint).json()["draft"]["scene_music"][1]["action"] == "continue"
@@ -239,10 +234,11 @@ def test_late_replan_does_not_overwrite_manual_edit(musical_story, mp3s):
     assert "上書きしていません" in after["jobs"][-1]["adoption_reason"]
 
 
-def test_replan_does_not_pick_unrelated_music_when_target_has_no_adopted_source(grouped_story, mp3s):
+def test_replan_generates_a_track_for_a_scene_without_one_and_publishes_only_when_it_is_finished(grouped_story, mp3s):
     client, _project, worker, _jobs, endpoint = grouped_story
     value = start(client, endpoint)
     rows = value["draft"]["scene_music"]
+    known = {row["id"] for row in value["music_candidates"]}
     for row in rows[:2]:
         row.update(action="stop", candidate_id=None)
     saved = client.put(endpoint, json={"expected_revision": value["draft"]["revision"],
@@ -253,12 +249,28 @@ def test_replan_does_not_pick_unrelated_music_when_target_has_no_adopted_source(
                         "production_id": rows[0]["production_id"]})
     assert response.status_code == 200, response.text
     job = claim(client, worker)
-    assert complete(client, worker, job, grouped_output(job, mp3s, ("stop", "play"))).status_code == 200
+    assert complete(client, worker, job, grouped_output(job, mp3s, ("play", "play"))).status_code == 200
     after = client.get(endpoint).json()
     second = after["draft"]["scene_music"][1]
-    assert second["action"] == "stop" and second["candidate_id"] is None
-    assert "採用済みの曲がない" in second["reason"]
+    # No silent scene and no unrelated track: the scene waits for a track of its own.
+    assert second["action"] == "play" and second["candidate_id"] not in known
+    assert "新しく生成" in second["reason"]
+    pending = next(row for row in after["music_candidates"] if row["id"] == second["candidate_id"])
+    assert pending["scene_id"] == rows[1]["scene_id"] and not pending["artifact_id"]
+    # Other edits still save while the track is being made, but nothing publishes it.
+    kept = client.put(endpoint, json={"expected_revision": after["draft"]["revision"],
+        "characters": after["draft"]["characters"], "scene_music": after["draft"]["scene_music"]})
+    assert kept.status_code == 200, kept.text
+    after = kept.json()
+    refused = client.post(endpoint + "/apply", json={"expected_revision": after["draft"]["revision"]})
+    assert refused.status_code == 409 and "曲がまだできていない" in refused.text
+    track = claim(client, worker)
+    assert track["kind"] == "m3_music" and track["payload"]["scene_id"] == rows[1]["scene_id"]
+    assert complete(client, worker, track, music_output(track, mp3s)).status_code == 200
     assert claim(client, worker) is None
+    done = client.get(endpoint).json()
+    assert next(row for row in done["music_candidates"] if row["id"] == second["candidate_id"])["artifact_id"]
+    assert apply(client, endpoint, done)["draft"]["status"] == "applied"
 
 
 @pytest.mark.parametrize("stop_first", [False, True])
@@ -472,3 +484,51 @@ def test_already_open_legacy_draft_get_has_all_music_rows_without_mutation_and_c
     with coordinator.db.transaction() as connection:
         edition = json.loads(connection.execute("SELECT state FROM publication_edition WHERE id=?", (value["edition"]["id"],)).fetchone()[0])
         assert "scene_music" not in edition
+
+
+def plan_with_drop(job, files):
+    """A chapter plan that stops the music for a moment in its first scene."""
+    if job["kind"] != "m3_music_plan":
+        return music_output(job, files)
+    lines = [row["id"] for row in job["payload"]["context"]["narrative"]["scenes"][0]["utterances"]]
+    drop = {"kind": "loss", "start_utterance_id": lines[1],
+            "resume_utterance_id": lines[2] if len(lines) > 3 else None, "reason": "別れを音楽なしで受け止める"}
+    return music_output(job, files, patch={"music_drops": [drop]})
+
+
+def test_a_moment_without_music_reaches_the_published_chapter_and_its_script_view(tmp_path, mp3s):
+    with TestClient(create_app(tmp_path)) as client:
+        project, _ = ready(client)
+        action(client, project, "approve")
+        complete_and_approve_plan(client, project, music_enabled=True)
+        worker = client.post("/api/workers", json={"name": "Drop fixture", "capabilities": [*M3_KINDS, "tts_download"]}).json()["id"]
+        report_voice_inventory(client, worker)
+        project_id = project["project"]["id"]
+        for _ in range(150):
+            job = claim(client, worker)
+            if not job:
+                break
+            if job["kind"] == "m3_music_plan":
+                assert job["payload"]["planning_version"] == 3
+            data = plan_with_drop(job, mp3s) if job["kind"].startswith("m3_music") else None
+            assert complete(client, worker, job, data).status_code == 200
+        chapter = production(client, project_id)["chapters"][0]
+        script, _names = script_for(client, chapter)
+        first = next(row for row in script["music_cues"] if row["action"] == "drop")
+        lines = [row["id"] for row in script["utterances"]]
+        resume = next((row for row in script["music_cues"] if row["action"] == "resume"), None)
+        assert first["utterance_id"] == lines[1]
+        with ZipFile(io.BytesIO(client.get(chapter["export_url"]).content)) as archive:
+            scenario = archive.read("data/scenario/first.ks").decode()
+            states = json.loads(archive.read("data/others/auto_drama_states.json"))["entries"]
+        assert f'[ad_music cue="{first["id"]}"]' in scenario
+        assert states[lines[2]].get("music_dropped") is True and "music_dropped" not in states[lines[1]]
+        endpoint = f"/api/m3/projects/{project_id}/adjustments"
+        opened = start(client, endpoint)
+        view = client.get(f"{endpoint}/script/{opened['scenes'][0]['production_id']}").json()
+        marks = {row["id"]: row for row in view["lines"]}
+        assert marks[lines[1]]["music"] == {"action": "drop"} and marks[lines[1]]["music_dropped"] is True
+        assert marks[lines[1]]["music_title"] is None
+        if resume:
+            assert marks[resume["utterance_id"]]["music"]["action"] == "resume"
+            assert marks[resume["utterance_id"]]["music_dropped"] is False

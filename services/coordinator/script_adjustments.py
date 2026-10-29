@@ -342,16 +342,20 @@ def _chapter_view(chapter, script: Script, images, narrative, snapshot, disabled
             row["duration_ms"] = value.duration_ms
         return row
 
-    lines, playing = [], None
+    lines, playing, dropped = [], None, False
     for utterance in script.utterances:
         scene_id = scene_of.get(utterance.id, lines[-1]["scene_id"] if lines else scenes[0]["scene_id"])
         cue, music = cues.get(utterance.id), None
         if cue and cue.action == "play":
-            playing = f"{titles[scene_id]}の曲"
+            playing, dropped = f"{titles[scene_id]}の曲", False
             music = {"action": "play", "title": playing}
         elif cue and cue.action == "stop":
             music = {"action": "stop"} if playing else None
-            playing = None
+            playing, dropped = None, False
+        elif cue and cue.action == "drop" and playing and not dropped:
+            dropped, music = True, {"action": "drop"}
+        elif cue and cue.action in {"resume", "continue"} and dropped:
+            dropped, music = False, {"action": "resume", "title": playing}
         transition = transitions.get(utterance.id)
         lines.append({
             "id": utterance.id, "scene_id": scene_id,
@@ -360,7 +364,7 @@ def _chapter_view(chapter, script: Script, images, narrative, snapshot, disabled
             "voice_emotion": utterance.voice_emotion, "delivery": utterance.delivery or "",
             "audio_url": _url(assets[utterance.audio_asset_id].artifact_id) if utterance.audio_asset_id else None,
             "remote": utterance.remote.model_dump(mode="json") if utterance.remote else None,
-            "music": music, "music_title": playing,
+            "music": music, "music_title": None if dropped else playing, "music_dropped": dropped,
             "event_cg": {"start": utterance.id in cg_starts,
                          "image_url": files[assets[cg_frames[utterance.id]["asset_id"]].filename]}
             if utterance.id in cg_frames else None,
