@@ -27,7 +27,7 @@ from .workflow_version import generator_protocol
 
 HISTORY_KEYS = ("cast_plan", "plot", "plot_sha256", "outline", "accepted_plan", "story_chain",
                 "story_chain_sha256", "chapter_allocation", "notes", "locations",
-                "fallbacks", "request_ordinal", "sessions")
+                "fallbacks", "request_ordinal", "sessions", "story_forces")
 CHAPTER_KEYS = ("number", "text", "sha256", "scene_starts", "narrative_hash")
 USAGE_KEYS = ("chapter", "purpose", "status", "dispatched", "charged_tokens",
               "reserved_tokens", "elapsed_seconds", "usage")

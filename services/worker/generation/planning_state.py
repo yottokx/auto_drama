@@ -39,6 +39,8 @@ def install_plan(state: dict, output, manifest: dict, content: dict, identity: d
     value = validate_plan_content(content, manifest["approval_snapshot"])
     state.update(cast_plan=record, plot=plot, plot_sha256=digest(plot),
                  outline=value.plot.as_outline().model_dump(mode="json"), accepted_plan=copy.deepcopy(identity))
+    if content.get("story_forces") is not None:
+        state["story_forces"] = copy.deepcopy(content["story_forces"])
     # The accepted detailed plot is the single canonical version. Generation
     # journals from STEP4 never become chapter execution/checkpoint material.
     for key in ("story_chain", "story_chain_sha256", "chapter_allocation"):

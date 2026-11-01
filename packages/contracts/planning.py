@@ -16,6 +16,7 @@ from services.worker.generation.script_chapter_count import ChapterCountJudgment
 from services.worker.generation.script_plot import (
     CausalRoute,
     DetailedPlot,
+    StoryForce,
     check_chapters,
     check_core,
     check_outfit_appearances,
@@ -35,6 +36,10 @@ class CommonPlanContent(Contract):
     chapter_count: int | None = Field(default=None, ge=1, le=100, strict=True,
                                       exclude_if=lambda value: value is None)
     chapter_judgment: ChapterCountJudgment | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Each person's forces, planned with the plot (ScriptOptions.story_forces); chapter planning and
+    # scene writing read them (ScriptOptions.script_drama). Earlier plans hold none.
+    story_forces: list[StoryForce] | None = Field(default=None, max_length=12,
+                                                  exclude_if=lambda value: value is None)
 
 
 def plan_snapshot(snapshot: dict, content: dict | None) -> dict:
@@ -75,6 +80,8 @@ def validate_plan_content(content: dict | CommonPlanContent, snapshot: dict) -> 
     elif any(chapter.outfit_appearances for chapter in value.plot.chapters):
         raise ValueError("Only an approved alternate look can be planned for a chapter.")
     available = main | {row.id for row in value.cast_plan.supporting_characters}
+    if value.story_forces is not None and not {row.character_id for row in value.story_forces} <= available:
+        raise ValueError("Forces must identify registered characters.")
     for chapter in value.plot.chapters:
         for topic in chapter.conversation_topics:
             if (len(set(topic.character_ids)) != len(topic.character_ids)

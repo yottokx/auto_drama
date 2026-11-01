@@ -35,6 +35,12 @@ export type Planning = {
   jobs: Job[]; error: string | null; assets?: PlanningAssets
   /** How many chapters the current settings allow a long-form plan. */
   chapter_limit?: number
+  /** Development option: the script methods this plan can be approved with, the default first. */
+  script_drama_choices?: ScriptDrama[]
+}
+export type ScriptDrama = 'forces_unspoken' | 'forces' | 'plain'
+export const scriptDramaLabels: Record<ScriptDrama, string> = {
+  forces_unspoken: '力関係＋口に出さない本音（標準）', forces: '力関係', plain: '従来',
 }
 /** Supporting portraits and voices are made during the review; approval waits for them. */
 export const planningAssetsPending = (planning: Planning | null) => Object.values(planning?.assets ?? {})

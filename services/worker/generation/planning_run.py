@@ -154,6 +154,7 @@ class CommonPlanRun(ScriptRun):
                                     "plot": {"$ref": "#/$defs/DetailedPlot"}}
             schema["required"] = ["cast_plan", "plot"]
             schema["$defs"].pop("ChapterCountJudgment")
+            schema["$defs"].pop("StoryForce")
         main = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
         if target in {"all", "plot"} and not number:
             bind_core_cast(schema, main, core="PlotCore", character="PlotCharacter")
@@ -174,7 +175,7 @@ class CommonPlanRun(ScriptRun):
             content = copy.deepcopy(source)
             data = value.model_dump(mode="json")
             if target == "all":
-                content = {**data, **{key: source[key] for key in ("chapter_count", "chapter_judgment")
+                content = {**data, **{key: source[key] for key in ("chapter_count", "chapter_judgment", "story_forces")
                                       if key in source}}
             elif target == "plot":
                 if number:
@@ -239,7 +240,8 @@ class CommonPlanRun(ScriptRun):
                 # A long-form plan's cast at the chosen count: its plot is planned now.
                 self.outline()
                 content = {"cast_plan": self.state["cast_plan"]["plan"], "plot": self.state["plot"],
-                           "chapter_count": self.chosen, "chapter_judgment": self.source["chapter_judgment"]}
+                           "chapter_count": self.chosen, "chapter_judgment": self.source["chapter_judgment"],
+                           **({"story_forces": self.state["story_forces"]} if "story_forces" in self.state else {})}
             elif self.payload.get("judge_only"):
                 content = {**self.source, "chapter_judgment": self.judge_chapter_count(self.source["cast_plan"])}
             elif self.source is not None:

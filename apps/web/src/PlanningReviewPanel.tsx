@@ -4,9 +4,9 @@ import { Icon } from './Icons'
 import { Dialog } from './PreviewComponents'
 import {
   canApprovePlanning, cancelPlanningTab, castStage, chapterChoice, initialPlanningEditor, planningAction, planningActivity, planningAssetsPending, planningDirty, planningTabDirty, receivePlanning,
-  revisionTargets,
+  revisionTargets, scriptDramaLabels,
   type PlanningContent, type PlanningEditorState, type PlanningResponse, type PlanningTab, type RevisionTarget,
-  type OutfitNames,
+  type OutfitNames, type ScriptDrama,
 } from './planningState'
 import { PlanningContentEditor } from './PlanningContentEditor'
 import { PlanningContentView } from './PlanningContentView'
@@ -44,6 +44,8 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
   // What is being typed as a long-form plan's chapter count; held to the limit when used.
   const [chapterCount, setChapterCount] = useState('')
   const [approveOpen, setApproveOpen] = useState(false)
+  // Development option: the script method chosen at approval; the default when unset.
+  const [scriptDrama, setScriptDrama] = useState<ScriptDrama | ''>('')
   const [discardOpen, setDiscardOpen] = useState(false)
   const [discardSetup, setDiscardSetup] = useState(false)
   const [tab, setTab] = useState<PlanningTab>('plot')
@@ -114,6 +116,7 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
   // While supporting portraits and voices are being made, the server refuses changes to the plan.
   const busy = mutating || Boolean(generating) || planningAssetsPending(planning)
   const canApprove = canApprovePlanning(state, mutating || setupInvalidated) && (!imageEditing || cgStatus.canApprove)
+  const scriptDramaChoices = planning?.script_drama_choices?.length ? planning.script_drama_choices : null
   const selectedCharacter = state.content?.cast_plan.supporting_characters.find(character => character.id === characterId)?.id
     ?? state.content?.cast_plan.supporting_characters[0]?.id
   const editing = Boolean(editBaselines[tab])
@@ -168,7 +171,7 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
       } else {
         const body = planningAction(current.current, action, { target: shownTarget, characterId: selectedCharacter, ...(chapter ? { chapterNumber: Number(chapter) } : {}), ...(chosenChapters ? { chapterCount: chosenChapters } : {}) })
         result = await request<PlanningResponse>(`${endpoint}/actions`, controller.signal, action === 'approve'
-          ? { ...body, reconfirm: planning?.status === 'approved', ...(imageEditing ? { expected_event_cg_policy_revision: cgStatus.policy!.revision } : {}) } : body)
+          ? { ...body, reconfirm: planning?.status === 'approved', ...(imageEditing ? { expected_event_cg_policy_revision: cgStatus.policy!.revision } : {}), ...(scriptDramaChoices ? { script_drama: scriptDrama || scriptDramaChoices[0] } : {}) } : body)
       }
       if (!mounted.current || controller.signal.aborted) return
       accept(result, true, action === 'revise')
@@ -292,7 +295,7 @@ export function PlanningReviewPanel({ imageEditing = true, projectId, mainCharac
       {planning.status === 'approved' && <p className="planning-notice">もう一度承認すると、現在の本編制作を無効にして第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}
       <div className="planning-footer"><button className="button button-light" disabled={pending} onClick={onBack}><Icon name="back" size={16}/>メインキャラの確認に戻る</button>{planning.status === 'approved' && <button className="button button-light" disabled={pending} onClick={onProduction}>本編の制作・鑑賞へ<Icon name="arrow" size={16}/></button>}{!choosingCount && <button className="button button-primary" disabled={!canApprove} onClick={() => setApproveOpen(true)}><Icon name="check" size={16}/>全体計画を承認して本編を制作</button>}</div>
     </>}
-    {approveOpen && <Dialog title="全体計画を承認して、本編の制作へ。" onClose={() => { if (!mutating) setApproveOpen(false) }}><p className="dialog-intro">表示中の全体プロットとサブキャラの設定・関係性を、物語全体の計画として保存します。第1章から順番に本文・背景・立ち絵・音声を制作し、完成した章から鑑賞できます。</p><p className="dialog-info">本編制作では、計画と前章の内容を踏まえて場面を具体化します。追加の章ごとの承認はありません。</p>{planning?.status === 'approved' && <p className="dialog-info">現在の本編制作を無効にして、保存済みの全体計画とCG設定で第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}{cgStatus.policy && <p className="dialog-info">{cgStatus.policy.max_cgs === 0 ? 'イベントCGの自動生成は無効です。' : `イベントCGは作品全体で最大${cgStatus.policy.max_cgs}件、1件あたり追加差分は最大${cgStatus.policy.max_variants_per_cg}枚です。生成には追加の時間がかかります。`}</p>}<div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setApproveOpen(false)}>確認に戻る</button><button className="button button-primary" disabled={!canApprove} onClick={() => void mutate('approve')}>{mutating ? '制作を開始中…' : '承認して第1章から制作する'}</button></div></Dialog>}
+    {approveOpen && <Dialog title="全体計画を承認して、本編の制作へ。" onClose={() => { if (!mutating) setApproveOpen(false) }}><p className="dialog-intro">表示中の全体プロットとサブキャラの設定・関係性を、物語全体の計画として保存します。第1章から順番に本文・背景・立ち絵・音声を制作し、完成した章から鑑賞できます。</p><p className="dialog-info">本編制作では、計画と前章の内容を踏まえて場面を具体化します。追加の章ごとの承認はありません。</p>{scriptDramaChoices && <label className="field-label">台本の方式（開発用）<select value={scriptDrama || scriptDramaChoices[0]} disabled={mutating} onChange={event => setScriptDrama(event.target.value as ScriptDrama)}>{scriptDramaChoices.map(value => <option key={value} value={value}>{scriptDramaLabels[value]}</option>)}</select></label>}{planning?.status === 'approved' && <p className="dialog-info">現在の本編制作を無効にして、保存済みの全体計画とCG設定で第1章から制作します。再承認前の状態は変更履歴から戻せます。</p>}{cgStatus.policy && <p className="dialog-info">{cgStatus.policy.max_cgs === 0 ? 'イベントCGの自動生成は無効です。' : `イベントCGは作品全体で最大${cgStatus.policy.max_cgs}件、1件あたり追加差分は最大${cgStatus.policy.max_variants_per_cg}枚です。生成には追加の時間がかかります。`}</p>}<div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setApproveOpen(false)}>確認に戻る</button><button className="button button-primary" disabled={!canApprove} onClick={() => void mutate('approve')}>{mutating ? '制作を開始中…' : '承認して第1章から制作する'}</button></div></Dialog>}
     {discardOpen && <Dialog title="編集中の内容を取り消しますか。" onClose={() => { if (!mutating) setDiscardOpen(false) }}><p className="dialog-intro">未保存の直接編集とAIへの修正指示を取り消し、{discardSetup ? '最新の世界観・メインキャラの承認状態に対応した画面を開きます。' : '最新の保存済み計画を表示します。'}</p><div className="dialog-actions"><button className="button button-light" disabled={mutating} onClick={() => setDiscardOpen(false)}>入力を残す</button><button className="button button-primary" disabled={mutating} onClick={() => void reload()}>{mutating ? '読み込み中…' : '取り消して読み込む'}</button></div></Dialog>}
   </section>
 }
