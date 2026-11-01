@@ -555,6 +555,12 @@ class AdjustmentService:
 
             if pending_voices(self, connection, chapters, state.get("script")):
                 raise ServiceError(409, "音声が古い台詞があります。再生成するか、旧音声を使うかを選んでください。")
+            for value in state.get("scene_music", []):
+                # A replan's new track that is still being made, or whose generation failed.
+                if value["action"] == "play" and value["candidate_id"] and not required(
+                        connection, "music_candidate", value["candidate_id"])["artifact_id"]:
+                    raise ServiceError(409, "曲がまだできていない場面があります。生成が終わるのを待つか、"
+                                            "失敗したBGM生成を再試行してください。")
             edited = {(row["production_id"], row["utterance_id"]): row
                       for row in (state.get("script") or {}).get("lines", [])}
             self.history.begin(connection, project_id, "調整版を全章へ反映", "m3-adjustment-apply", concurrent=True)

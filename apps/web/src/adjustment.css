@@ -230,6 +230,7 @@
 .script-row-body { flex: 1; min-width: 0; padding: 8px 14px 8px 10px; display: flex; flex-direction: column; gap: 4px; }
 .script-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 11px; }
 .script-mark-music { color: #4f6640; }
+.script-mark-music.is-drop { color: #8a5a3c; }
 .script-mark-cg { display: inline-flex; align-items: center; gap: 6px; color: #4d6580; }
 .script-mark-cg img { width: 36px; height: 24px; object-fit: cover; border-radius: 2px; }
 .script-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-left: 40px; }

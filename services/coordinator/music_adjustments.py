@@ -58,7 +58,8 @@ def validate_settings(service, connection, draft, state, settings):
         raise ServiceError(422, "作品の全場面のBGM設定を指定してください。")
     for value in values:
         if value["candidate_id"]:
-            candidate(connection, value["production_id"], value["scene_id"], value["candidate_id"], draft["project_id"])
+            candidate(connection, value["production_id"], value["scene_id"], value["candidate_id"], draft["project_id"],
+                      finished=False)
     validate_continuity(values, chapters, service.m3, connection)
     state["scene_music"] = values
 
@@ -139,9 +140,24 @@ class MusicAdjustmentService(AdjustmentService):
             self.history.begin(connection, project_id, "章のBGM・場面転換を再計画", "m3-music-replan", concurrent=True)
             updated = {**draft, "revision": draft["revision"] + 1}
             self._enqueue_music(connection, updated, root, chapter, None, "m3_music_plan",
-                                {"context": context(self.m3, connection, chapter), "planning_version": 2})
+                                {"context": context(self.m3, connection, chapter), "planning_version": 3})
             connection.execute("UPDATE adjustment_draft SET revision=revision+1,status='draft',error=NULL WHERE id=?", (draft["id"],))
             return self._view(connection, project_id)
+
+    def _new_track(self, connection, draft, chapter, scene_id, prompt, payload):
+        """A scene the replan gives music but that has no adopted track gets one generated from the plan's prompt.
+
+        Until it is finished the scene shows as waiting for its track, and publishing stops there; a failed
+        generation is listed with the other music jobs and can be retried.
+        """
+        identifier = uuid4().hex
+        root = required(connection, "m3_production", draft["production_id"])
+        connection.execute("INSERT INTO music_candidate VALUES (?,?,?,?,?,NULL,NULL,'generated',?,'{}',NULL,?)",
+                           (identifier, chapter["project_id"], root["id"], chapter["id"], scene_id, prompt, self.clock()))
+        self._enqueue_music(connection, draft, root, chapter, identifier, "m3_music",
+                            {"scene_id": scene_id, "prompt": prompt, "context": payload["context"],
+                             "backend": "stable_audio3", "model": "medium", "duration_seconds": 120})
+        return identifier
 
     def _adopt_replan(self, connection, draft, chapter, plan, job, attempt):
         from packages.contracts.music import MusicPlan
@@ -149,11 +165,17 @@ class MusicAdjustmentService(AdjustmentService):
         state = json.loads(draft["state"])
         previous = effective_settings(connection, [chapter], self.m3, state)
         by_scene = {row["scene_id"]: row for row in previous}
+
+        def finished(scene_id, identifier):
+            # A track an earlier replan is still making cannot be reused yet.
+            row = candidate(connection, chapter["id"], scene_id, identifier, chapter["project_id"], finished=False)
+            return row if row["artifact_id"] else None
+
         active = None
         inherited = {}
         for row in previous:
             if row["action"] == "play":
-                active = candidate(connection, chapter["id"], row["scene_id"], row["candidate_id"], chapter["project_id"])
+                active = finished(row["scene_id"], row["candidate_id"])
             elif row["action"] == "stop":
                 active = None
             inherited[row["scene_id"]] = active
@@ -161,11 +183,10 @@ class MusicAdjustmentService(AdjustmentService):
         active = None
         for decision in plan.scenes:
             row = decision.model_dump(mode="json")
-            picked = None
+            picked = pending = None
             if decision.action == "play":
                 own = by_scene[decision.scene_id]
-                picked = candidate(connection, chapter["id"], decision.scene_id, own["candidate_id"], chapter["project_id"]) if (
-                    own["action"] == "play") else None
+                picked = finished(decision.scene_id, own["candidate_id"]) if own["action"] == "play" else None
                 if picked is None:
                     original = connection.execute("SELECT c.id FROM m3_requirement r JOIN music_candidate c ON c.artifact_id=r.artifact_id "
                         "WHERE r.production_id=? AND r.kind='m3_music' AND r.target_id=? ORDER BY c.created_at,c.id LIMIT 1",
@@ -186,18 +207,23 @@ class MusicAdjustmentService(AdjustmentService):
                         picked = candidate(connection, chapter["id"], decision.scene_id, identifier, chapter["project_id"])
                     row["prompt"] = picked["prompt"]
                     row["reason"] = decision.reason[:1600] + " 採用済み音源を再利用します（新しい曲は生成しません）。"
+                elif plan.planning_version == 3:
+                    # Every scene of a version 3 plan has music, so a scene without a track gets a new one.
+                    pending = self._new_track(connection, draft, chapter, decision.scene_id, decision.prompt,
+                                              json.loads(job["payload"]))
+                    row["reason"] = decision.reason[:1600] + " 採用済みの曲がないため、この場面の曲を新しく生成します。"
                 else:
                     row.update(action="stop", prompt="", reason=decision.reason[:1600] + " 採用済みの曲がないため、音楽生成は行わず停止にしました。")
-                active = picked
+                active = picked or pending
             elif decision.action == "continue" and active is None:
                 row.update(action="stop", reason=decision.reason[:1600] + " 継続元の採用曲がないため停止にしました。")
             elif decision.action == "stop":
                 active = None
             resolved.append(row)
             settings.append({"production_id": chapter["id"], "scene_id": decision.scene_id,
-                "action": row.get("action", "play"), "candidate_id": picked["id"] if picked else None,
+                "action": row.get("action", "play"), "candidate_id": picked["id"] if picked else pending,
                 "volume": by_scene[decision.scene_id]["volume"], "transition": row["transition"], "reason": row["reason"]})
-        result = MusicPlan(planning_version=2, scenes=resolved)
+        result = MusicPlan(planning_version=plan.planning_version, scenes=resolved, music_drops=plan.music_drops)
         record = self.m3._artifact(connection, chapter, "music-replan-" + job["id"], "music_plan", "music-plan.json",
             json.dumps(result.model_dump(mode="json"), ensure_ascii=False).encode(),
             provenance={"production_id": chapter["id"], "replan_job_id": job["id"], "bindings": settings}, job=job, attempt=attempt)

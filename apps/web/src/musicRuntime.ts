@@ -3,7 +3,7 @@ import '../../../packages/tyrano_export/music.js'
 import '../../../packages/tyrano_export/transitions.js'
 
 export type MusicCue = {
-  id: string; utterance_id: string; action: 'play' | 'continue' | 'stop'
+  id: string; utterance_id: string; action: 'play' | 'continue' | 'stop' | 'drop' | 'resume'
   asset_id?: string | null; loop_start_seconds?: number | null
   loop_end_seconds?: number | null; volume: number
 }
@@ -11,7 +11,7 @@ export type MusicScript = { assets: { id: string; kind: 'music'; filename: strin
 export type MusicController = {
   getCue(id: string): MusicCue | null
   prepareCue(id: string, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<boolean>
-  cue(cue: MusicCue, options?: { position?: number }): Promise<boolean>
+  cue(cue: MusicCue, options?: { position?: number; dropped?: boolean; fast?: boolean }): Promise<boolean>
   snapshot(): { position_seconds: number; phase: string; cue_id: string } | null
   pause(): void; dispose(): void
 }

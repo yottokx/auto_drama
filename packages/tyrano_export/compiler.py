@@ -340,16 +340,20 @@ def _stage_walk(script: Script, images: dict[str, bytes]) -> dict:
     directions: dict[str, list] = {}
     for value in script.directions:
         directions.setdefault(value.utterance_id, []).append(value)
-    background, cast, music, frame = None, {}, None, None
+    background, cast, music, dropped, frame = None, {}, None, False, None
     entries, shown, faces_seen, unseen_faces = {}, {}, set(), {}
 
     def stage(cg):
-        return {
+        result = {
             "background": dict(background) if background else None,
             "characters": [dict(cast[key]) for key in sorted(cast)],
             "event_cg": {**cg, "storage": assets[cg["asset_id"]].filename} if cg else None,
             "music_cue_id": music,
         }
+        if dropped:
+            # The track is held silent here by a drop; only then is the key present.
+            result["music_dropped"] = True
+        return result
 
     def look_faces(utterance_id):
         if utterance_id in cg_frames:
@@ -365,6 +369,8 @@ def _stage_walk(script: Script, images: dict[str, bytes]) -> dict:
         cue = cues.get(utterance.id)
         if cue and cue.action in {"play", "stop"}:
             music = cue.id if cue.action == "play" else None
+        if cue:
+            dropped = cue.action == "drop" and music is not None
         lit = None
         for timing in ("before", "start", "after"):
             for direction in (value for value in directions.get(utterance.id, []) if value.timing == timing):

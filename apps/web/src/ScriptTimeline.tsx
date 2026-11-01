@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { errorMessage, request } from './api'
 import { Icon } from './Icons'
 import {
-  directionChips, directionValue, editDirection, editLine, EMOTION_NAMES, estimatedPages, EXPRESSION_OPTIONS, lineChanged, lineValue, lineVoice,
-  pauseLimit, remoteLabel, revertLine, sceneMusicLabel, sceneRows, scriptPayload, TIMING_NAMES, transitionLabel,
+  directionChips, directionValue, editDirection, editLine, EMOTION_NAMES, estimatedPages, EXPRESSION_OPTIONS, lineChanged, lineMusicLabel,
+  lineMusicNow, lineValue, lineVoice, pauseLimit, remoteLabel, revertLine, sceneMusicLabel, sceneRows, scriptPayload, TIMING_NAMES, transitionLabel,
   type DirectionChip as Chip, type ScriptChapter, type ScriptDirection, type ScriptEdits, type ScriptLine, type ScriptStage, type ScriptVoice,
 } from './scriptTimelineState'
 
@@ -105,7 +105,7 @@ export function ScriptTimeline({ projectId, chapters, edits, voices, pending, di
           <button type="button" className="button button-light" disabled={index === 0} onClick={() => select(chapter.lines[index - 1].id, { scroll: true })}>前の行</button>
           <button type="button" className="button button-light" disabled={index === chapter.lines.length - 1} onClick={() => select(chapter.lines[index + 1].id, { scroll: true })}>次の行</button>
           <span>{index + 1} / {chapter.lines.length} 行</span>
-          <span className="script-music-now">{line.music_title ? `♪ ${line.music_title}` : 'BGMなし'}</span>
+          <span className="script-music-now">{lineMusicNow(line)}</span>
           {line.directions.some(row => row.timing === 'after') && <span className="script-after-now"><span>後：</span>{directionChips(line.directions).filter(row => row.timing === 'after').map(row => <DirectionChip key={row.id} chip={row} selected={directionId !== null && row.ids.includes(directionId)} onOpen={() => select(line.id, { direction: row.id })}/>)}</span>}
         </div>
         <LineEditor key={line.id} published={published} line={line} productionId={productionId} number={index + 1} edits={edits} voices={voices}
@@ -142,7 +142,7 @@ function ScriptRow({ line, number, current, changed, voice, directionId, rowRef,
     <span className={`script-band script-band-cg${line.event_cg ? ' is-on' : ''}`} aria-hidden="true"/>
     <div className="script-row-body">
       {(line.music || line.event_cg?.start) && <div className="script-marks">
-        {line.music && <span className="script-mark-music">{line.music.action === 'play' ? `♪ ${line.music.title}` : 'BGMなし'}</span>}
+        {line.music && <span className={`script-mark-music${line.music.action === 'drop' ? ' is-drop' : ''}`}>{lineMusicLabel(line.music)}</span>}
         {line.event_cg?.start && <span className="script-mark-cg"><img src={line.event_cg.image_url} alt="" loading="lazy"/>イベントCG</span>}
       </div>}
       {before.length > 0 && <div className="script-chips">{before.map(row => <DirectionChip key={row.id} chip={row} timing selected={selected(row)} onOpen={() => onSelect(row.id)}/>)}</div>}

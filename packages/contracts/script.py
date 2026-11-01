@@ -310,11 +310,15 @@ class SceneTransitionCue(SceneTransitionSpec):
 
 
 class MusicCue(Contract):
-    """Backend-neutral scene music; media and engine code are adopted separately."""
+    """Backend-neutral scene music; media and engine code are adopted separately.
+
+    ``drop`` fades the playing track out before its line and holds its place; ``resume``
+    brings it back from there, as does the next scene's ``continue``.
+    """
 
     id: Identifier
     utterance_id: Identifier
-    action: Literal["play", "stop", "continue"]
+    action: Literal["play", "stop", "continue", "drop", "resume"]
     asset_id: Identifier | None = Field(default=None, exclude_if=lambda value: value is None)
     loop_start_seconds: MusicSeconds | None = Field(default=None, exclude_if=lambda value: value is None)
     loop_end_seconds: MusicSeconds | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -332,7 +336,7 @@ class MusicCue(Contract):
                 raise ValueError("music loop points must satisfy 0 <= A < B")
         elif (self.asset_id is not None or self.loop_start_seconds is not None
                 or self.loop_end_seconds is not None):
-            raise ValueError("stop and continue music cues cannot select media or loop points")
+            raise ValueError("only a play music cue can select media or loop points")
         return self
 
 

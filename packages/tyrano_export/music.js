@@ -3,6 +3,8 @@
 // loop points only; it never supplies URLs, engine tags, or executable code.
 (() => {
   let owned = null;
+  // A drop fades the music out before its line shows; a resume brings it back more gently.
+  const DROP_MS = 600, RISE_MS = 1500;
   const identifier = value => typeof value === "string" && /^[a-z][a-z0-9_-]{0,63}$/.test(value);
   const number = value => typeof value === "number" && Number.isFinite(value);
   const volume = value => number(value) && value >= 0 && value <= 1;
@@ -24,7 +26,7 @@
     }
     const normalize = value => {
       if (!value || !identifier(value.id) || !utterances.has(value.utterance_id) ||
-          !["play", "stop", "continue"].includes(value.action)) return null;
+          !["play", "stop", "continue", "drop", "resume"].includes(value.action)) return null;
       const result = {id: value.id, utterance_id: value.utterance_id, action: value.action,
         asset_id: value.asset_id ?? null, loop_start_seconds: value.loop_start_seconds ?? null,
         loop_end_seconds: value.loop_end_seconds ?? null, volume: value.volume ?? 0.35};
@@ -49,6 +51,8 @@
     const activeMusic = [...cues.values()].some(value => value.action === "play");
     let context = null, gain = null, fadeGain = null, source = null, current = null, request = null;
     let generation = 0, userVolume = 1, paused = false, disposed = false;
+    // A drop holds the track silent at its place until a resume, the next scene's continue, or a new track.
+    let dropped = false, dropToken = 0;
     let decodeTail = Promise.resolve(), capture = null, speakersConnected = false;
     let preparation = null, transition = null;
     const ensureContext = () => {
@@ -280,7 +284,7 @@
       detach();
     };
     const start = () => {
-      if (!current?.buffer || source || paused || disposed || current.phase === "ended") return;
+      if (!current?.buffer || source || paused || dropped || disposed || current.phase === "ended") return;
       const track = current, token = generation, node = context.createBufferSource();
       node.buffer = track.buffer;
       node.loop = track.cue.loop_start_seconds !== null;
@@ -301,9 +305,10 @@
       try { node.start(0, track.position_seconds); }
       catch (error) { track.started_at = null; detach(); throw error; }
     };
-    const load = async (cue, saved = null, position = 0) => {
+    const load = async (cue, saved = null, position = 0, silent = false) => {
       cancel();
       const token = generation;
+      dropped = saved ? saved.dropped === true : silent; dropToken++;
       if (saved) { userVolume = saved.user_volume; paused = saved.paused; }
       const track = {cue, buffer: null, position_seconds: saved?.position_seconds ?? position,
         effective_loop_end_seconds: cue.loop_end_seconds,
@@ -371,7 +376,7 @@
         cancelTransition();
         // Continue preserves an immediate load or independent preparation too;
         // it only supersedes an obsolete scene transition.
-        if (cue?.action === "continue") return true;
+        if (cue?.action === "continue") { rise(RISE_MS); return true; }
         cancelPreparation();
         // A new scene/chapter command supersedes a pending immediate load.
         // Already audible sources stay connected until their fade-out finishes.
@@ -392,7 +397,7 @@
         // Commit the captured validated PCM synchronously. Another preparation
         // may alter the tiny cache but cannot force a late refetch here.
         const next = prepared ? trackFrom(cue, prepared.buffer) : null;
-        cancel(); current = next;
+        cancel(); current = next; dropped = false; dropToken++;
         if (next) remember(cue.asset_id, prepared.buffer);
         applyVolume(); start();
         if (!await fadeTo(1, prepared ? into : 0, task) || !valid()) return false;
@@ -410,6 +415,42 @@
     const stop = () => {
       if (disposed) return;
       cancelTransition(); cancelPreparation(); cancel(); current = null; applyVolume(); setFade(1);
+      dropped = false; dropToken++;
+    };
+    // Fade the playing track out and hold its place. Resolves once it is silent.
+    const fall = async milliseconds => {
+      if (disposed || !current || dropped) return true;
+      cancelTransition();
+      dropped = true;
+      const token = ++dropToken;
+      if (!source || !fadeGain || milliseconds === 0 || paused || context.state !== "running" ||
+          typeof fadeGain.gain.linearRampToValueAtTime !== "function") {
+        freeze(); setFade(1); return true;
+      }
+      const param = fadeGain.gain, time = context.currentTime;
+      param.cancelScheduledValues?.(time);
+      param.setValueAtTime(param.value, time);
+      param.linearRampToValueAtTime(0, time + milliseconds / 1000);
+      await new Promise(resolve => window.setTimeout(resolve, milliseconds));
+      if (token === dropToken && dropped && !disposed) { freeze(); setFade(1); }
+      return true;
+    };
+    // Bring a held track back from its place, fading in. Returns at once.
+    const rise = milliseconds => {
+      if (disposed || !dropped) return true;
+      dropped = false;
+      dropToken++;
+      if (!current?.buffer || paused || !fadeGain) { setFade(1); return true; }
+      const fading = !!source; // still fading out: turn it around without a restart
+      if (!fading) setFade(milliseconds ? 0 : 1);
+      try { start(); } catch (_) { stop(); notify("BGMを再開できませんでした。"); return false; }
+      if (!milliseconds || context.state !== "running" ||
+          typeof fadeGain.gain.linearRampToValueAtTime !== "function") { setFade(1); return true; }
+      const param = fadeGain.gain, time = context.currentTime;
+      param.cancelScheduledValues?.(time);
+      param.setValueAtTime(fading ? param.value : 0, time);
+      param.linearRampToValueAtTime(1, time + milliseconds / 1000);
+      return true;
     };
     const unlock = async () => {
       if (disposed) return false;
@@ -441,7 +482,7 @@
         if (!transition || transition.scope.controller.signal.aborted) return false;
         transition.fast = true; transition.fade?.finish(); return true;
       },
-      async cue(value, {position = 0} = {}) {
+      async cue(value, {position = 0, dropped: silent = false, fast = false} = {}) {
         if (disposed || !activeMusic) return false;
         const supplied = normalize(value), canonical = supplied && cues.get(supplied.id);
         if (!canonical || JSON.stringify(supplied) !== JSON.stringify(canonical)) {
@@ -450,13 +491,18 @@
         if (!number(position) || position < 0 ||
             (canonical.loop_end_seconds !== null && position >= canonical.loop_end_seconds)) return false;
         if (canonical.action === "stop") { stop(); return true; }
+        if (canonical.action === "drop") return fall(fast ? 0 : DROP_MS);
         // A serialized default volume on "continue" must not reset the current
         // track's authored volume or restart its intro/loop phase.
-        if (canonical.action === "continue") { cancelTransition(); return true; }
+        if (canonical.action === "continue" || canonical.action === "resume") {
+          cancelTransition(); return rise(fast ? 0 : RISE_MS);
+        }
         cancelTransition(); cancelPreparation(); setFade(1);
-        return load(canonical, null, position);
+        return load(canonical, null, position, silent);
       },
       unlock,
+      hold: ({fast = false} = {}) => fall(fast ? 0 : DROP_MS),
+      lift: ({fast = false} = {}) => rise(fast ? 0 : RISE_MS),
       setVolume(value) {
         if (disposed || !volume(value)) return false;
         userVolume = value; applyVolume(); return true;
@@ -465,7 +511,8 @@
         if (!current || disposed) return null;
         return {schema_version: 1, asset_id: current.cue.asset_id, cue_id: current.cue.id,
           loop_start_seconds: current.cue.loop_start_seconds, loop_end_seconds: current.cue.loop_end_seconds,
-          ...location(current), track_volume: current.cue.volume, user_volume: userVolume, paused};
+          ...location(current), track_volume: current.cue.volume, user_volume: userVolume, paused,
+          ...(dropped ? {dropped: true} : {})};
       },
       async restore(saved) {
         if (disposed) return false;
@@ -476,6 +523,7 @@
             saved.asset_id !== cue.asset_id || saved.loop_start_seconds !== cue.loop_start_seconds ||
             saved.loop_end_seconds !== cue.loop_end_seconds || saved.track_volume !== cue.volume ||
             !volume(saved.user_volume) || typeof saved.paused !== "boolean" ||
+            !(saved.dropped === undefined || typeof saved.dropped === "boolean") ||
             !number(saved.position_seconds) || saved.position_seconds < 0 ||
             (loop ? !((saved.phase === "intro" && saved.position_seconds < cue.loop_end_seconds) ||
               (saved.phase === "loop" && saved.position_seconds >= cue.loop_start_seconds &&

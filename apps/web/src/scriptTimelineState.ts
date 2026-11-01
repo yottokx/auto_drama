@@ -31,9 +31,11 @@ export type ScriptLine = {
   display_text: string; spoken_text: string; voice_emotion: string; delivery: string; audio_url: string | null
   remote: ScriptRemote | null
   /** Set where music starts or stops at this line. */
-  music: { action: 'play'; title: string } | { action: 'stop' } | null
+  music: { action: 'play' | 'resume'; title: string } | { action: 'stop' | 'drop' } | null
   /** The track playing while this line shows. */
   music_title: string | null
+  /** The track is held silent here, from a moment where the music stops to where it comes back. */
+  music_dropped: boolean
   event_cg: { start: boolean; image_url: string } | null
   transition: SceneTransition | null
   directions: ScriptDirection[]
@@ -138,6 +140,19 @@ export function transitionLabel(transition: SceneTransition | null): string {
   if (!transition || transition.visual === 'none') return ''
   const name = `場面転換 ${TRANSITION_NAMES[transition.visual]}`
   return transition.visual === 'cut' || !transition.duration_ms ? name : `${name} ${seconds(transition.duration_ms)}`
+}
+
+/** What a line's music mark says: a track starting, the music stopping for a moment or coming back. */
+export function lineMusicLabel(music: NonNullable<ScriptLine['music']>): string {
+  if (music.action === 'play') return `♪ ${music.title}`
+  if (music.action === 'resume') return `♪ BGMを戻す`
+  return music.action === 'drop' ? 'BGMを止める' : 'BGMなし'
+}
+
+/** The music while a line shows. */
+export function lineMusicNow(line: Pick<ScriptLine, 'music_title' | 'music_dropped'>): string {
+  if (line.music_dropped) return 'BGMを止めている'
+  return line.music_title ? `♪ ${line.music_title}` : 'BGMなし'
 }
 
 export function sceneMusicLabel(action: ScriptScene['music']): string {
