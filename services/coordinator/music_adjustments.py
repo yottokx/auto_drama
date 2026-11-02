@@ -17,6 +17,7 @@ from .music_service import (
     validate_plan,
     validate_result,
 )
+from .music_settings import track_settings
 from .service import ServiceError, public, required
 
 
@@ -156,7 +157,7 @@ class MusicAdjustmentService(AdjustmentService):
                            (identifier, chapter["project_id"], root["id"], chapter["id"], scene_id, prompt, self.clock()))
         self._enqueue_music(connection, draft, root, chapter, identifier, "m3_music",
                             {"scene_id": scene_id, "prompt": prompt, "context": payload["context"],
-                             "backend": "stable_audio3", "model": "medium", "duration_seconds": 120})
+                             **track_settings(connection, root["project_id"]), "duration_seconds": 120})
         return identifier
 
     def _adopt_replan(self, connection, draft, chapter, plan, job, attempt):
@@ -291,7 +292,7 @@ class MusicAdjustmentService(AdjustmentService):
                 if current:
                     self._enqueue_music(connection, draft, root, chapter, link["candidate_id"], "m3_music",
                         {"scene_id": link["scene_id"], "prompt": prompt, "context": payload["context"],
-                         "backend": "stable_audio3", "model": "medium", "duration_seconds": 120})
+                         **track_settings(connection, root["project_id"]), "duration_seconds": 120})
             else:
                 store_candidate(self.m3, connection, chapter, result.model_dump(mode="json"), files,
                     candidate_id=link["candidate_id"], job=job, attempt=attempt, provenance=envelope["provenance"])

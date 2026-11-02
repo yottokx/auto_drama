@@ -148,7 +148,7 @@ def test_migration_preserves_existing_published_build(tmp_path, monkeypatch):
                       "planning_job", "planning_approval", "planning_draft", "edition_build",
                       "publication_edition", "adjustment_job", "adjustment_candidate",
                       "adjustment_apply", "music_replan_job", "adjustment_draft", "music_adjustment_job", "music_candidate",
-                      "event_cg_production", "event_cg_policy", "event_cg_settings"):
+                      "event_cg_production", "event_cg_policy", "event_cg_settings", "music_settings"):
             connection.execute(f"DROP TABLE {table}")
         state = json.loads(connection.execute("SELECT state FROM m2_draft WHERE project_id=?", (project,)).fetchone()[0])
         state["draft"].pop("planningRequired", None)

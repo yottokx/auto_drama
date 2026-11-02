@@ -113,6 +113,7 @@ def create_app(
     from .m3_player import install_player_routes
     from .m3_routes import router as m3_router
     from .material_service import router as material_router
+    from .music_settings import router as music_router
     from .planning_routes import router as planning_router
     from .tts_settings import register_routes as register_tts_routes
 
@@ -125,6 +126,7 @@ def create_app(
     app.include_router(expression_router(service))
     app.include_router(adjustment_router(service))
     app.include_router(event_cg_router(service))
+    app.include_router(music_router(service))
     app.include_router(image_experiment_router(service))
     install_player_routes(app, service)
     register_tts_routes(app, service)

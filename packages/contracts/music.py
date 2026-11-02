@@ -124,3 +124,16 @@ class SceneMusicSetting(Contract):
 class MusicReplanRequest(Contract):
     expected_revision: int = Field(ge=1, strict=True)
     production_id: str = Field(min_length=1, max_length=128)
+
+
+# What a worker card runs Stable Audio 3 Medium with, labelled by card size only. float32 is what
+# every earlier work used; float16 needs about half the VRAM and draws a related, not identical,
+# track from the same seed. bfloat16 is never offered: it turns the model's output into noise.
+MUSIC_CONFIGURATIONS = (
+    {"id": "vram16", "label": "16GB以上", "precision": "float32"},
+    {"id": "vram12", "label": "12GB", "precision": "float16"},
+)
+
+
+class MusicProfile(Contract):
+    precision: Literal["float32", "float16"] = "float32"

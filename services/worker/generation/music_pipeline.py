@@ -30,11 +30,16 @@ def music_settings(config: dict, payload: dict, root: Path) -> dict:
     backend, model = payload.get("backend", "stable_audio3"), payload.get("model", "medium")
     if backend != "stable_audio3" or model not in {"small", "medium"}:
         raise ValueError("Unsupported music backend or model.")
+    # A work's tracks keep the precision of its first one: half precision draws a related but
+    # different track from the same seed. bfloat16 is never offered; it turns SA3 into noise.
+    precision = payload.get("precision", "float32")
+    if precision not in {"float32", "float16"}:
+        raise ValueError("Unsupported music precision.")
     model_dir = settings.get("models", {}).get(model)
     if not isinstance(model_dir, str) or not model_dir:
         raise ValueError(f"The {model} music model is not configured.")
     return {"backend": backend, "model": model, "model_path": str((root / model_dir).resolve()),
-        "device": settings.get("device", "cuda"), "dtype": "float32", "steps": 8,
+        "device": settings.get("device", "cuda"), "dtype": precision, "steps": 8,
         "cpu_offload": settings.get("cpu_offload", False)}
 
 

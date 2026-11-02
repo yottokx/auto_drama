@@ -1579,6 +1579,8 @@ class M3Service(ChapterProduction):
                     filename = "portrait-face.json"
                     files[filename] = encode_json(portrait_face.model_dump(mode="json"))
                 if music_plan is not None:
+                    from .music_settings import track_settings
+
                     filename = "music-plan.json"
                     files[filename] = encode_json(music_plan.model_dump(mode="json"))
                     for scene_prompt in music_plan.scenes:
@@ -1587,7 +1589,7 @@ class M3Service(ChapterProduction):
                         self._requirement(connection, production, "m3_music", scene_prompt.scene_id,
                             {"scene_id": scene_prompt.scene_id, "prompt": scene_prompt.prompt,
                              "context": payload["context"], "duration_seconds": 120,
-                             "backend": "stable_audio3", "model": "medium"})
+                             **track_settings(connection, production["project_id"])})
                 if music is not None:
                     from .music_service import store_candidate
 

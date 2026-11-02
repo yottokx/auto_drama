@@ -42,7 +42,8 @@ class StableAudioBackend:
             "model": self.settings.get("model", "medium"),
             "model_path": self.settings["model_path"], "prompt": request.prompt,
             "duration": request.duration_seconds, "seed": request.seed,
-            "steps": 8, "device": self.settings.get("device", "cuda"), "dtype": "float32",
+            "steps": 8, "device": self.settings.get("device", "cuda"),
+            "dtype": self.settings.get("dtype", "float32"),
             "cpu_offload": self.settings.get("cpu_offload", False), "context": request.context,
         })
 

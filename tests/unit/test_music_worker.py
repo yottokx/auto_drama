@@ -242,7 +242,15 @@ def test_changed_checkpoint_or_input_cannot_reuse_saved_result(jobs, monkeypatch
         music.generate_job(job(), jobs.root / "saved")
 
 
-@pytest.mark.parametrize("override", [{"backend": "ace_step15"}, {"model": "ace15_turbo"}, {"seed": -1}, {"seed": True}])
+def test_frozen_half_precision_reaches_the_child(jobs):
+    request = job()
+    request["payload"]["precision"] = "float16"
+    music.generate_job(request, jobs.root / "half")
+    assert jobs.requests[0]["settings"]["dtype"] == "float16"
+
+
+@pytest.mark.parametrize("override", [{"backend": "ace_step15"}, {"model": "ace15_turbo"}, {"seed": -1}, {"seed": True},
+                                      {"precision": "bfloat16"}, {"precision": "auto"}])
 def test_main_music_interface_rejects_unsupported_requests(jobs, override):
     request = job()
     request["payload"].update(override)
