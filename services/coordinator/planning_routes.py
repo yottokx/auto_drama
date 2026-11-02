@@ -21,6 +21,8 @@ class PlanningAction(Contract):
     chapter_number: int | None = Field(default=None, ge=1, le=100, strict=True)
     instruction: str | None = Field(default=None, max_length=30000)
     chapter_count: int | None = Field(default=None, ge=1, le=100, strict=True)
+    # Development option (planning_service.dev_options): approve with this script method.
+    script_drama: Literal["forces_unspoken", "forces", "plain"] | None = None
 
 
 class AssetRetake(Contract):

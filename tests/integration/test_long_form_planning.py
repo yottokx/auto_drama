@@ -24,6 +24,7 @@ def cast_stage(client):
     assert job["payload"]["script_options"]["long_form"] is True
     assert job["payload"]["script_options"]["chapter_scope_guard"] is True
     assert job["payload"]["script_options"]["opening_split"] is True
+    assert job["payload"]["script_options"]["story_forces"] is True
     snapshot = job["payload"]["approval_snapshot"]
     content = {"cast_plan": plan_content(snapshot)["cast_plan"], "chapter_judgment": JUDGMENT}
     complete_plan(client, job, worker, content=content)
@@ -124,3 +125,84 @@ def test_a_cast_edited_by_hand_before_the_count_is_judged_again(tmp_path):
         assert job["payload"]["plan_content"]["cast_plan"]["supporting_characters"][0]["id"] == SUPPORT["id"]
         complete_plan(client, job, worker, content={**edited, "chapter_judgment": {**JUDGMENT, "chapters": 4}})
         assert planning(client, project)["content"]["chapter_judgment"]["chapters"] == 4
+
+
+def forces_of(content):
+    return [{"character_id": row["character_id"], "want": "記録を残したい。", "means": "写真を並べる。",
+             "last_resort": "", "unknown": "", "at_odds": ""} for row in content["plot"]["core"]["characters"]]
+
+
+def planned_with(client, project, worker, forces):
+    plan_action(client, project, "plot", chapter_count=2)
+    job = claim(client, worker)
+    content = {**plan_content(job["payload"]["approval_snapshot"]), "chapter_count": 2,
+               "chapter_judgment": JUDGMENT}
+    if forces:
+        content["story_forces"] = forces_of(content)
+    complete_plan(client, job, worker, content=content)
+    return job, content
+
+
+def first_chapter(client):
+    media = client.post("/api/workers", json={"name": "media", "capabilities": M3_KINDS}).json()["id"]
+    chapter = claim(client, media)
+    assert chapter["kind"] == "m3_narrative"
+    return chapter
+
+
+def test_a_plan_with_forces_is_written_with_them_and_unspoken_aims(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        _, content = planned_with(client, project, worker, forces=True)
+        state = planning(client, project)
+        assert state["content"]["story_forces"] == content["story_forces"]
+        # The script method is chosen only as a development option.
+        assert "script_drama_choices" not in state
+        plan_action(client, project, "approve", status=422, script_drama="forces")
+        plan_action(client, project, "approve")
+        chapter = first_chapter(client)
+        assert chapter["payload"]["script_options"]["script_drama"] == "forces_unspoken"
+        assert chapter["payload"]["approved_plan"]["content"]["story_forces"] == content["story_forces"]
+
+
+def test_a_plan_without_forces_is_written_as_before(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        planned_with(client, project, worker, forces=False)
+        plan_action(client, project, "approve")
+        assert "script_drama" not in first_chapter(client)["payload"]["script_options"]
+
+
+def test_a_plan_begun_before_forces_plans_its_plot_with_them(tmp_path):
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        with client.app.state.coordinator.db.transaction() as connection:
+            for row in connection.execute("SELECT id,payload FROM job WHERE kind='m3_plan'").fetchall():
+                payload = json.loads(row["payload"])
+                payload["script_options"].pop("story_forces")
+                connection.execute("UPDATE job SET payload=? WHERE id=?",
+                                   (json.dumps(payload, ensure_ascii=False), row["id"]))
+        job, _ = planned_with(client, project, worker, forces=True)
+        assert job["payload"]["script_options"]["story_forces"] is True
+
+
+def test_a_development_option_chooses_the_script_method(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTO_DRAMA_DEV_OPTIONS", "1")
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        planned_with(client, project, worker, forces=True)
+        assert planning(client, project)["script_drama_choices"] == ["forces_unspoken", "forces", "plain"]
+        plan_action(client, project, "revise", status=422, instruction="直す。", script_drama="forces")
+        plan_action(client, project, "approve", script_drama="forces")
+        assert first_chapter(client)["payload"]["script_options"]["script_drama"] == "forces"
+
+
+def test_a_plan_without_forces_offers_no_other_method(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTO_DRAMA_DEV_OPTIONS", "1")
+    with TestClient(create_app(tmp_path)) as client:
+        project, worker, _, _ = cast_stage(client)
+        planned_with(client, project, worker, forces=False)
+        assert "script_drama_choices" not in planning(client, project)
+        plan_action(client, project, "approve", status=422, script_drama="forces_unspoken")
+        plan_action(client, project, "approve", script_drama="plain")
+        assert "script_drama" not in first_chapter(client)["payload"]["script_options"]

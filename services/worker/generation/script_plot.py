@@ -40,8 +40,14 @@ class CausalRoute(Contract):
 
 class ChainStep(Contract):
     character_id: Identifier
+    # Held by steps planned with forces (ScriptOptions.story_forces); add_forces_steps() asks for
+    # them. Absent otherwise, so earlier plans keep their identity and every other answer format.
+    aim: SkipJsonSchema[str | None] = Field(default=None, min_length=1, max_length=200,
+                                            exclude_if=lambda value: value is None)
     action: str = Field(min_length=1, description="直前の状況・結果を受けて本人が実際に取る行動・選択。")
     result: str = Field(min_length=1, description="その行動で得る具体的な結果・発見・相手の反応。次の行動の根拠になる。")
+    hidden_from: SkipJsonSchema[list[Identifier] | None] = Field(default=None, max_length=6,
+                                                                 exclude_if=lambda value: value is None)
 
 
 class ChainEvent(Contract):
@@ -655,3 +661,151 @@ def allocate_chapters(chain: StoryChain, allocation: ChapterAllocation, count: i
     return _plot_from_chapters(chain, allocation.chapters,
                                [chain.events[start:end] for start, end in zip(starts, ends, strict=True)],
                                allocation.foreshadowing, count)
+
+
+# Plans made with ScriptOptions.story_forces (docs/experiments/plot-drama-20261030.md, arm a3l):
+# the chain first writes each person's forces, and each step its aim and who goes on not knowing
+# its result, so the other side answers from its own wants and knowledge instead of the result the
+# ending needs.
+class StoryForce(Contract):
+    character_id: Identifier
+    want: str = Field(min_length=1, max_length=160,
+        description="この物語の間に本人が得たい・守りたい・避けたいこと。大きさは作品なり。")
+    means: str = Field(min_length=1, max_length=160, description="そのために本人がすること・しないこと。")
+    last_resort: str = Field(max_length=160,
+        description="追い込まれたとき本人が最後に使う手段や越える一線。食い違いに見合う大きさ。なければ空文字。")
+    unknown: str = Field(max_length=160, description="本人が知らないこと、または誰かに隠していること。なければ空文字。")
+    at_odds: str = Field(max_length=160,
+        description="誰の望み・手段と、どこで食い違うか。協力する相手との違いも含む。なければ空文字。")
+
+
+class _ForcesStepFields(Contract):
+    """The answer format of the step fields add_forces_steps() asks for."""
+
+    aim: str = Field(min_length=1, max_length=200, description="この行動で本人が狙うこと。結果と一致するとは限らない。")
+    result: str = Field(min_length=1,
+        description="相手や状況が自分の望みと知っていることから応じ、実際に起きたこと。狙いどおりとは限らない。"
+                    "誰が何をした・言った・選んだかで書く。次の行動の根拠になる。")
+    hidden_from: list[Identifier] = Field(max_length=6,
+        description="この結果を知らないまま次に動く当事者。知れば行動が変わる人物だけ。なければ空配列。")
+
+
+FORCES_RULE = (
+    "forcesには、承認設定と計画キャストから読み取れる力関係を、物語を動かす人物ごとに記します（承認メインは全員）。"
+    "wantはこの物語の間に本人が得たい・守りたい・避けたいことで、大きさは作品なりです。日常の小さな望みでも構いません。"
+    "meansはそのために本人がすること・しないこと、last_resortは追い込まれたときに本人が最後に使う手段や"
+    "越える一線で、大きさは食い違いに見合うものです（小さな食い違いなら意地や頼み込み程度）。"
+    "unknownは本人が知らないことや誰かに隠していること、"
+    "at_oddsは誰の望み・手段とどこで食い違うかで、協力する人物同士の望みの違いも含みます。"
+    "食い違いがなければ空文字にし、作品にない対立を作りません。")
+FORCES_CORE_RULE = (
+    "決着はforcesの望みと手段から導き、食い違う人物がいるなら、その人物がlast_resortまで使った手が"
+    "通らなくなる結果として書きます。人物・関係の着地でも、負けた側が守る価値観を捨てたことにしません。"
+    "負ける側の着地は、何を失い、何を守ったままかで書き、相手の正しさを認める・限界を悟るという宣言で代用しません。")
+FORCES_DRAMA_RULE = (
+    "各人物はforcesの望みと手段で動きます。食い違う人物を、相手の都合に合わせて引き下がる・従うだけの役にせず、"
+    "自分の目的で先に仕掛けることもあります。相手が知っていることと望みから、狙いが通る・外れる・読まれる・"
+    "断られる・別の形になるが決まります。外れる回数の決まりはありません。"
+    "forcesにない対立や事件を足さず、forcesにある食い違いは省きません。"
+    "食い違いが小さい作品では、それに見合う小さなすれ違いや譲り合いとして描きます。"
+    "勝ち負けのある食い違いの決着を、本人の気づき・説得・自発的な撤退だけで済ませません。引き下がる・負けるなら、"
+    "本人がlast_resortまで使い、それが相手の手で通らなくなった結果にします。負けた人物も守る価値観は捨てず、"
+    "その価値観のまま退く・負ける形にします。協力する人物も、自分のwantのために動く手順を持ちます。"
+    "誰かの指示や計画を実行する手順でも、aimには本人自身の狙いを書き、resultには本人が足した・変えたことを含めます。")
+FORCES_STEP_RULE = (
+    "stepsは登録人物のaim、action、具体的なresult、hidden_fromの順にします。aimは本人の狙い、"
+    "resultは相手や状況が自分の望みと知っていることから応じ、実際に起きたことです。"
+    "その結果を本人が知る・経験して次の行動を選びます。resultは誰が何をした・言った・選んだかで書き、"
+    "内心の評価だけで済ませません。hidden_fromの人物はその結果を知らないまま動き、知らない情報で判断しません。"
+    "伝える・報告する・確認するだけの手順は、それで相手の選択が変わるときだけ置きます。")
+FORCES_CHAIN_INSTRUCTION = counted(CHAIN_INSTRUCTION, [
+    ("出力はcore、resolution_basis、opening_condition、eventsの順です。",
+     "出力はforces、core、resolution_basis、opening_condition、eventsの順です。" + FORCES_RULE),
+    ("まずcoreで外的な決着と人物・関係の着地を、本人の行動とその結果として定めます。",
+     "まずcoreで外的な決着と人物・関係の着地を、本人の行動とその結果として定めます。" + FORCES_CORE_RULE),
+    ("全動作の細分化や、毎回失敗・訓練・成功する型は不要です。",
+     "全動作の細分化や、毎回失敗・訓練・成功する決まった型は不要です。" + FORCES_DRAMA_RULE),
+    ("stepsは登録人物のactionと具体的なresultの順にし、その結果を本人が知る・経験して次の行動を選びます。",
+     FORCES_STEP_RULE),
+])
+FORCES_EXPANSION_RULE = (
+    "加える手順も、briefのforcesの望み・手段・知らないことに沿い、aim・action・result・hidden_fromを"
+    "骨組みと同じ意味で書きます。食い違う人物を、相手に合わせて従うだけの役にしません。"
+    "誰かの指示や計画を実行する人物の手順でも、aimは本人自身の狙いにします。")
+FORCES_BRIEF = "\n力関係forces（人物ごとの望み・手段・知らないこと・食い違い。全て予定の前提）:\n"
+
+
+def forces_chain_instruction(count: int) -> str:
+    return counted(FORCES_CHAIN_INSTRUCTION, [
+        ("全3章の分量", f"全{count}章の分量"),
+        ("3〜9個の出来事", f"{count}〜{count * EVENTS_PER_CHAPTER}個の出来事"),
+        ("3章の各区間で", f"{count}章の各区間で"),
+    ])
+
+
+def forces_models(count: int):
+    """chapter_models() with forces first in the chain's answer."""
+    chain_model, draft_model, allocation_model, fixed_model = chapter_models(count)
+
+    class ForcesStoryChainDraft(draft_model):
+        forces: list[StoryForce] = Field(min_length=1, max_length=12,
+            description="物語を動かす人物ごとの望み・手段・知らないこと・食い違い。承認メインは全員。")
+
+    return chain_model, ForcesStoryChainDraft, allocation_model, fixed_model
+
+
+def ordered(definition: dict, first: list[str]) -> None:
+    """Put ``first`` before the other properties of a schema definition, as the answer is written."""
+    properties = definition["properties"]
+    definition["properties"] = {**{key: properties[key] for key in first},
+                                **{key: value for key, value in properties.items() if key not in first}}
+    required = definition.get("required")
+    if required is not None:
+        definition["required"] = [key for key in definition["properties"] if key in required]
+
+
+def add_forces_steps(definition: dict, available: set[str]) -> None:
+    """Ask a step definition for its aim before the action and hidden_from after the result."""
+    fields = _ForcesStepFields.model_json_schema()["properties"]
+    properties = {}
+    for key, value in definition["properties"].items():
+        if key == "action":
+            properties["aim"] = fields["aim"]
+        properties[key] = fields["result"] if key == "result" else value
+        if key == "result":
+            properties["hidden_from"] = {**fields["hidden_from"],
+                                         "items": {**fields["hidden_from"]["items"], "enum": sorted(available)}}
+    definition["properties"] = properties
+    definition["required"] = [key for key in properties
+                              if key in {*definition.get("required", []), "aim", "hidden_from"}]
+
+
+def forces_chain_schema(draft_model, characters: set[str], available: set[str]) -> dict:
+    """The chain's answer format for a plan with forces: forces first, then the product's order."""
+    schema = draft_model.model_json_schema()
+    bind_core_cast(schema, characters, core="ChainCore", character="ChainCharacter")
+    schema["$defs"]["ChainStep"]["properties"]["character_id"]["enum"] = sorted(available)
+    add_forces_steps(schema["$defs"]["ChainStep"], available)
+    schema["$defs"]["StoryForce"]["properties"]["character_id"]["enum"] = sorted(available)
+    ordered(schema, ["forces", "core", "resolution_basis", "opening_condition", "events"])
+    return schema
+
+
+def check_forces(forces: list[StoryForce], events, characters: set[str], available: set[str]) -> None:
+    ids = {row.character_id for row in forces}
+    if not characters <= ids:
+        raise ValueError(f"forces must hold every approved main character: {sorted(characters)}.")
+    if not ids <= available:
+        raise ValueError("forces must identify registered characters.")
+    for event in events:
+        for step in event.steps:
+            if step.aim is None or step.hidden_from is None:
+                raise ValueError("Every step needs its aim and hidden_from.")
+            if not set(step.hidden_from) <= available:
+                raise ValueError("hidden_from must identify registered characters.")
+
+
+def boundary_first(schema: dict) -> None:
+    """Each chapter's number and last event before its title, so the cut is chosen from the events
+    and not from the titles written first (docs/experiments/plot-drama-20261030.md)."""
+    ordered(schema["$defs"]["LongChapterBoundary"], ["number", "last_event"])

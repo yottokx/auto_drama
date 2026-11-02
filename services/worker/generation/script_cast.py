@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from itertools import combinations
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -77,6 +78,20 @@ class ScriptOptions(Contract):
     # plot is a chain allocated to any count with each chapter's steps added around it. Absent
     # when unset, so earlier plans keep their three-chapter wording.
     long_form: bool = Field(default=False, exclude_if=lambda value: not value)
+    # Set for plans made since the plot plans each person's forces (docs/experiments/plot-drama-
+    # 20261030.md): the chain first writes what each person wants, does, does at the last, does not
+    # know and is at odds over, and each step its aim and who does not learn its result; a long-form
+    # allocation writes each chapter's number and last event before its title. Absent when unset, so
+    # earlier plans keep their wording.
+    story_forces: bool = Field(default=False, exclude_if=lambda value: not value)
+    # How chapters are planned and written, set when a plan with forces is approved (same record).
+    # "forces": chapter planning and scene writing see the forces, and the people at odds in a scene
+    # act on their own means. "forces_unspoken": also, each scene plan names what its people do not
+    # say aloud, which the writer shows by action and response, not by NARRATOR's explanation.
+    # "plain" (absent) for plans without forces. The default for a plan with forces is
+    # forces_unspoken; the others are chosen only as a development option, to compare them.
+    script_drama: Literal["plain", "forces", "forces_unspoken"] = Field(
+        default="plain", exclude_if=lambda value: value == "plain")
 
     @model_validator(mode="after")
     def dialogue_fits_body(self):

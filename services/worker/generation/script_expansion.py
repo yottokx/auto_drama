@@ -16,7 +16,7 @@ from pydantic import Field
 
 from packages.contracts.script import Contract
 
-from .script_plot import ChainEvent, ChainStep
+from .script_plot import FORCES_EXPANSION_RULE, ChainEvent, ChainStep, add_forces_steps
 
 # The most steps a chapter reaches with the added ones; more made chapters of three far longer
 # than ten minutes.
@@ -63,16 +63,19 @@ FINAL_EXPANSION_RULE = "最終章です。骨組みの最後の手順は作品�
 FINAL_END_RULE = "最終章です。最後の場面の終了状態を、当章の予定の最後の手順の結果にします。\n"
 
 
-def expansion_prompt(count: int, number: int) -> str:
+def expansion_prompt(count: int, number: int, forces: bool = False) -> str:
+    """``forces``: the plan has forces (ScriptOptions.story_forces), and its added steps too."""
     return (f"全{count}章の第{number}章を肉付けします。" + EXPANSION_INSTRUCTION + FRESH_ROLES_RULE
-            + (FINAL_EXPANSION_RULE if number == count else ""))
+            + (FINAL_EXPANSION_RULE if number == count else "") + (FORCES_EXPANSION_RULE if forces else ""))
 
 
-def expansion_schema(available: set[str], steps: int, last: bool) -> tuple[dict, int]:
+def expansion_schema(available: set[str], steps: int, last: bool, forces: bool = False) -> tuple[dict, int]:
     """The answer format for a chapter of ``steps`` skeleton steps, and how many may be added."""
     schema = ChapterExpansion.model_json_schema()
     step_schema = schema["$defs"]["AddedStep"]
     step_schema["properties"]["character_id"]["enum"] = sorted(available)
+    if forces:
+        add_forces_steps(step_schema, available)
     # The last chapter's closing step stays last: nothing is placed after it.
     step_schema["properties"]["after_step"]["maximum"] = steps - 1 if last else steps
     room = max(0, MOST_CHAPTER_STEPS - steps)

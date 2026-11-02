@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([ValidateRange(1, 65535)][int]$Port = 8000, [string]$DataDir, [string]$TyranoDir)
+param([ValidateRange(1, 65535)][int]$Port = 8000, [string]$DataDir, [string]$TyranoDir, [switch]$DevOptions)
 $ErrorActionPreference = 'Stop'
 
 function Assert-CoordinatorPortAvailable {
@@ -29,15 +29,19 @@ if (-not (Test-Path -LiteralPath $python)) { throw 'Run scripts/setup.ps1 -Compo
 Push-Location $projectRoot
 $previousDataDir = $env:AUTO_DRAMA_DATA_DIR
 $previousTyranoDir = $env:AUTO_DRAMA_TYRANO_DIR
+$previousDevOptions = $env:AUTO_DRAMA_DEV_OPTIONS
 try {
     if ($DataDir) { $env:AUTO_DRAMA_DATA_DIR = $DataDir }
     if ($TyranoDir) { $env:AUTO_DRAMA_TYRANO_DIR = $TyranoDir }
+    # Development options (planning_service.dev_options), such as choosing the script method at approval.
+    if ($DevOptions) { $env:AUTO_DRAMA_DEV_OPTIONS = '1' }
     & $python -I -m uvicorn services.coordinator.app:app --app-dir $projectRoot --host 127.0.0.1 --port $Port
     if ($LASTEXITCODE -ne 0) { throw 'Coordinator exited with an error.' }
 }
 finally {
     $env:AUTO_DRAMA_DATA_DIR = $previousDataDir
     $env:AUTO_DRAMA_TYRANO_DIR = $previousTyranoDir
+    $env:AUTO_DRAMA_DEV_OPTIONS = $previousDevOptions
     Pop-Location
 }
 

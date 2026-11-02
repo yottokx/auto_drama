@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import zipfile
 import zlib
 from uuid import uuid4
@@ -30,6 +31,16 @@ def asset_source(character: dict, kind: str) -> str:
     source = {key: character.get(key) for key in ASSET_FIELDS[kind]}
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
+
+# How a plan with forces may be written (ScriptOptions.script_drama), the default first.
+SCRIPT_DRAMA_CHOICES = ("forces_unspoken", "forces", "plain")
+
+
+def dev_options() -> bool:
+    """Development options: on when the coordinator starts with AUTO_DRAMA_DEV_OPTIONS=1
+    (scripts/start-coordinator.ps1 -DevOptions). They let a work be made with methods still being
+    compared, and are removed once one is chosen."""
+    return os.environ.get("AUTO_DRAMA_DEV_OPTIONS") == "1"
 
 class PlanningService:
     def __init__(self, coordinator: Coordinator):
@@ -91,6 +102,10 @@ class PlanningService:
             "assets": self._asset_view(connection, row),
             # How many chapters the current settings allow a long-form plan.
             "chapter_limit": self._chapter_limit(connection)}
+        content = result["planning"]["content"]
+        if dev_options() and content and content.get("story_forces") is not None:
+            # Development only: the script methods this plan can be approved with, the default first.
+            result["planning"]["script_drama_choices"] = list(SCRIPT_DRAMA_CHOICES)
         return result
 
     def _chapter_limit(self, connection):
@@ -379,11 +394,18 @@ class PlanningService:
                 # needs; the plot follows at the chapter count the user chose (long_form). A chapter plan sees
                 # later chapters in brief and is told what the latest chapter already showed, so it neither
                 # runs ahead nor plays a step twice (chapter_scope_guard). A later chapter's plan writes where
-                # the saved script ended apart from its first new action (opening_split). Plans started
-                # earlier carry none of these options and keep the wording and limits they were made with.
+                # the saved script ended apart from its first new action (opening_split). The plot plans
+                # each person's forces first (story_forces). Plans started earlier carry none of these
+                # options and keep the wording and limits they were made with.
                 "script_options": {"planned_cast_appears": True, "open_scene_cast": True,
                                    "cast_limit": cast_limit or cast_limit_choice(self.coordinator, connection)["guide"],
-                                   "long_form": True, "chapter_scope_guard": True, "opening_split": True}}
+                                   "long_form": True, "chapter_scope_guard": True, "opening_split": True,
+                                   "story_forces": True}}
+        options = generation.get("script_options", {})
+        if body and body.action == "plot" and options.get("long_form") and not options.get("story_forces"):
+            # A long-form plan begun before story_forces plans its plot with forces too: the plot is
+            # planned anew from the kept cast whenever its chapter count is chosen.
+            generation["script_options"] = {**options, "story_forces": True}
         content = json.loads(row["content"]) if row["content"] else None
         chosen = {"chapter_count": body.chapter_count} if body and body.action == "plot" else content
         payload = {"schema_version": 1, "phase": "planning", "planning_id": row["id"],
@@ -433,6 +455,8 @@ class PlanningService:
 
     def action(self, project_id, body):
         production_id = None
+        if body.script_drama is not None and (body.action != "approve" or not dev_options()):
+            raise ServiceError(422, "台本の方式は、開発用の設定を有効にしたときの承認でのみ選べます。")
         with self.db.transaction() as connection:
             self.coordinator._recover(connection)
             if (body.action == "generate" and body.expected_revision == 0
@@ -539,6 +563,16 @@ class PlanningService:
                         # Likewise for opening_split, for any plan: it only shapes how chapter 2 on open.
                         generation["script_options"] = {**generation.get("script_options", {}),
                                                         "opening_split": True}
+                    # How chapters are planned and written (script_drama): a plan with forces reads them,
+                    # each scene also naming what is left unsaid, unless a development option chose another
+                    # method to compare. A plan without forces keeps the plain method.
+                    method = body.script_drama or (
+                        "forces_unspoken" if content.get("story_forces") is not None else "plain")
+                    if method != "plain" and content.get("story_forces") is None:
+                        raise ServiceError(422, "この全体計画には人物の力関係がないため、従来の方式でのみ制作できます。")
+                    kept = {key: value for key, value in generation.get("script_options", {}).items()
+                            if key != "script_drama"}
+                    generation["script_options"] = {**kept, **({"script_drama": method} if method != "plain" else {})}
                     if options.get("long_form"):
                         from services.worker.generation.script_expansion import chained_starts
 

@@ -22,6 +22,7 @@ from packages.narrative.continuity import narrative_hash
 
 from . import narrative, pipeline
 from . import script_opening_check as opening_check
+from . import script_drama
 from . import script_route_progress as route_progress
 from . import script_voices as voices
 from .cancellation import GenerationCancelled, check_cancelled
@@ -97,6 +98,7 @@ from .script_plot import (
     SIZED_ALLOCATION_INSTRUCTION,
     ChapterAllocation,
     DetailedPlot,
+    FORCES_BRIEF,
     FixedChapterAllocation,
     PlotBatch,
     PlotCastError,
@@ -108,13 +110,18 @@ from .script_plot import (
     allocate_chapters,
     balanced_boundary_options,
     bind_core_cast,
+    boundary_first,
     boundary_options,
     chain_instruction,
     chapter_models,
     check_chain,
     check_chapters,
     check_core,
+    check_forces,
     check_outfit_appearances,
+    forces_chain_instruction,
+    forces_chain_schema,
+    forces_models,
     future_material,
     sized_allocation_instruction,
 )
@@ -829,6 +836,13 @@ class ScriptRun(DraftRun):
                 "brief": self.options.for_stage(stage) + "\n" + brief,
                 "chapters": self.state["chapters"], "notes": self.state["notes"]}
 
+    def drama_forces(self):
+        """The approved plan's forces, which chapter planning and scene writing read
+        (ScriptOptions.script_drama)."""
+        if "story_forces" not in self.state:
+            raise ValueError(f"Script method {self.options.script_drama} needs a plan with forces.")
+        return self.state["story_forces"]
+
     def output_budget(self, scope, size, character_ids):
         """Freeze the estimate before dispatch so interrupted scenes reuse it."""
         self.llm.select_purpose("script-scene")
@@ -934,7 +948,13 @@ class ScriptRun(DraftRun):
             scene_context["chapters"] = [*context["chapters"], {
                 "number": number, "text": self.script_text(saved_scenes),
                 "scene_starts": self.scene_offsets(saved_scenes)}]
-        prompt = SCENE_INSTRUCTION + (SCENE_OUTFITS if scene_context["setting"].get("scene_outfits") else "")
+        method = self.options.script_drama
+        if method != "plain":
+            note = self.state.get("unspoken", {}).get(scope) if method == "forces_unspoken" else None
+            scene_context["brief"] += (script_drama.FORCES_BRIEF + script_drama.forces_text(self.drama_forces())
+                                       + (script_drama.UNSPOKEN_BRIEF + note if note else ""))
+        prompt = (script_drama.scene_instruction(SCENE_INSTRUCTION, method)
+                  + (SCENE_OUTFITS if scene_context["setting"].get("scene_outfits") else ""))
         budget = self.output_budget(scope, size, plan.character_ids)
         saved_source = self.saved_source_attempt(scope + "-text") if enabled(self.payload) else None
         source_profile = saved_source["profile"] if saved_source else self.llm.profile
@@ -1247,7 +1267,8 @@ class ScriptRun(DraftRun):
         setting = self.setting(planned=True)
         characters = set(setting["main_character_ids"])
         available = characters | {row.id for row in cast_plan.supporting_characters}
-        chain_model, draft_model, allocation_model, fixed_model = chapter_models(count)
+        forces = self.options.story_forces
+        chain_model, draft_model, allocation_model, fixed_model = (forces_models if forces else chapter_models)(count)
         outfits = self.outfits
         events_note = OUTFIT_EVENTS if outfits else ""
         allocation_note = OUTFIT_ALLOCATION if outfits else ""
@@ -1288,14 +1309,27 @@ class ScriptRun(DraftRun):
 
         context = {"setting": setting, "outline": "", "brief": self.options.for_stage("chain"),
                    "chapters": [], "notes": []}
-        schema = draft_model.model_json_schema()
-        bind_core_cast(schema, characters, core="ChainCore", character="ChainCharacter")
-        schema["$defs"]["ChainStep"]["properties"]["character_id"]["enum"] = sorted(available)
-        chain = self.structured_core("story-chain", "script-outline", 1, chain_instruction(count) + events_note,
-            context, draft_model,
-            lambda value: check_chain(value.as_chain(), characters, available), schema).as_chain()
+        if forces:
+            schema = forces_chain_schema(draft_model, characters, available)
+        else:
+            schema = draft_model.model_json_schema()
+            bind_core_cast(schema, characters, core="ChainCore", character="ChainCharacter")
+            schema["$defs"]["ChainStep"]["properties"]["character_id"]["enum"] = sorted(available)
+
+        def check_draft(value):
+            check_chain(value.as_chain(), characters, available)
+            if forces:
+                check_forces(value.forces, value.events, characters, available)
+
+        draft = self.structured_core("story-chain", "script-outline", 1,
+            (forces_chain_instruction if forces else chain_instruction)(count) + events_note,
+            context, draft_model, check_draft, schema)
+        chain = draft.as_chain()
         chain_data = chain.model_dump(mode="json")
         self.state.update(story_chain=chain_data, story_chain_sha256=digest(chain_data))
+        if forces:
+            self.state["story_forces"] = [row.model_dump(mode="json") for row in draft.forces]
+            write_json(self.output / "story-forces.json", self.state["story_forces"])
         self.persist()
         write_json(self.output / "story-chain.json", chain_data)
         events = len(chain.events)
@@ -1308,7 +1342,7 @@ class ScriptRun(DraftRun):
         allowed = [row["last_events"] for row in material.get("boundary_options", [])]
         allocation_context = {**context, "brief": self.options.for_stage("allocation")
                               + f"\n全{count}章へ配分する保存済みプロット（全て未実施）:\n"
-                              + json.dumps(material, ensure_ascii=False)}
+                              + json.dumps(material, ensure_ascii=False) + self.forces_brief()}
 
         def check_allocation(value):
             check(allocate_chapters(chain, value, count))
@@ -1331,6 +1365,8 @@ class ScriptRun(DraftRun):
         else:
             schema = allocation_model.model_json_schema()
             schema["$defs"]["LongChapterBoundary"]["properties"]["last_event"]["maximum"] = events
+            if forces:
+                boundary_first(schema)
             schema["$defs"]["ConversationTopic"]["properties"]["character_ids"]["items"]["enum"] = sorted(available)
             if outfits:
                 add_outfit_appearances(schema, outfits)
@@ -1354,9 +1390,16 @@ class ScriptRun(DraftRun):
             raise ValueError("Saved skeleton plot was changed.")
         return DetailedPlot.model_validate(self.state["skeleton_plot"])
 
+    def forces_brief(self):
+        """The plan's forces for the calls after the chain (ScriptOptions.story_forces); else empty."""
+        if not self.options.story_forces:
+            return ""
+        return FORCES_BRIEF + json.dumps(self.state["story_forces"], ensure_ascii=False)
+
     def expand_plot(self, skeleton, setting, available, check):
         """Add each chapter's own steps to the skeleton, in order (script_expansion)."""
         count = len(skeleton.chapters)
+        forces = self.options.story_forces
         sketch = [{"number": row.number, "title": row.title, "role": row.role,
                    "steps": [step.model_dump(mode="json") for event in row.events for step in event.steps]}
                   for row in skeleton.chapters]
@@ -1370,9 +1413,10 @@ class ScriptRun(DraftRun):
                                     step.model_dump(mode="json") for event in done.events for step in event.steps]}
                                     for done in chapters],
                                 "current_chapter_steps": current}, ensure_ascii=False)
-            context = {"setting": setting, "outline": "", "brief": self.options.for_stage("chain") + "\n" + brief,
+            context = {"setting": setting, "outline": "",
+                       "brief": self.options.for_stage("chain") + "\n" + brief + self.forces_brief(),
                        "chapters": [], "notes": []}
-            schema, room = expansion_schema(available, len(current), row.number == count)
+            schema, room = expansion_schema(available, len(current), row.number == count, forces)
 
             def check_expansion(value, events=row.events, room=room):
                 if len(value.added_steps) > room:
@@ -1380,7 +1424,7 @@ class ScriptRun(DraftRun):
                 expanded_events(events, value.added_steps)
 
             expansion = self.structured(f"expand-{row.number:03d}", "script-outline", row.number,
-                                        expansion_prompt(count, row.number), context, ChapterExpansion,
+                                        expansion_prompt(count, row.number, forces), context, ChapterExpansion,
                                         check_expansion, schema)
             start = chapters[-1].events[-1].steps[-1].result if chapters else None
             chapters.append(row.model_copy(update={
@@ -1454,11 +1498,18 @@ class ScriptRun(DraftRun):
 
         split = number > 1 and self.options.opening_split
         model = FirstChapterPlan if number == 1 else SplitChapterPlan if split else ContinuedChapterPlan
+        method = self.options.script_drama
+        if method != "plain":
+            planning_context["brief"] += script_drama.FORCES_BRIEF + script_drama.forces_text(self.drama_forces())
+        if method == "forces_unspoken":
+            model = script_drama.UNSPOKEN_MODELS[model]
         schema = model.model_json_schema()
         if outfits:
             add_scene_outfits(schema, outfits)
         if self.options.open_scene_cast:
             open_scene_schema(schema)
+        if method == "forces_unspoken":
+            script_drama.unspoken_schema(schema)
         instruction = (
             "第1章です。承認設定と当章の予定から直接場面を作ります。前章の実績整理は不要です。"
             if number == 1 else
@@ -1508,7 +1559,9 @@ class ScriptRun(DraftRun):
             "素材在庫を理由に同じ人物や舞台へ戻さないでください。"
             + PLOT_PRIORITY + (OUTFIT_PLAN if outfits else "") +
             ("最終章では、積み重ねた選択の結果として外的な課題と人物・関係の着地を描きます。"
-             if last else ""))
+             if last else "")
+            + (script_drama.UNSPOKEN_PLAN if method == "forces_unspoken" else "")
+            + (script_drama.FORCES_PLAN if method != "plain" else ""))
         draft = self.structured(f"plan-{number:03d}", "script-plan", number, prompt,
                                 planning_context, model, check, schema)
         if number > 1 and self.options.opening_replay_check:
@@ -1517,6 +1570,13 @@ class ScriptRun(DraftRun):
                 draft = self.structured(f"plan-{number:03d}-again", "script-plan", number, prompt,
                     {**planning_context, "brief": planning_context["brief"] + "\n" + note},
                     model, check, schema)
+        if method == "forces_unspoken":
+            draft, notes = script_drama.split_unspoken(draft)
+            unspoken = self.state.setdefault("unspoken", {})
+            for key in [key for key in unspoken if key.startswith(f"c{number:03d}-")]:
+                del unspoken[key]
+            unspoken.update({f"c{number:03d}-{key}": value for key, value in notes.items()})
+            self.persist()
         plan = self.cast_heard_voices(number, project_plan(draft, self.options), planning_context, known)
         used_ids = {cid for scene in plan.scenes for cid in scene.character_ids}
         main_ids = {row["result"]["id"] for row in self.payload["approval_snapshot"]["characters"]}
